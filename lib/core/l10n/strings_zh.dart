@@ -62,9 +62,12 @@ abstract final class Zh {
     RoomErrorCode.certificateUntrusted => '服务器证书未通过系统 CA 校验（可能是自签证书）。',
     RoomErrorCode.certificatePinnedMismatch => '服务器证书与内置指纹不一致，已拒绝连接。',
     RoomErrorCode.tlsHandshake => 'TLS 握手失败，请确认服务端已开启 wss。',
-    RoomErrorCode.dnsFailure => '域名解析失败，请检查网络或服务器地址。',
-    RoomErrorCode.connectionRefused => '服务器拒绝连接，请确认服务已启动且端口正确。',
-    RoomErrorCode.connectionTimeout => '连接超时，请检查网络。',
+    RoomErrorCode.dnsFailure => '域名解析失败：找不到服务器地址。请检查网络连接与域名是否正确。',
+    RoomErrorCode.connectionRefused => '服务器拒绝连接，请确认服务已启动、端口正确。',
+    RoomErrorCode.connectionTimeout => '连接超时：服务器没有响应，请检查 IPv6 是否可用、端口是否开放。',
+    RoomErrorCode.ipv6Unreachable =>
+      '当前网络不支持 IPv6。这台服务器只有 IPv6 地址（AAAA 记录），'
+          '请改用支持 IPv6 的网络，或请管理员提供 IPv4 入口。',
     RoomErrorCode.handshakeRejected => '服务器未接受 WebSocket 升级，请检查反向代理配置。',
     RoomErrorCode.unknown => '连接失败，请查看诊断日志。',
   };
@@ -87,6 +90,14 @@ abstract final class Zh {
   static const hostRelay = '创建本地房间（开发模式）';
   static const stopRelay = '关闭本地房间';
   static const roomMembers = '房间成员';
+  static const connectFailedTitle = '连接失败';
+  static const connectDiagnostics = '诊断信息（可复制给管理员）';
+  static const copyDiagnostics = '复制诊断信息';
+  static const connectDiagnosticsCopied = '诊断信息已复制';
+  static const close = '关闭';
+  static const customServer = '自定义服务器';
+  static const profileDetails = '连接详情';
+  static const seeDiagnostics = '诊断';
   static const noRoomMembers = '暂无成员，等待其他设备加入';
   static const online = '在线';
   static const offline = '已离线';

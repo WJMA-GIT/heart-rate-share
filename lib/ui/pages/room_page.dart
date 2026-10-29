@@ -6,6 +6,7 @@ import '../../core/profile/connection_profile.dart';
 import '../../room/room_address.dart';
 import '../../room/room_client.dart';
 import '../app_state.dart';
+import '../widgets/connect_failure.dart';
 
 final class RoomPage extends StatefulWidget {
   const RoomPage({required this.state, super.key});
@@ -46,11 +47,24 @@ final class _RoomPageState extends State<RoomPage> {
     } catch (error) {
       if (mounted) {
         final code = widget.state.room.lastErrorCode;
+        final diagnostics = widget.state.room.lastDiagnostics;
+        final message = code == null
+            ? Zh.roomError(error)
+            : Zh.roomErrorCode(code);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              code == null ? Zh.roomError(error) : Zh.roomErrorCode(code),
-            ),
+            content: Text(message),
+            duration: const Duration(seconds: 8),
+            action: diagnostics == null
+                ? null
+                : SnackBarAction(
+                    label: Zh.seeDiagnostics,
+                    onPressed: () => showConnectFailure(
+                      context,
+                      message: message,
+                      diagnostics: diagnostics.toClipboardText(),
+                    ),
+                  ),
           ),
         );
       }
@@ -127,20 +141,39 @@ final class _RoomPageState extends State<RoomPage> {
         .showSnackBar(const SnackBar(content: Text(Zh.roomCodeCopied)));
   }
 
+  /// 主界面一律用友好命名：官方服务器 / 本机房间 / 自定义服务器。
+  /// 具体 IP、端口不铺在列表上，要看细节走"连接详情"弹窗。
   String _profileLabel(ConnectionProfile profile) => switch (profile.mode) {
     ConnectionMode.official => Zh.officialServer,
     ConnectionMode.local => Zh.createLocalRoom,
-    ConnectionMode.remote => '${profile.host}:${profile.port}',
+    ConnectionMode.remote => Zh.customServer,
   };
 
   String _profileSubtitle(ConnectionProfile profile) {
     final parts = <String>[
-      if (profile.mode != ConnectionMode.local) profile.endpoint,
       if (profile.roomCode != null && profile.roomCode!.isNotEmpty)
         '${Zh.roomNumber} ${profile.roomCode}',
       if (profile.lastUsedAt != null) _relativeTime(profile.lastUsedAt!),
     ];
     return parts.join(' · ');
+  }
+
+  Future<void> _showProfileDetails(ConnectionProfile profile) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_profileLabel(profile)),
+        content: SelectableText(
+          '${_profileSubtitle(profile)}\n${profile.endpoint}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text(Zh.close),
+          ),
+        ],
+      ),
+    );
   }
 
   String _relativeTime(DateTime at) {
@@ -167,10 +200,20 @@ final class _RoomPageState extends State<RoomPage> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: IconButton(
-          tooltip: Zh.forgetProfile,
-          icon: const Icon(Icons.close),
-          onPressed: () => widget.state.forgetProfile(profile),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: Zh.profileDetails,
+              icon: const Icon(Icons.info_outline),
+              onPressed: () => _showProfileDetails(profile),
+            ),
+            IconButton(
+              tooltip: Zh.forgetProfile,
+              icon: const Icon(Icons.close),
+              onPressed: () => widget.state.forgetProfile(profile),
+            ),
+          ],
         ),
       ),
     );

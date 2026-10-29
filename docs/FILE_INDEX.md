@@ -24,12 +24,14 @@
 - `lib/room/room_client.dart` — 1 Hz latest-sample upload and room-state receive; memberId and sequence are injected from persistent storage.
 - `lib/room/sequence_counter.dart` — cross-launch monotonic report sequence (block-reserved, self-healing).
 - `lib/room/room_transport.dart` — ws/wss channel opening (system CA by default, CERT_SHA256 pinning) and error classification.
+- `lib/room/room_endpoint.dart` — IPv6-aware resolver, per-address failover with a short budget, and copyable connect diagnostics.
 - `lib/room/room_address.dart` — manual WebSocket address parser.
 - `lib/room/room_identity.dart` — secure random room/member identifiers.
 - `lib/room/discovery.dart` — mDNS boundary and explicit unimplemented adapter.
 - `lib/ui/app_state.dart` — shared application composition and stream lifecycle.
 - `lib/ui/widgets.dart` — raw-byte display helper.
 - `lib/ui/widgets/heartbeat_ecg.dart` — BPM-driven ECG animation (idle when no data, no extra dependencies).
+- `lib/ui/widgets/connect_failure.dart` — connect failure dialog with copyable diagnostics.
 - `lib/ui/pages/heart_rate_page.dart` — large BPM and HRS device connection UI.
 - `lib/ui/pages/room_page.dart` — join/host controls and online/offline member grid.
 - `lib/ui/pages/settings_page.dart` — Debug toggle, version and log export.

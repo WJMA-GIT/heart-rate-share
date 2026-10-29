@@ -5,6 +5,7 @@ import '../../core/l10n/strings_zh.dart';
 import '../../core/profile/connection_profile.dart';
 import '../../room/room_client.dart';
 import '../app_state.dart';
+import '../widgets/connect_failure.dart';
 import '../widgets/heartbeat_ecg.dart';
 
 final class HeartRatePage extends StatefulWidget {
@@ -48,6 +49,36 @@ final class _HeartRatePageState extends State<HeartRatePage> {
     }
   }
 
+  /// 房间连接失败：中文原因 + 可复制的诊断信息（地址不显示在界面上）。
+  Future<void> _runRoom(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (error) {
+      if (!mounted) return;
+      final code = widget.state.room.lastErrorCode;
+      final diagnostics = widget.state.room.lastDiagnostics;
+      final message = code == null
+          ? Zh.roomError(error)
+          : Zh.roomErrorCode(code);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 8),
+          action: diagnostics == null
+              ? null
+              : SnackBarAction(
+                  label: Zh.seeDiagnostics,
+                  onPressed: () => showConnectFailure(
+                    context,
+                    message: message,
+                    diagnostics: diagnostics.toClipboardText(),
+                  ),
+                ),
+        ),
+      );
+    }
+  }
+
   /// 主界面只露「官方服务器」这一行，地址本身不出现（地址在设置页）。
   Future<void> _officialAction() async {
     final state = widget.state;
@@ -64,12 +95,12 @@ final class _HeartRatePageState extends State<HeartRatePage> {
       widget.onSwitchRoom();
       return;
     }
-    await _run(() async {
-      await state.connectProfile(
+    await _runRoom(
+      () => state.connectProfile(
         ConnectionProfile.official(),
         roomCode: roomCode,
-      );
-    });
+      ),
+    );
   }
 
   @override
