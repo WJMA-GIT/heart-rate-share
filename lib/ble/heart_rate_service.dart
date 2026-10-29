@@ -19,7 +19,6 @@ final class HeartRateService {
 
   final HeartRateSource _source;
   final AppLogger _log;
-  final _decoder = const HrsDecoder();
   final _samples = StreamController<HeartRateSample>.broadcast();
   final _snapshots = StreamController<BleSnapshot>.broadcast();
   late final StreamSubscription<HeartRateSample> _sampleSubscription;
@@ -33,7 +32,9 @@ final class HeartRateService {
   HeartRateSample? get latest => _latest;
 
   static HeartRateSource _defaultSource() {
-    if (kIsWeb) return UnsupportedHeartRateSource('web', 'Not a target platform.');
+    if (kIsWeb) {
+      return UnsupportedHeartRateSource('web', 'Not a target platform.');
+    }
     if (Platform.isAndroid) return FlutterBluePlusSource();
     // TODO(iOS): Swift CoreBluetooth HRS central is a stub because native
     // background/restoration behavior must be designed and tested on hardware.
@@ -48,7 +49,8 @@ final class HeartRateService {
   void _onSnapshot(BleSnapshot next) {
     _snapshot = next;
     _snapshots.add(next);
-    _log.info('ble', 'connection phase=${next.phase.name}', deviceId: next.connectedDeviceId);
+    _log.info('ble', 'connection phase=${next.phase.name}',
+        deviceId: next.connectedDeviceId);
   }
 
   void _onSample(HeartRateSample sample) {
@@ -74,7 +76,8 @@ final class HeartRateService {
         lastError: '$error',
       );
       _snapshots.add(_snapshot);
-      _log.error('ble', 'BLE operation failed: $error', _snapshot.connectedDeviceId, error, stack);
+      _log.error('ble', 'BLE operation failed: $error',
+          _snapshot.connectedDeviceId, error, stack);
       rethrow;
     }
   }

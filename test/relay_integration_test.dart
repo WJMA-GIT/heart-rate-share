@@ -14,7 +14,8 @@ void main() {
     final client = RoomClient(displayName: 'CI');
     addTearDown(client.dispose);
     final first = client.members.firstWhere((members) => members.isNotEmpty);
-    await client.connect(RoomAddress.parse('127.0.0.1:${relay.port}', roomCode: relay.roomCode));
+    await client.connect(
+        RoomAddress.parse('127.0.0.1:${relay.port}', roomCode: relay.roomCode));
     client.report(bpm: 72, rrIntervalsMs: const [833], sensorContact: true);
     final members = await first.timeout(const Duration(seconds: 5));
     expect(members.single.report.bpm, 72);

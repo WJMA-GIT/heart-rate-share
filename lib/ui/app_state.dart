@@ -75,7 +75,7 @@ final class AppState extends ChangeNotifier {
     unawaited(room.dispose());
     unawaited(heartRate.dispose());
     unawaited(discovery.dispose());
-    unawaited(debug.dispose());
+    debug.dispose();
     super.dispose();
   }
 }

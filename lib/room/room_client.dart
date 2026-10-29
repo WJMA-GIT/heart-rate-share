@@ -49,7 +49,8 @@ final class RoomClient {
       final channel = WebSocketChannel.connect(uri);
       await channel.ready;
       _channel = channel;
-      _send(RoomMessageType.hello, {'memberId': memberId, 'displayName': displayName});
+      _send(RoomMessageType.hello,
+          {'memberId': memberId, 'displayName': displayName});
       _subscription = channel.stream.listen(_onMessage, onDone: () {
         _setState(RoomConnectionState.disconnected);
       }, onError: (Object error, StackTrace stack) {
@@ -94,7 +95,8 @@ final class RoomClient {
 
   void _send(RoomMessageType type, Map<String, Object?> data) {
     // Never log envelope payloads: future join credentials belong here.
-    _channel?.sink.add(jsonEncode(RoomEnvelope(type: type, data: data).toJson()));
+    _channel?.sink
+        .add(jsonEncode(RoomEnvelope(type: type, data: data).toJson()));
   }
 
   void _onMessage(Object? data) {
@@ -110,10 +112,12 @@ final class RoomClient {
             _byId[member.report.memberId] = member;
           }
         case RoomMessageType.memberDelta:
-          final member = _member(envelope.data['member'] as Map<String, Object?>);
+          final member =
+              _member(envelope.data['member'] as Map<String, Object?>);
           _byId[member.report.memberId] = member;
         case RoomMessageType.error:
-          _log.warn('room', 'Relay error=${envelope.data['code']}', deviceId: memberId);
+          _log.warn('room', 'Relay error=${envelope.data['code']}',
+              deviceId: memberId);
         default:
           break;
       }

@@ -10,7 +10,8 @@ import 'heart_rate_source.dart';
 /// Android reference transport. flutter_blue_plus is intentionally pinned in
 /// pubspec.yaml. Background execution is owned by native code, not this plugin.
 final class FlutterBluePlusSource implements HeartRateSource {
-  FlutterBluePlusSource({AppLogger? logger}) : _log = logger ?? AppLogger.instance;
+  FlutterBluePlusSource({AppLogger? logger})
+      : _log = logger ?? AppLogger.instance;
 
   static final _hrsService = Guid('0000180d-0000-1000-8000-00805f9b34fb');
   static final _hrsMeasurement = Guid('00002a37-0000-1000-8000-00805f9b34fb');
@@ -40,7 +41,8 @@ final class FlutterBluePlusSource implements HeartRateSource {
   }
 
   @override
-  Future<void> startScan({Duration timeout = const Duration(seconds: 10)}) async {
+  Future<void> startScan(
+      {Duration timeout = const Duration(seconds: 10)}) async {
     _adapterSubscription ??= FlutterBluePlus.adapterState.listen((state) {
       _emit(_snapshot.copyWith(adapterState: state.name));
     });
@@ -78,7 +80,8 @@ final class FlutterBluePlusSource implements HeartRateSource {
       _log.error('ble', 'Scan failed: $error', null, error, stack);
     });
     _subscriptions.add(scanSubscription);
-    await FlutterBluePlus.startScan(withServices: [_hrsService], timeout: timeout);
+    await FlutterBluePlus.startScan(
+        withServices: [_hrsService], timeout: timeout);
     await Future<void>.delayed(timeout);
     await scanSubscription.cancel();
     _subscriptions.remove(scanSubscription);
@@ -88,7 +91,9 @@ final class FlutterBluePlusSource implements HeartRateSource {
   @override
   Future<void> connect(String deviceId) async {
     final device = _devices[deviceId];
-    if (device == null) throw ArgumentError.value(deviceId, 'deviceId', 'Scan first');
+    if (device == null) {
+      throw ArgumentError.value(deviceId, 'deviceId', 'Scan first');
+    }
     await disconnect();
     _connected = device;
     _emit(_snapshot.copyWith(
@@ -96,7 +101,10 @@ final class FlutterBluePlusSource implements HeartRateSource {
       connectedDeviceId: deviceId,
       clearError: true,
     ));
-    await device.connect(timeout: const Duration(seconds: 15), autoConnect: false);
+    await device.connect(
+        license: License.nonprofit,
+        timeout: const Duration(seconds: 15),
+        autoConnect: false);
     _connectionSubscription = device.connectionState.listen((state) {
       if (state == BluetoothConnectionState.disconnected) {
         _emit(_snapshot.copyWith(phase: BleConnectionPhase.idle));
@@ -108,7 +116,9 @@ final class FlutterBluePlusSource implements HeartRateSource {
     for (final service in services) {
       if (service.uuid == _hrsService) {
         for (final characteristic in service.characteristics) {
-          if (characteristic.uuid == _hrsMeasurement) measurement = characteristic;
+          if (characteristic.uuid == _hrsMeasurement) {
+            measurement = characteristic;
+          }
         }
       }
     }
@@ -116,13 +126,13 @@ final class FlutterBluePlusSource implements HeartRateSource {
     await measurement.setNotifyValue(true);
     _notificationSubscription = measurement.lastValueStream.listen((bytes) {
       _emit(_snapshot.copyWith(lastRawBytes: bytes));
-      _log.debug('hrs', 'raw=${_hex(bytes)}', deviceId);
+      _log.debug('hrs', 'raw=${_hex(bytes)}', deviceId: deviceId);
       try {
         _samples.add(_decoder.decode(bytes));
       } on FormatException catch (error, stack) {
         _log.error('hrs', 'HRS parse failed: $error', deviceId, error, stack);
       }
-    }));
+    });
     _emit(_snapshot.copyWith(phase: BleConnectionPhase.subscribed));
     _log.info('ble', 'HRS notifications subscribed', deviceId: deviceId);
   }

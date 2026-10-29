@@ -8,7 +8,8 @@ final class RoomIdentity {
   static const _alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   static String shortCode({int length = 6}) {
     final random = Random.secure();
-    return List.generate(length, (_) => _alphabet[random.nextInt(_alphabet.length)]).join();
+    return List.generate(
+        length, (_) => _alphabet[random.nextInt(_alphabet.length)]).join();
   }
 
   static String memberId() {
@@ -19,5 +20,4 @@ final class RoomIdentity {
     }
     return base64Url.encode(bytes).replaceAll('=', '');
   }
-
 }

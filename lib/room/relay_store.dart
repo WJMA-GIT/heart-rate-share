@@ -23,9 +23,12 @@ final class RelayStore {
 
   MemberState? accept(HeartRateReport report) {
     final previous = _members[report.memberId];
-    if (previous != null && report.sequence <= previous.report.sequence) return null;
+    if (previous != null && report.sequence <= previous.report.sequence) {
+      return null;
+    }
     if (previous == null && _members.length >= AppConfig.maxMembers) {
-      _log.warn('relay', 'Room full, member rejected', deviceId: report.memberId);
+      _log.warn('relay', 'Room full, member rejected',
+          deviceId: report.memberId);
       throw StateError('ROOM_FULL');
     }
     final state = MemberState(report: report, lastSeen: _clock(), online: true);

@@ -9,9 +9,13 @@ void main() {
   tearDown(() => store.dispose());
 
   HeartRateReport report(int sequence) => HeartRateReport(
-        memberId: 'member-1', displayName: 'A', bpm: 70 + sequence,
-        rrIntervalsMs: const [], sensorContact: true,
-        sequence: sequence, measuredAt: now,
+        memberId: 'member-1',
+        displayName: 'A',
+        bpm: 70 + sequence,
+        rrIntervalsMs: const [],
+        sensorContact: true,
+        sequence: sequence,
+        measuredAt: now,
       );
 
   test('rejects stale sequence and marks member offline', () {

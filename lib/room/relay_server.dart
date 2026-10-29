@@ -27,10 +27,13 @@ final class RelayServer {
 
   int get port => _server?.port ?? AppConfig.defaultWebSocketPort;
 
-  String get address => 'ws://localhost:${_server?.port ?? AppConfig.defaultWebSocketPort}'
+  String get address =>
+      'ws://localhost:${_server?.port ?? AppConfig.defaultWebSocketPort}'
       '${AppConfig.webSocketPath}?room=$roomCode';
 
-  Future<void> start({InternetAddress? host, int port = AppConfig.defaultWebSocketPort}) async {
+  Future<void> start(
+      {InternetAddress? host,
+      int port = AppConfig.defaultWebSocketPort}) async {
     if (_server != null || _stopped) {
       throw StateError('RelayServer instances can only be started once');
     }
@@ -39,7 +42,10 @@ final class RelayServer {
       _log.error('relay', 'HTTP server error', null, error, stack);
     });
     _pruneTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      final before = {for (final member in store.members) member.report.memberId: member.online};
+      final before = {
+        for (final member in store.members)
+          member.report.memberId: member.online
+      };
       final after = store.prune();
       for (final member in after) {
         if (before[member.report.memberId] != member.online) {
@@ -73,7 +79,9 @@ final class RelayServer {
           switch (envelope.type) {
             case RoomMessageType.hello:
               memberId = envelope.data['memberId'] as String?;
-              if (memberId == null || memberId!.isEmpty) throw const FormatException('memberId');
+              if (memberId == null || memberId!.isEmpty) {
+                throw const FormatException('memberId');
+              }
               _sockets[memberId!] = socket;
               socket.add(jsonEncode(const RoomEnvelope(
                 type: RoomMessageType.welcome,
@@ -81,10 +89,13 @@ final class RelayServer {
               ).toJson()));
             case RoomMessageType.heartRate:
               final report = _report(envelope.data);
-              if (memberId != report.memberId) throw const FormatException('Member mismatch');
+              if (memberId != report.memberId) {
+                throw const FormatException('Member mismatch');
+              }
               final state = store.accept(report);
               if (state != null) {
-                _broadcast(RoomMessageType.memberDelta, {'member': state.toJson()});
+                _broadcast(
+                    RoomMessageType.memberDelta, {'member': state.toJson()});
               }
             case RoomMessageType.ping:
               socket.add(jsonEncode(const RoomEnvelope(
@@ -95,7 +106,8 @@ final class RelayServer {
               throw FormatException('Client cannot send ${envelope.type.name}');
           }
         } catch (error, stack) {
-          _log.error('relay', 'Bad client message: $error', memberId, error, stack);
+          _log.error(
+              'relay', 'Bad client message: $error', memberId, error, stack);
           socket.add(jsonEncode(const RoomEnvelope(
             type: RoomMessageType.error,
             data: {'code': 'BAD_MESSAGE'},

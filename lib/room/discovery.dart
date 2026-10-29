@@ -17,7 +17,8 @@ abstract interface class RoomDiscovery {
 /// mDNS boundary. Plugin implementations differ in Android NSD/iOS Bonjour and
 /// desktop socket support, so no fake discovered room is emitted here.
 final class UnimplementedRoomDiscovery implements RoomDiscovery {
-  UnimplementedRoomDiscovery({AppLogger? logger}) : _log = logger ?? AppLogger.instance;
+  UnimplementedRoomDiscovery({AppLogger? logger})
+      : _log = logger ?? AppLogger.instance;
   final AppLogger _log;
   final _rooms = StreamController<List<DiscoveredRoom>>.broadcast();
   @override
@@ -29,6 +30,7 @@ final class UnimplementedRoomDiscovery implements RoomDiscovery {
     // is not guaranteed. Manual ws://host:port remains functional meanwhile.
     _log.warn('discovery', 'mDNS is not wired; use manual relay address');
   }
+
   @override
   Future<void> stop() async {}
   Future<void> dispose() => _rooms.close();

@@ -29,7 +29,8 @@ final class UnsupportedHeartRateSource implements HeartRateSource {
       );
 
   @override
-  Future<void> startScan({Duration timeout = const Duration(seconds: 10)}) async =>
+  Future<void> startScan(
+          {Duration timeout = const Duration(seconds: 10)}) async =>
       _unsupported();
   @override
   Future<void> connect(String deviceId) async => _unsupported();

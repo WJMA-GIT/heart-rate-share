@@ -62,7 +62,8 @@ final class _HeartRateAppState extends State<HeartRateApp> {
           destinations: const [
             NavigationDestination(icon: Icon(Icons.favorite), label: 'Heart'),
             NavigationDestination(icon: Icon(Icons.groups), label: 'Room'),
-            NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
+            NavigationDestination(
+                icon: Icon(Icons.settings), label: 'Settings'),
           ],
         ),
       ),

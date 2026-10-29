@@ -14,7 +14,8 @@ final class RoomAddress {
       port: base.hasPort ? base.port : AppConfig.defaultWebSocketPort,
       path: AppConfig.webSocketPath,
       queryParameters: {
-        if (roomCode != null && roomCode.trim().isNotEmpty) 'room': roomCode.trim(),
+        if (roomCode != null && roomCode.trim().isNotEmpty)
+          'room': roomCode.trim(),
         ...base.queryParameters,
       },
     );

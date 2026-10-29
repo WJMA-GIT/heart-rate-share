@@ -40,7 +40,8 @@ final class HrsDecoder {
     final rrPresent = flags & 0x10 != 0;
     final reserved = flags & 0xe0;
     if (reserved != 0) {
-      throw HrsFormatException('Reserved flag bits set: 0x${reserved.toRadixString(16)}');
+      throw HrsFormatException(
+          'Reserved flag bits set: 0x${reserved.toRadixString(16)}');
     }
     var offset = 1;
     final int bpm;
@@ -84,7 +85,6 @@ final class HrsDecoder {
       receivedAt: (receivedAt ?? DateTime.now()).toUtc(),
     );
   }
-
 
   void _require(Uint8List bytes, int offset, int count) {
     if (offset + count > bytes.length) {

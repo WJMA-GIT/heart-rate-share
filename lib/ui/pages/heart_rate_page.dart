@@ -17,7 +17,8 @@ final class _HeartRatePageState extends State<HeartRatePage> {
       await action();
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$error')));
       }
     }
   }
@@ -32,15 +33,21 @@ final class _HeartRatePageState extends State<HeartRatePage> {
       children: [
         Text(sample == null ? '--' : '${sample.bpm}',
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 96)),
-        Text('BPM', textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleLarge),
+            style: Theme.of(context)
+                .textTheme
+                .displayLarge
+                ?.copyWith(fontSize: 96)),
+        Text('BPM',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),
         Text('Status: ${ble.phase.name} · Adapter: ${ble.adapterState}',
             textAlign: TextAlign.center),
         if (sample != null) ...[
           Text('Contact: ${sample.sensorContact ?? 'not supported'}',
               textAlign: TextAlign.center),
-          Text('RR: ${sample.rrIntervalsMs.join(', ')} ms', textAlign: TextAlign.center),
+          Text('RR: ${sample.rrIntervalsMs.join(', ')} ms',
+              textAlign: TextAlign.center),
         ],
         const SizedBox(height: 24),
         FilledButton.icon(
@@ -51,21 +58,29 @@ final class _HeartRatePageState extends State<HeartRatePage> {
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
           value: _selected,
-          decoration: const InputDecoration(labelText: 'Heart-rate strap', border: OutlineInputBorder()),
+          decoration: const InputDecoration(
+              labelText: 'Heart-rate strap', border: OutlineInputBorder()),
           items: [
             for (final device in ble.devices)
-              DropdownMenuItem(value: device.id, child: Text('${device.displayName} (${device.rssi} dBm)')),
+              DropdownMenuItem(
+                  value: device.id,
+                  child: Text('${device.displayName} (${device.rssi} dBm)')),
           ],
           onChanged: (value) => setState(() => _selected = value),
         ),
         const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed: _selected == null ? null : () => _run(() => state.heartRate.connect(_selected!)),
+          onPressed: _selected == null
+              ? null
+              : () => _run(() => state.heartRate.connect(_selected!)),
           icon: const Icon(Icons.link),
           label: const Text('Connect'),
         ),
-        TextButton(onPressed: () => _run(state.heartRate.disconnect), child: const Text('Disconnect')),
-        if (ble.phase == BleConnectionPhase.error) Text(ble.lastError ?? 'Unknown BLE error'),
+        TextButton(
+            onPressed: () => _run(state.heartRate.disconnect),
+            child: const Text('Disconnect')),
+        if (ble.phase == BleConnectionPhase.error)
+          Text(ble.lastError ?? 'Unknown BLE error'),
       ],
     );
   }

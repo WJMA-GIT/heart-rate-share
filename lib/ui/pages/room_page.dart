@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../room/room_address.dart';
-import '../../room/room_client.dart';
 import '../app_state.dart';
 
 final class RoomPage extends StatefulWidget {
@@ -24,9 +23,13 @@ final class _RoomPageState extends State<RoomPage> {
 
   Future<void> _connect() async {
     try {
-      await widget.state.room.connect(RoomAddress.parse(_address.text, roomCode: _roomCode.text));
+      await widget.state.room
+          .connect(RoomAddress.parse(_address.text, roomCode: _roomCode.text));
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$error')));
+      }
     }
   }
 
@@ -41,7 +44,10 @@ final class _RoomPageState extends State<RoomPage> {
             delegate: SliverChildListDelegate([
               Text('Connection: ${state.room.state.name}'),
               const SizedBox(height: 8),
-              TextField(controller: _roomCode, decoration: const InputDecoration(labelText: 'Room short code')),
+              TextField(
+                  controller: _roomCode,
+                  decoration:
+                      const InputDecoration(labelText: 'Room short code')),
               const SizedBox(height: 8),
               TextField(
                 controller: _address,
@@ -52,21 +58,28 @@ final class _RoomPageState extends State<RoomPage> {
               ),
               const SizedBox(height: 8),
               Wrap(spacing: 8, children: [
-                FilledButton(onPressed: _connect, child: const Text('Join room')),
-                OutlinedButton(onPressed: state.room.disconnect, child: const Text('Leave')),
+                FilledButton(
+                    onPressed: _connect, child: const Text('Join room')),
                 OutlinedButton(
-                  onPressed: state.relay == null ? state.startRelay : state.stopRelay,
-                  child: Text(state.relay == null ? 'Host relay (dev)' : 'Stop relay'),
+                    onPressed: state.room.disconnect,
+                    child: const Text('Leave')),
+                OutlinedButton(
+                  onPressed:
+                      state.relay == null ? state.startRelay : state.stopRelay,
+                  child: Text(
+                      state.relay == null ? 'Host relay (dev)' : 'Stop relay'),
                 ),
               ]),
               if (state.relay != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text('Room ${state.relay!.roomCode}\n${state.relay!.address}'),
+                  child: Text(
+                      'Room ${state.relay!.roomCode}\n${state.relay!.address}'),
                 ),
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Development transport is ws://; do not use sensitive data on untrusted LANs.'),
+                child: Text(
+                    'Development transport is ws://; do not use sensitive data on untrusted LANs.'),
               ),
             ]),
           ),
@@ -84,14 +97,18 @@ final class _RoomPageState extends State<RoomPage> {
               (context, index) {
                 final member = state.members[index];
                 return Card(
-                  color: member.online ? null : Theme.of(context).disabledColor.withOpacity(0.15),
+                  color: member.online
+                      ? null
+                      : Theme.of(context).disabledColor.withValues(alpha: 0.15),
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(member.report.displayName, overflow: TextOverflow.ellipsis),
-                        Text('${member.report.bpm} BPM', style: Theme.of(context).textTheme.headlineMedium),
+                        Text(member.report.displayName,
+                            overflow: TextOverflow.ellipsis),
+                        Text('${member.report.bpm} BPM',
+                            style: Theme.of(context).textTheme.headlineMedium),
                         Text(member.online ? 'online' : 'offline'),
                         Text('seq ${member.report.sequence}'),
                       ],

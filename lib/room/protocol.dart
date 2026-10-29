@@ -1,6 +1,15 @@
 import '../core/config/app_config.dart';
 
-enum RoomMessageType { hello, welcome, heartRate, snapshot, memberDelta, ping, pong, error }
+enum RoomMessageType {
+  hello,
+  welcome,
+  heartRate,
+  snapshot,
+  memberDelta,
+  ping,
+  pong,
+  error
+}
 
 final class HeartRateReport {
   const HeartRateReport({
@@ -41,7 +50,8 @@ final class MemberState {
   final DateTime lastSeen;
   final bool online;
 
-  MemberState copyWith({HeartRateReport? report, DateTime? lastSeen, bool? online}) =>
+  MemberState copyWith(
+          {HeartRateReport? report, DateTime? lastSeen, bool? online}) =>
       MemberState(
         report: report ?? this.report,
         lastSeen: lastSeen ?? this.lastSeen,
@@ -71,7 +81,9 @@ final class RoomEnvelope {
       throw FormatException('Unsupported protocol version: ${json['v']}');
     }
     final type = RoomMessageType.values.asNameMap()[json['type']];
-    if (type == null) throw FormatException('Unknown message type: ${json['type']}');
+    if (type == null) {
+      throw FormatException('Unknown message type: ${json['type']}');
+    }
     return RoomEnvelope(type: type, data: json);
   }
 }

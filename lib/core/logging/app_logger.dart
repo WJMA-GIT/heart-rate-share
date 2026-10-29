@@ -57,7 +57,8 @@ final class AppLogger {
   static final instance = AppLogger._();
   final _entries = <LogEntry>[];
   final _changes = StreamController<void>.broadcast();
-  final _sessionId = DateTime.now().toUtc().toIso8601String().replaceAll(':', '-');
+  final _sessionId =
+      DateTime.now().toUtc().toIso8601String().replaceAll(':', '-');
   bool debugEnabled = false;
   bool _initialized = false;
   File? _file;
@@ -74,16 +75,20 @@ final class AppLogger {
     final Directory root;
     if (Platform.isAndroid) {
       // App-specific external storage: no broad storage permission required.
-      root = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
+      root = await getExternalStorageDirectory() ??
+          await getApplicationDocumentsDirectory();
     } else if (Platform.isIOS) {
       root = await getApplicationDocumentsDirectory();
     } else {
       root = await getApplicationSupportDirectory();
     }
-    final directory = Directory('${root.path}${Platform.pathSeparator}HeartRateLogs');
+    final directory =
+        Directory('${root.path}${Platform.pathSeparator}HeartRateLogs');
     await directory.create(recursive: true);
-    _file = File('${directory.path}${Platform.pathSeparator}session-$_sessionId.log');
-    info('app', 'logger initialized version=${AppConfig.applicationId} session=$_sessionId');
+    _file = File(
+        '${directory.path}${Platform.pathSeparator}session-$_sessionId.log');
+    info('app',
+        'logger initialized version=${AppConfig.applicationId} session=$_sessionId');
   }
 
   void debug(String module, String message, {String? deviceId}) =>
@@ -92,7 +97,8 @@ final class AppLogger {
       _add(LogLevel.info, module, message, deviceId);
   void warn(String module, String message, {String? deviceId}) =>
       _add(LogLevel.warn, module, message, deviceId);
-  void error(String module, String message, String? deviceId, Object error, [StackTrace? stack]) =>
+  void error(String module, String message, String? deviceId, Object error,
+          [StackTrace? stack]) =>
       _add(LogLevel.error, module, message, deviceId, '$error', stack);
 
   void _add(LogLevel level, String module, String message, String? deviceId,
@@ -113,7 +119,8 @@ final class AppLogger {
     final file = _file;
     if (file != null) {
       _writeQueue = _writeQueue.then((_) async {
-        await file.writeAsString('${entry.format()}\n', mode: FileMode.append, flush: true);
+        await file.writeAsString('${entry.format()}\n',
+            mode: FileMode.append, flush: true);
       }).catchError((Object error) {
         debugPrint('Log write failed: $error');
       });
@@ -125,17 +132,25 @@ final class AppLogger {
     final file = _file;
     if (file != null && await file.exists()) return file;
     final directory = await getTemporaryDirectory();
-    final fallback = File('${directory.path}${Platform.pathSeparator}heartrate-$_sessionId.txt');
-    await fallback.writeAsString(entries.map((entry) => entry.format()).join('\n'));
+    final fallback = File(
+        '${directory.path}${Platform.pathSeparator}heartrate-$_sessionId.txt');
+    await fallback
+        .writeAsString(entries.map((entry) => entry.format()).join('\n'));
     return fallback;
   }
 
   Future<void> share() async {
     final file = await export();
-    await SharePlus.instance.share(ShareParams(
-      text: 'HeartRate diagnostic session $_sessionId (no credentials intended)',
-      files: [XFile(file.path, mimeType: 'text/plain', name: 'heartrate-$_sessionId.txt')],
-    ));
+    // share_plus 10.x API (Share.shareXFiles). 11.x 的
+    // SharePlus.instance.share(ShareParams(...)) 需升级依赖，此处不改版本。
+    await Share.shareXFiles(
+      [
+        XFile(file.path,
+            mimeType: 'text/plain', name: 'heartrate-$_sessionId.txt')
+      ],
+      text:
+          'HeartRate diagnostic session $_sessionId (no credentials intended)',
+    );
   }
 
   Future<void> dispose() async {
