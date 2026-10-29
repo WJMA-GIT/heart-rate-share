@@ -79,7 +79,61 @@ docker run -d --name heartrate-relay -p 9000:9000 -e PORT=9000 mawjgit/heart-rat
 > 镜像内已设 `HOST=0.0.0.0`，非 root（`node` 用户）运行，并内置 `HEALTHCHECK`。
 > 升级：`docker pull mawjgit/heart-rate-share:latest && docker rm -f heartrate-relay`，再用上面的 `docker run` 起回来即可。
 
-### 方式一：docker compose（推荐）
+### 方式零-B：用现成镜像 + compose 一键部署（推荐给服务器）
+
+仓库根目录的 `docker-compose-hub.yml` 只拉取 Docker Hub 上的镜像、不在本地构建，
+适合「只想把服务跑起来」的部署场景。
+
+```bash
+# 最少两条命令
+curl -O https://raw.githubusercontent.com/WJMA-GIT/heart-rate-share/main/docker-compose-hub.yml
+docker compose -f docker-compose-hub.yml up -d
+
+# 或者整仓 clone 后
+git clone https://github.com/WJMA-GIT/heart-rate-share.git
+cd heart-rate-share
+docker compose -f docker-compose-hub.yml up -d
+```
+
+跑起来后自检：
+
+```bash
+docker compose -f docker-compose-hub.yml ps          # STATUS 应显示 healthy
+curl -s http://127.0.0.1:8765/healthz                # {"status":"ok",...}
+docker compose -f docker-compose-hub.yml logs -f      # JSON 日志
+```
+
+**钉版本（生产建议）**：默认是 `latest`，会跟着最新构建走。要固定版本就设 `IMAGE_TAG`：
+
+```bash
+IMAGE_TAG=v0.3.2 docker compose -f docker-compose-hub.yml up -d
+# 或写进同目录 .env 文件，之后命令不用再带环境变量
+echo 'IMAGE_TAG=v0.3.2' >> .env
+docker compose -f docker-compose-hub.yml up -d
+```
+
+可用版本见 [Docker Hub tags](https://hub.docker.com/r/mawjgit/heart-rate-share/tags)：
+`latest`、`sha-<短提交>`、`v0.3.2` 这类版本号。
+
+**升级**：改 `IMAGE_TAG`（或保持 `latest`）后重新 `up -d` 即可。文件里设了 `pull_policy: always`，
+所以 `up` 会先拉新镜像；镜像变了 Compose 会**重建容器**。重建会清空内存里的房间状态
+（协议里房间 epoch 恢复本就是 pre-production 项），客户端下一次上报会自愈，不需要手动干预。
+
+配置项与 `docker-compose.yml` 完全一致，用环境变量覆盖即可：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PORT` | `8765` | 容器监听端口，同时决定宿主机映射端口 |
+| `ROOM_LIMIT` | `20` | 单房间最大成员数 |
+| `OFFLINE_TIMEOUT_MS` | `5000` | 多久无有效上报判离线 |
+| `MAX_CLIENTS` | `200` | 全服最大并发连接 |
+| `LOG_LEVEL` | `info` | `error`/`warn`/`info`/`debug` |
+
+**两个 compose 文件的区别，一句话**：`docker-compose-hub.yml` 拉现成镜像、秒起、适合部署；
+`docker-compose.yml` 从本仓库 `server/` 源码构建，适合你要验证自己改的服务端代码。二者服务名与
+容器名相同，**在同一目录里二选一使用**（先 `down` 再换文件 `up` 即可，不会残留两个容器）。
+
+### 方式一：docker compose（从源码本地构建）
 
 ```bash
 git clone https://github.com/WJMA-GIT/heart-rate-share.git

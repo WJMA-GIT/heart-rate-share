@@ -1,0 +1,52 @@
+# 直接用 Docker Hub 上的现成镜像部署 —— 不做本地构建。
+#
+# 与 docker-compose.yml 二选一：
+#   docker-compose-hub.yml  拉取 mawjgit/heart-rate-share 跑起来（服务器部署 / 只想要服务）
+#   docker-compose.yml      从本仓库 server/ 源码本地构建（改了服务端代码要自己验证时用）
+#
+# 用法：
+#   docker compose -f docker-compose-hub.yml up -d
+#   docker compose -f docker-compose-hub.yml logs -f
+#   docker compose -f docker-compose-hub.yml down
+#
+# 钉版本（推荐生产这么做，避免 latest 漂移）：
+#   IMAGE_TAG=v0.3.2 docker compose -f docker-compose-hub.yml up -d
+#   或写进同目录 .env：IMAGE_TAG=v0.3.2
+#
+# 升级：改 IMAGE_TAG（或保持 latest）后重新 up -d —— pull_policy: always 会先拉新镜像，
+#      镜像变了 compose 会重建容器（内存房间状态会清空，客户端下一次上报即自愈）。
+
+services:
+  relay:
+    # 可用 ${IMAGE_TAG:-latest} 钉到具体版本，例如 IMAGE_TAG=v0.3.2
+    image: mawjgit/heart-rate-share:${IMAGE_TAG:-latest}
+    container_name: heart-rate-relay
+    restart: unless-stopped
+    # 每次 up 都先尝试拉取最新镜像；钉了版本 tag 时等价于确认该 tag 是本地的。
+    # 不用 build 段：这个文件刻意只拉取、不构建。
+    pull_policy: always
+    environment:
+      # 容器内监听端口；同时决定宿主机映射端口，改一个地方即可。
+      PORT: "${PORT:-8765}"
+      ROOM_LIMIT: "${ROOM_LIMIT:-20}"
+      OFFLINE_TIMEOUT_MS: "${OFFLINE_TIMEOUT_MS:-5000}"
+      MAX_CLIENTS: "${MAX_CLIENTS:-200}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    ports:
+      # 只绑 0.0.0.0 全接口；若前面有反向代理，建议改成 "127.0.0.1:${PORT:-8765}:${PORT:-8765}"
+      - "${PORT:-8765}:${PORT:-8765}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"fetch('http://127.0.0.1:'+process.env.PORT+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    logging:
+      # 日志轮转，避免长期运行把磁盘写满
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 无数据库状态，无需挂载卷；重启后房间由客户端重新上报自愈
