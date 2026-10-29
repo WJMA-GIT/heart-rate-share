@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test test/"
+    "test": "node --test test/relay.test.js",
+    "smoke": "node test/smoke.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

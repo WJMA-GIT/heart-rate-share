@@ -193,8 +193,8 @@ server {
 ```bash
 cd server
 npm ci
-npm test                 # 9 个协议回归用例（假时钟）
-node test/smoke.js       # 真实时钟：3 客户端 + 快照 + 5 秒判离线
+npm test                 # 9 个协议回归用例（假时钟，约 2 秒）
+npm run smoke            # 真实时钟：3 客户端 + 快照 + 5 秒判离线（约 7 秒）
 node test/smoke.js wss://hr.example.com/ws?room=SMOKE1   # 部署后验收
 ```
 
