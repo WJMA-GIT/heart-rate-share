@@ -38,6 +38,9 @@ abstract final class Zh {
   static const serverAddress = '服务器地址';
   static const serverAddressHint =
       '域名或 IP，可带端口，例如 heart.example.com 或 192.168.1.10:8765';
+  static const copyServerAddress = '复制地址';
+  static const serverAddressCopied = '地址已复制';
+  static const serverAddressTapToCopy = '点击地址复制';
   static const joinRoom = '加入房间';
   static const leaveRoom = '退出房间';
   static const hostRelay = '创建本地房间（开发模式）';
@@ -49,7 +52,6 @@ abstract final class Zh {
   static const sequenceLabel = '序号';
   static const guestUser = '访客';
   static const guestNicknameHint = '当前昵称为「访客」，可到「设置」修改。';
-  static const localRoomAddress = '本地房间地址';
   static const developmentTransportWarning = '使用 ws:// 时数据为明文，公网连接请使用 wss://。';
 
   static const nicknameLabel = '我的昵称';

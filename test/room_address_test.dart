@@ -55,6 +55,37 @@ void main() {
       );
     });
 
+    test('normalized endpoint adds scheme and default port', () {
+      expect(
+        RoomAddress.normalizedEndpoint('192.168.1.10:8765'),
+        'ws://192.168.1.10:8765',
+      );
+      expect(
+        RoomAddress.normalizedEndpoint('heart.example.com'),
+        'ws://heart.example.com:8765',
+      );
+      expect(
+        RoomAddress.normalizedEndpoint('wss://heart.example.com'),
+        'wss://heart.example.com:443',
+      );
+    });
+
+    test('normalized endpoint drops path, query and room code', () {
+      expect(
+        RoomAddress.normalizedEndpoint(
+          'wss://heart.example.com/ws?room=ABC123',
+        ),
+        'wss://heart.example.com:443',
+      );
+    });
+
+    test('normalized endpoint rejects invalid input', () {
+      expect(
+        () => RoomAddress.normalizedEndpoint('http://localhost'),
+        throwsA(isA<RoomAddressException>()),
+      );
+    });
+
     test('rejects empty, unsupported scheme, invalid host and port', () {
       expect(
         () => RoomAddress.parse(''),

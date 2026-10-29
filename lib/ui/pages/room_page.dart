@@ -57,8 +57,10 @@ final class _RoomPageState extends State<RoomPage> {
           : widget.state.stopRelay());
       final relay = widget.state.relay;
       if (mounted && relay != null) {
-        _roomCode.text = relay.roomCode;
-        _address.text = '127.0.0.1:${relay.port}';
+        setState(() {
+          _roomCode.text = relay.roomCode;
+          _address.text = '127.0.0.1:${relay.port}';
+        });
       }
     } catch (error) {
       if (mounted) {
@@ -73,6 +75,58 @@ final class _RoomPageState extends State<RoomPage> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text(Zh.roomCodeCopied)));
+  }
+
+  Future<void> _copyAddress(String address) async {
+    await Clipboard.setData(ClipboardData(text: address));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text(Zh.serverAddressCopied)));
+  }
+
+  String? _normalizedAddress() {
+    final raw = _address.text.trim();
+    if (raw.isEmpty) return null;
+    try {
+      return RoomAddress.normalizedEndpoint(raw);
+    } on RoomAddressException {
+      return null;
+    }
+  }
+
+  Widget _addressPanel(String address) {
+    return Semantics(
+      button: true,
+      label: Zh.copyServerAddress,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _copyAddress(address),
+          child: ListTile(
+            leading: const Icon(Icons.dns_outlined),
+            title: Text(
+              Zh.serverAddress,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(address, maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(
+                  Zh.serverAddressTapToCopy,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+            trailing: IconButton(
+              tooltip: Zh.copyServerAddress,
+              icon: const Icon(Icons.copy),
+              onPressed: () => _copyAddress(address),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _roomNumberPanel(String? code) {
@@ -177,6 +231,7 @@ final class _RoomPageState extends State<RoomPage> {
   Widget build(BuildContext context) {
     final state = widget.state;
     final roomCode = state.currentRoomCode;
+    final normalizedAddress = _normalizedAddress();
     return CustomScrollView(
       slivers: [
         SliverPadding(
@@ -209,7 +264,12 @@ final class _RoomPageState extends State<RoomPage> {
                   labelText: Zh.serverAddress,
                   hintText: Zh.serverAddressHint,
                 ),
+                onChanged: (_) => setState(() {}),
               ),
+              if (normalizedAddress != null) ...[
+                const SizedBox(height: 8),
+                _addressPanel(normalizedAddress),
+              ],
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -231,11 +291,6 @@ final class _RoomPageState extends State<RoomPage> {
                   ),
                 ],
               ),
-              if (state.relay != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text('${Zh.localRoomAddress}：${state.relay!.address}'),
-                ),
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Text(Zh.developmentTransportWarning),

@@ -28,6 +28,13 @@ final class RoomAddressException implements FormatException {
 final class RoomAddress {
   const RoomAddress._();
 
+  /// 规范化成可直接粘贴回服务器地址框的端点：
+  /// 保留协议与显式端口，去掉 `/ws` 路径、查询参数和房间号。
+  static String normalizedEndpoint(String input) {
+    final uri = parse(input);
+    return Uri(scheme: uri.scheme, host: uri.host, port: uri.port).toString();
+  }
+
   static Uri parse(String input, {String? roomCode}) {
     final trimmed = input.trim();
     if (trimmed.isEmpty) {
