@@ -18,6 +18,10 @@ abstract interface class IdentityStore {
   /// 已预留的序号上界（见 `SequenceCounter`）。
   Future<int> loadReservedSequence();
   Future<void> saveReservedSequence(int reservedUpTo);
+
+  /// 最近连接配置（JSON）。与安装标识共用同一套存储，不另起一套。
+  Future<String?> loadConnectionProfiles();
+  Future<void> saveConnectionProfiles(String blob);
 }
 
 /// 生成 / 解析安装标识。
@@ -45,10 +49,15 @@ abstract final class InstallId {
 }
 
 final class InMemoryIdentityStore implements IdentityStore {
-  InMemoryIdentityStore({this.installId, this.reservedSequence = 0});
+  InMemoryIdentityStore({
+    this.installId,
+    this.reservedSequence = 0,
+    this.connectionProfiles,
+  });
 
   String? installId;
   int reservedSequence;
+  String? connectionProfiles;
 
   @override
   Future<String?> loadInstallId() async => installId;
@@ -62,6 +71,13 @@ final class InMemoryIdentityStore implements IdentityStore {
   @override
   Future<void> saveReservedSequence(int value) async =>
       reservedSequence = value;
+
+  @override
+  Future<String?> loadConnectionProfiles() async => connectionProfiles;
+
+  @override
+  Future<void> saveConnectionProfiles(String blob) async =>
+      connectionProfiles = blob;
 }
 
 final class SharedPreferencesIdentityStore implements IdentityStore {
@@ -69,6 +85,7 @@ final class SharedPreferencesIdentityStore implements IdentityStore {
 
   static const installIdKey = 'identity.installId';
   static const reservedSequenceKey = 'room.reservedSequence';
+  static const connectionProfilesKey = 'connection.recentProfiles';
 
   final SharedPreferences _preferences;
 
@@ -89,5 +106,15 @@ final class SharedPreferencesIdentityStore implements IdentityStore {
   Future<void> saveReservedSequence(int reservedUpTo) async {
     final ok = await _preferences.setInt(reservedSequenceKey, reservedUpTo);
     if (!ok) throw StateError('sequence persistence failed');
+  }
+
+  @override
+  Future<String?> loadConnectionProfiles() async =>
+      _preferences.getString(connectionProfilesKey);
+
+  @override
+  Future<void> saveConnectionProfiles(String blob) async {
+    final ok = await _preferences.setString(connectionProfilesKey, blob);
+    if (!ok) throw StateError('profile persistence failed');
   }
 }

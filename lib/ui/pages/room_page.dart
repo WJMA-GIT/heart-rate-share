@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/config/app_config.dart';
 import '../../core/l10n/strings_zh.dart';
+import '../../core/profile/connection_profile.dart';
 import '../../room/room_address.dart';
+import '../../room/room_client.dart';
 import '../app_state.dart';
 
 final class RoomPage extends StatefulWidget {
@@ -16,13 +17,13 @@ final class RoomPage extends StatefulWidget {
 final class _RoomPageState extends State<RoomPage> {
   late final TextEditingController _address;
   final _roomCode = TextEditingController();
+  bool _busy = false;
 
   @override
   void initState() {
     super.initState();
-    _address = TextEditingController(
-      text: AppConfig.effectiveDefaultServerHost,
-    );
+    // 地址框只在「高级」里出现，默认不预填官方地址（界面上不露出它）。
+    _address = TextEditingController();
   }
 
   @override
@@ -32,42 +33,91 @@ final class _RoomPageState extends State<RoomPage> {
     super.dispose();
   }
 
-  Future<void> _connect() async {
-    if (_roomCode.text.trim().isEmpty) {
+  String? get _typedRoom {
+    final value = _roomCode.text.trim();
+    return value.isEmpty ? null : value;
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+    } catch (error) {
+      if (mounted) {
+        final code = widget.state.room.lastErrorCode;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              code == null ? Zh.roomError(error) : Zh.roomErrorCode(code),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 官方服务器：需要房间号（可用最近记录里的，或用户手填）。
+  Future<void> _connectOfficial() async {
+    final code = _typedRoom;
+    if (code == null) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text(Zh.roomNumberRequired)));
       return;
     }
-    try {
-      await widget.state.room.connect(
-        RoomAddress.parse(_address.text, roomCode: _roomCode.text),
-      );
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(Zh.roomError(error))));
-      }
-    }
+    await _run(
+      () => widget.state.connectProfile(
+        ConnectionProfile.official(),
+        roomCode: code,
+      ),
+    );
   }
 
-  Future<void> _toggleRelay() async {
-    try {
-      await (widget.state.relay == null
-          ? widget.state.startRelay()
-          : widget.state.stopRelay());
-      final relay = widget.state.relay;
-      if (mounted && relay != null) {
-        setState(() {
-          _roomCode.text = relay.roomCode;
-          _address.text = '127.0.0.1:${relay.port}';
-        });
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(Zh.roomError(error))));
-      }
+  /// 本机房间：起 Relay 再自己连进去（显式动作，绝不默认发生）。
+  Future<void> _createLocalRoom() => _run(widget.state.createLocalRoom);
+
+  Future<void> _connectRecent(ConnectionProfile profile) async {
+    if (profile.mode == ConnectionMode.local) {
+      await _run(widget.state.createLocalRoom);
+      return;
     }
+    final code = _typedRoom ?? profile.roomCode;
+    if (code == null || code.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text(Zh.roomNumberRequired)));
+      return;
+    }
+    await _run(() => widget.state.connectProfile(profile, roomCode: code));
+  }
+
+  /// 高级：手动地址（ws:// 或 wss:// 都行），沿用原来的解析器。
+  Future<void> _connectManual() async {
+    final raw = _address.text.trim();
+    if (raw.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text(Zh.serverAddressHint)));
+      return;
+    }
+    final code = _typedRoom;
+    if (code == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text(Zh.roomNumberRequired)));
+      return;
+    }
+    await _run(() async {
+      final uri = RoomAddress.parse(raw, roomCode: code);
+      await widget.state.connectProfile(
+        ConnectionProfile(
+          mode: ConnectionMode.remote,
+          host: uri.host,
+          port: uri.port,
+          secure: uri.scheme == 'wss',
+        ),
+        roomCode: code,
+      );
+    });
   }
 
   Future<void> _copyRoomCode(String code) async {
@@ -77,74 +127,58 @@ final class _RoomPageState extends State<RoomPage> {
         .showSnackBar(const SnackBar(content: Text(Zh.roomCodeCopied)));
   }
 
-  Future<void> _copyAddress(String address) async {
-    await Clipboard.setData(ClipboardData(text: address));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text(Zh.serverAddressCopied)));
+  String _profileLabel(ConnectionProfile profile) => switch (profile.mode) {
+    ConnectionMode.official => Zh.officialServer,
+    ConnectionMode.local => Zh.createLocalRoom,
+    ConnectionMode.remote => '${profile.host}:${profile.port}',
+  };
+
+  String _profileSubtitle(ConnectionProfile profile) {
+    final parts = <String>[
+      if (profile.mode != ConnectionMode.local) profile.endpoint,
+      if (profile.roomCode != null && profile.roomCode!.isNotEmpty)
+        '${Zh.roomNumber} ${profile.roomCode}',
+      if (profile.lastUsedAt != null) _relativeTime(profile.lastUsedAt!),
+    ];
+    return parts.join(' · ');
   }
 
-  String? _normalizedAddress() {
-    final raw = _address.text.trim();
-    if (raw.isEmpty) return null;
-    try {
-      return RoomAddress.normalizedEndpoint(raw);
-    } on RoomAddressException {
-      return null;
-    }
+  String _relativeTime(DateTime at) {
+    final delta = DateTime.now().toUtc().difference(at);
+    if (delta.inMinutes < 1) return '刚刚';
+    if (delta.inMinutes < 60) return '${delta.inMinutes} 分钟前';
+    if (delta.inHours < 24) return '${delta.inHours} 小时前';
+    return '${delta.inDays} 天前';
   }
 
-  Widget _addressPanel(String address) {
-    return Semantics(
-      button: true,
-      label: Zh.copyServerAddress,
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => _copyAddress(address),
-          child: ListTile(
-            leading: const Icon(Icons.dns_outlined),
-            title: Text(
-              Zh.serverAddress,
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(address, maxLines: 1, overflow: TextOverflow.ellipsis),
-                Text(
-                  Zh.serverAddressTapToCopy,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
-            trailing: IconButton(
-              tooltip: Zh.copyServerAddress,
-              icon: const Icon(Icons.copy),
-              onPressed: () => _copyAddress(address),
-            ),
-          ),
+  Widget _recentCard(ConnectionProfile profile) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        onTap: _busy ? null : () => _connectRecent(profile),
+        leading: Icon(switch (profile.mode) {
+          ConnectionMode.official => Icons.cloud_outlined,
+          ConnectionMode.local => Icons.phone_iphone,
+          ConnectionMode.remote => Icons.dns_outlined,
+        }),
+        title: Text(_profileLabel(profile)),
+        subtitle: Text(
+          _profileSubtitle(profile),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: IconButton(
+          tooltip: Zh.forgetProfile,
+          icon: const Icon(Icons.close),
+          onPressed: () => widget.state.forgetProfile(profile),
         ),
       ),
     );
   }
 
-  Widget _roomNumberPanel(String? code) {
-    if (code == null || code.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-          child: Text(
-            Zh.roomNotJoined,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-        ),
-      );
-    }
-
+  Widget _roomNumberPanel(String code) {
     final textStyle = Theme.of(context).textTheme.displayLarge
-        ?.copyWith(fontSize: 64, fontWeight: FontWeight.bold, letterSpacing: 8);
+        ?.copyWith(fontSize: 56, fontWeight: FontWeight.bold, letterSpacing: 6);
     return Semantics(
       button: true,
       label: Zh.copyRoomNumber,
@@ -153,14 +187,13 @@ final class _RoomPageState extends State<RoomPage> {
         child: InkWell(
           onTap: () => _copyRoomCode(code),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
             child: Column(
               children: [
                 Text(
                   Zh.roomNumber,
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
-                const SizedBox(height: 4),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -231,23 +264,33 @@ final class _RoomPageState extends State<RoomPage> {
   Widget build(BuildContext context) {
     final state = widget.state;
     final roomCode = state.currentRoomCode;
-    final normalizedAddress = _normalizedAddress();
+    final connected = state.room.state == RoomConnectionState.connected;
+    final recents = state.recentProfiles;
+
     return CustomScrollView(
       slivers: [
         SliverPadding(
           padding: const EdgeInsets.all(16),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
-              _roomNumberPanel(roomCode),
+              if (roomCode != null) ...[
+                _roomNumberPanel(roomCode),
+                const SizedBox(height: 8),
+              ],
               if (state.nickname == Zh.guestUser)
                 const Padding(
-                  padding: EdgeInsets.only(top: 8),
+                  padding: EdgeInsets.only(bottom: 8),
                   child: Text(Zh.guestNicknameHint),
                 ),
-              const SizedBox(height: 8),
               Text(
                 '${Zh.connectionStatusLabel}：${Zh.roomState(state.room.state)}',
+                style: Theme.of(context).textTheme.titleSmall,
               ),
+              if (state.roomMode == null && !connected)
+                const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Text(Zh.roomModeChoose),
+                ),
               const SizedBox(height: 12),
               TextField(
                 controller: _roomCode,
@@ -255,38 +298,81 @@ final class _RoomPageState extends State<RoomPage> {
                   labelText: Zh.roomNumber,
                   hintText: Zh.roomNumberHint,
                 ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _address,
-                keyboardType: TextInputType.url,
-                decoration: const InputDecoration(
-                  labelText: Zh.serverAddress,
-                  hintText: Zh.serverAddressHint,
-                ),
                 onChanged: (_) => setState(() {}),
               ),
-              if (normalizedAddress != null) ...[
-                const SizedBox(height: 8),
-                _addressPanel(normalizedAddress),
-              ],
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
+              // 二选一：官方服务器 / 本机房间。没有默认，必须点一下。
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _busy ? null : _connectOfficial,
+                      icon: const Icon(Icons.cloud_outlined),
+                      label: const Text(Zh.connectOfficialServer),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _busy ? null : _createLocalRoom,
+                      icon: const Icon(Icons.phone_iphone),
+                      label: const Text(Zh.createLocalRoom),
+                    ),
+                  ),
+                ],
+              ),
+              if (state.roomMode == ConnectionMode.local)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    Zh.localRoomHint,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  FilledButton(
-                    onPressed: _connect,
-                    child: const Text(Zh.joinRoom),
-                  ),
                   OutlinedButton(
-                    onPressed: state.room.disconnect,
+                    onPressed: connected ? state.disconnectRoom : null,
                     child: const Text(Zh.leaveRoom),
                   ),
-                  OutlinedButton(
-                    onPressed: _toggleRelay,
-                    child: Text(
-                      state.relay == null ? Zh.hostRelay : Zh.stopRelay,
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                Zh.recentConnections,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              if (recents.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(Zh.recentEmpty),
+                )
+              else
+                ...recents.map(_recentCard),
+              const SizedBox(height: 8),
+              // 地址只在这里出现，且默认收起。
+              ExpansionTile(
+                title: const Text(Zh.manualAddressSection),
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(bottom: 8),
+                children: [
+                  TextField(
+                    controller: _address,
+                    keyboardType: TextInputType.url,
+                    decoration: const InputDecoration(
+                      labelText: Zh.serverAddress,
+                      hintText: Zh.serverAddressHint,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.tonal(
+                      onPressed: _busy ? null : _connectManual,
+                      child: const Text(Zh.joinRoom),
                     ),
                   ),
                 ],

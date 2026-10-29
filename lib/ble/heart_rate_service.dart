@@ -159,6 +159,12 @@ final class HeartRateService {
     await _stopForeground();
   }
 
+  /// 忽略/删除一台设备：正连着就先按用户意图断开（不自动重连）。
+  Future<void> forget(String deviceId) async {
+    if (_target == deviceId) await disconnect();
+    await _guard(() => _source.forget(deviceId));
+  }
+
   Future<void> _connect(String id, Duration timeout) async {
     _attemptInProgress = true;
     _linkEstablished = false;

@@ -465,6 +465,28 @@ final class FlutterBluePlusSource implements HeartRateSource {
   }
 
   @override
+  Future<void> forget(String deviceId) async {
+    if (_connected?.remoteId.str == deviceId) {
+      await disconnect();
+    }
+    _devices.remove(deviceId);
+    _rssiById.remove(deviceId);
+    _emit(
+      _snapshot.copyWith(
+        devices: _snapshot.devices
+            .where((device) => device.id != deviceId)
+            .toList(),
+      ),
+    );
+    _log.info(
+      'ble',
+      'device removed from list',
+      deviceId: deviceId,
+      code: 'device_forgotten',
+    );
+  }
+
+  @override
   Future<void> disconnect() async {
     // 让还在等 10 秒超时的扫描收尾失效，避免它稍后覆写 phase。
     _scanEpoch++;

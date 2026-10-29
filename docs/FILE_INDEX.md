@@ -6,7 +6,8 @@
 - `lib/main.dart` — app startup and three-tab navigation.
 - `lib/core/config/app_config.dart` — centralized package/protocol/timing constants.
 - `lib/core/logging/app_logger.dart` — levels, sanitization, per-session files, export/share.
-- `lib/core/profile/install_identity.dart` — persisted install identity (per install, not per user) and reserved report sequence.
+- `lib/core/profile/install_identity.dart` — persisted install identity, reserved report sequence, and the single storage used for recent connection profiles.
+- `lib/core/profile/connection_profile.dart` — connection profile model (official/remote/local) and the recent-connection list logic.
 - `lib/ble/ble_models.dart` — adapter/device/connection snapshot models.
 - `lib/ble/heart_rate_sample.dart` — HRS 0x2A37 flags/BPM/contact/RR parser.
 - `lib/ble/heart_rate_source.dart` — platform-neutral source interface and unsupported stub.
@@ -22,11 +23,13 @@
 - `lib/room/relay_server.dart` — loopback/LAN WebSocket relay and snapshot/delta fan-out.
 - `lib/room/room_client.dart` — 1 Hz latest-sample upload and room-state receive; memberId and sequence are injected from persistent storage.
 - `lib/room/sequence_counter.dart` — cross-launch monotonic report sequence (block-reserved, self-healing).
+- `lib/room/room_transport.dart` — ws/wss channel opening (system CA by default, CERT_SHA256 pinning) and error classification.
 - `lib/room/room_address.dart` — manual WebSocket address parser.
 - `lib/room/room_identity.dart` — secure random room/member identifiers.
 - `lib/room/discovery.dart` — mDNS boundary and explicit unimplemented adapter.
 - `lib/ui/app_state.dart` — shared application composition and stream lifecycle.
 - `lib/ui/widgets.dart` — raw-byte display helper.
+- `lib/ui/widgets/heartbeat_ecg.dart` — BPM-driven ECG animation (idle when no data, no extra dependencies).
 - `lib/ui/pages/heart_rate_page.dart` — large BPM and HRS device connection UI.
 - `lib/ui/pages/room_page.dart` — join/host controls and online/offline member grid.
 - `lib/ui/pages/settings_page.dart` — Debug toggle, version and log export.
@@ -38,6 +41,7 @@
 - `android/app/src/main/kotlin/com/wjmagit/heartrateshare/BleKeepAliveService.kt` — connectedDevice foreground service so the OS does not reclaim the GATT link.
 - `docs/protocol.md` — protocol version, fields, timing and security limitations.
 - `docs/identity.md` — member identity options, chosen install-id approach, reinstall/new-phone semantics.
+- `docs/client-0.5.0.md` — 0.5.0 client changes: default server, no implicit local room, wss/TLS, device list + animation.
 - `docs/ble-disconnect-v0.3.3.md` — BLE auto-disconnect root causes, fix, and field-data checklist.
 - `docs/ble-field-log-2026-10-29.md` — field log postmortem: the "disconnect" was a stale scan-tail writing `idle` over a live link.
 - `test/**` — parser, store, address, sanitizer, reconnect-policy and reconnect-supervisor tests.

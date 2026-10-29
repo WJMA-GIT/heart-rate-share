@@ -67,6 +67,26 @@ final class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// 官方服务器地址只在这里露出（主界面只显示「官方服务器」）。
+  Widget _serverTile(BuildContext context) {
+    final pinned = widget.state.pinnedCertificate;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: ListTile(
+        leading: const Icon(Icons.cloud_outlined),
+        title: const Text(Zh.officialServer),
+        subtitle: Text(
+          '${Zh.serverEndpointLabel}：${AppConfig.officialServerHost}:'
+          '${AppConfig.officialServerPort}\n'
+          '${AppConfig.officialServerSecure ? Zh.secureConnection : Zh.plainConnection} · '
+          '${pinned ? Zh.certPinned : Zh.certSystemCa}',
+        ),
+        isThreeLine: true,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
@@ -77,6 +97,8 @@ final class _SettingsPageState extends State<SettingsPage> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              _serverTile(context),
+              const Divider(height: 24),
               TextField(
                 controller: _nicknameController,
                 enabled: !_savingNickname,
