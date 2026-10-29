@@ -61,6 +61,9 @@ final class HeartRateService {
   bool _foregroundActive = false;
   bool _disposed = false;
 
+  /// 一次扫描正在进行。扫描收尾写的 `idle` 不是掉线。
+  bool _scanning = false;
+
   Stream<HeartRateSample> get samples => _samples.stream;
   Stream<BleSnapshot> get snapshots => _snapshots.stream;
   BleSnapshot get snapshot => _snapshot;
@@ -82,13 +85,18 @@ final class HeartRateService {
   }
 
   void _onSnapshot(BleSnapshot next) {
+    final previous = _snapshot.phase;
     _snapshot = next;
     _snapshots.add(next);
-    _log.info(
-      'ble',
-      'connection phase=${next.phase.name}',
-      deviceId: next.connectedDeviceId,
-    );
+    // 只在 phase 变化时记一行：现场日志里 863/879 行都是重复的 phase=idle，
+    // 把真正的证据全淹了。每条通知都会带一个 snapshot，不能逐条写 info。
+    if (previous != next.phase) {
+      _log.info(
+        'ble',
+        'connection phase=${next.phase.name}',
+        deviceId: next.connectedDeviceId,
+      );
+    }
     switch (next.phase) {
       case BleConnectionPhase.subscribed:
         // 链路真正可用（notify 已订阅）才复位退避计数。
@@ -99,6 +107,8 @@ final class HeartRateService {
       case BleConnectionPhase.idle:
         // 只有「本来连着」的 idle 才是掉线；连接流程内部的 idle 一律忽略。
         if (!_linkEstablished) break;
+        // 扫描期间传输层可能还在写扫描相关快照，别把它当成掉线。
+        if (_scanning) break;
         _linkEstablished = false;
         _scheduleRetry('phase=idle');
       case BleConnectionPhase.error:
@@ -119,7 +129,17 @@ final class HeartRateService {
     );
   }
 
-  Future<void> scan() => _guard(() => _source.startScan());
+  Future<void> scan() async {
+    _scanning = true;
+    try {
+      await _guard(() => _source.startScan());
+    } finally {
+      // 快照是异步投递的：先让扫描期间产生的快照被消费掉，再解除标志，
+      // 否则收尾那条 idle 会落在标志复位之后，防御就失效了。
+      await Future<void>.delayed(Duration.zero);
+      _scanning = false;
+    }
+  }
 
   Future<void> connect(String id) async {
     _userDisconnect = false;

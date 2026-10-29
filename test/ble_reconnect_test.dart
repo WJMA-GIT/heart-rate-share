@@ -22,6 +22,9 @@ final class FakeHeartRateSource implements HeartRateSource {
   /// 真实传输层在 connect 开头会先 disconnect，于是先吐一个 idle。
   bool emitIdleOnConnect = true;
 
+  /// 扫描收尾时吐一个 idle（0.3.2 的行为，正是现场日志里那条假掉线）。
+  bool scanEndsWithIdle = false;
+
   BleSnapshot _snapshot = const BleSnapshot();
 
   @override
@@ -42,7 +45,12 @@ final class FakeHeartRateSource implements HeartRateSource {
   @override
   Future<void> startScan({
     Duration timeout = const Duration(seconds: 10),
-  }) async {}
+  }) async {
+    emit(_snapshot.copyWith(phase: BleConnectionPhase.scanning));
+    if (scanEndsWithIdle) {
+      emit(_snapshot.copyWith(phase: BleConnectionPhase.idle));
+    }
+  }
 
   @override
   Future<void> connect(
@@ -191,6 +199,45 @@ void main() {
       reason: '第二次掉线应重新从第一次退避开始',
     );
     expect(service.snapshot.phase, BleConnectionPhase.subscribed);
+  });
+
+  test('扫描收尾吐出的 idle 不会被当成掉线（现场日志里的假断连）', () async {
+    await service.connect('AA:BB:CC:DD:EE:FF');
+    await waitFor(
+      () => service.snapshot.phase == BleConnectionPhase.subscribed,
+      reason: '首次连接应进入 subscribed',
+    );
+
+    // 0.3.2 里 startScan 超时后无条件写 idle，把已建立的连接打成"空闲"。
+    source.scanEndsWithIdle = true;
+    await service.scan();
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    expect(source.connectCalls, hasLength(1), reason: '不该因为扫描收尾而重连');
+  });
+
+  test('phase 没变化时不重复写 info 日志（现场日志 98% 是重复 idle）', () async {
+    final before = AppLogger.instance.entries.length;
+    await service.connect('AA:BB:CC:DD:EE:FF');
+    await waitFor(
+      () => service.snapshot.phase == BleConnectionPhase.subscribed,
+      reason: '首次连接应进入 subscribed',
+    );
+    // 模拟每秒一条通知：phase 不变，只有 lastRawBytes 在变。
+    for (var i = 0; i < 20; i++) {
+      source.emit(
+        const BleSnapshot(phase: BleConnectionPhase.subscribed)
+            .copyWith(lastRawBytes: [0x16, 60 + i]),
+      );
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    final phaseLines = AppLogger.instance.entries
+        .skip(before)
+        .where((entry) => entry.message.startsWith('connection phase='))
+        .length;
+    // 1 次 connecting/discovering 由假源省略，实际只会记 subscribed 这一条。
+    expect(phaseLines, lessThanOrEqualTo(2), reason: '重复 phase 不该逐条刷日志');
   });
 
   test('失败与重连都会留下带模块/设备/错误码的日志', () async {

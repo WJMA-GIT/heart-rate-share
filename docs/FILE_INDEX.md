@@ -12,6 +12,7 @@
 - `lib/ble/flutter_blue_plus_source.dart` — Android scan/connect/notify implementation.
 - `lib/ble/heart_rate_service.dart` — stream orchestration, platform selection and drop-triggered reconnect supervision.
 - `lib/ble/reconnect_policy.dart` — pure backoff policy for auto-reconnect (capped below the relay offline window).
+- `lib/ble/scan_tail.dart` — decides what a finished scan may write back to the connection phase (never clobbers a live link).
 - `lib/ble/platform/hrs_channel.dart` — native Windows/iOS channel contract.
 - `lib/ble/platform/hrs_foreground.dart` — Android foreground-service bridge (keeps the process alive while the link is up).
 - `lib/room/protocol.dart` — versioned wire envelope, report and member models.
@@ -34,6 +35,7 @@
 - `android/app/src/main/kotlin/com/wjmagit/heartrateshare/BleKeepAliveService.kt` — connectedDevice foreground service so the OS does not reclaim the GATT link.
 - `docs/protocol.md` — protocol version, fields, timing and security limitations.
 - `docs/ble-disconnect-v0.3.3.md` — BLE auto-disconnect root causes, fix, and field-data checklist.
+- `docs/ble-field-log-2026-10-29.md` — field log postmortem: the "disconnect" was a stale scan-tail writing `idle` over a live link.
 - `test/**` — parser, store, address, sanitizer, reconnect-policy and reconnect-supervisor tests.
 - `tool/ci_prepare_android.sh` — CI-only missing Android scaffold/resource merge.
 - `.github/workflows/flutter-ci.yml` — analyze/test/debug-APK artifact workflow.

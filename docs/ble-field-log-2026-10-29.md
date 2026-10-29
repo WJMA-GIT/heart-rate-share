@@ -1,0 +1,111 @@
+# 现场日志复盘：2026-10-29 09:00Z 会话（"BLE 自动断连"）
+
+日志文件：`session-2026-10-29T09-00-03.555044Z.log`（应用调试面板导出，1091 行，
+96 KB）。**该文件由 0.3.2 产生**，所以里面没有 0.3.3 才有的 `code=`、
+`link state=`、`lifecycle=` 与 `[fbp]` 原生日志 —— 这一点决定了下面哪些结论
+是"日志能证实"，哪些只能"排除到只剩一种解释"。
+
+## 一、时间轴
+
+| 时间（UTC） | 事件 | 日志证据 |
+|---|---|---|
+| 09:00:03.595 | 进程启动，开新会话 | `INFO [app] logger initialized ... session=2026-10-29T09-00-03.555044Z` |
+| 09:00:06 – 11:12:45 | 反复开关本地 Relay 房间（10 次 `Relay listening`），与 BLE 无关 | `INFO [relay] Relay listening port=8765 room=...` |
+| 11:11:22 – 11:18:02 | 房间客户端连接失败 13 次（Connection refused / DNS / host lookup） | `ERROR [room] ... WebSocket connect failed` |
+| 11:18:34.280 | 第一次扫描开始 | `INFO [ble] connection phase=scanning` |
+| 11:18:45.276 | 第一次扫描结束（起点 +10.996 s） | `INFO [ble] connection phase=idle` |
+| 11:18:46.598 | **第二次扫描开始**（用户又点了一次扫描） | `INFO [ble] connection phase=scanning` ×4 |
+| 11:18:49.490 | **扫描还没结束时用户点了连接** | `INFO [ble] phase=connecting device=…81:A1:E2` |
+| 11:18:51.142 | 服务发现 | `phase=discovering` |
+| 11:18:51.185 | notify 订阅成功；**紧跟一条空载荷通知** | `INFO [ble] HRS notifications subscribed` + `ERROR [hrs] HrsFormatException: Empty measurement` |
+| 11:18:51.186 / .958 / 55.946 | 正常收数（每次通知带一条 snapshot；逐包内容因 Debug 未开启而没记） | `phase=subscribed` ×3 |
+| **11:18:56.602** | **异常起点：phase 被打回 idle**（= 第二次扫描起点 +10.004 s） | `INFO [ble] phase=idle device=…81:A1:E2` |
+| 11:18:56 – 11:40:54 | 每 0.5–2 秒一条 `phase=idle`，共 863 条；**没有任何一次重连** | `INFO [ble] phase=idle ...`（连续 22 分钟） |
+| 11:19:06 – 11:19:11 | 房间加入/退出的高频抖动（手动连点） | `Room connection disconnected/connecting/connected` ×26 |
+| 11:36:51 – 11:37:13 | 房间 WebSocket 超时 3 次 | `ERROR [room] SocketException: Connection timed out` |
+| 11:40:52 – 11:40:54 | 最后一次房间断开；日志结束（用户导出） | `Room connection disconnected` + 一条 `phase=idle` |
+
+## 二、断连前最后几条有效记录说明了什么
+
+断连（如果真有）之前最后的 BLE 记录是三条 `phase=subscribed`（11:18:51–55），
+以及订阅瞬间那条 `HrsFormatException: Empty measurement`。
+
+**日志能证实的：**
+
+1. **没有 GATT 错误码**。0.3.2 既不读 `FlutterBluePlus.logs`，也用 `debug` 级
+   才输出逐包日志；日志里唯一的 `[hrs] ERROR` 是一条**空载荷**通知的解析失败
+   （`HrsDecoder.decode` ← `FlutterBluePlusSource.connect.<anonymous>` 调用栈
+   完整），跟断连无关。所以"133 / 8 / 19 / 22"一类的系统错误码**在这份日志里
+   不存在**，不能据此判断是 GATT 层被踢。
+2. **App 没有被杀、没有重启**。同一进程同一会话号，09:00:03 只有一次
+   `logger initialized`，之后 2 小时 40 分再没有新的初始化行；也没有任何
+   `lifecycle` 记录（0.3.2 不记这个）。所以"App 被杀"在本会话内可以**排除**。
+3. **11:18:56.602 之后链路仍然活着**。判断依据：`phase=idle` 的 863 条日志后
+   面，每条都对应一次 `_emit(_snapshot.copyWith(lastRawBytes: bytes))` ——
+   0.3.2 里只有心率通知回调会这样做。也就是说 **notify 流在"断连"之后仍在
+   1–2 秒一条地送数据，一直送到日志结束**（22 分钟）。链路没断。
+4. **没有任何重连尝试**。11:18:56 之后 `connecting` 一次都没再出现 —— 这与
+   代码侧结论（0.3.2 没有自动重连）完全一致。
+
+**日志没覆盖、只能推断的：**
+
+- 那条 `idle` 是**扫描收尾**写进去的，不是 GATT 断开事件。证据是时间差：
+  第二次扫描起点 11:18:46.598 → idle 11:18:56.602，差 10.004 s，正好是
+  `startScan` 里 `await Future<void>.delayed(timeout=10s)` 的收尾点；而 0.3.2
+  的收尾代码是无条件 `_emit(copyWith(phase: idle))`。若真是 GATT 断开，
+  通知流不可能紧接着再送 22 分钟。
+- 用户"看到"的断连 = 界面「连接状态：空闲」，不是数据真的停了。这点无法从
+  0.3.2 日志直接读出（Debug 未开启，没有 BPM/raw 行），但 0.3.4 每次连接后
+  补了一条 `code=hrs_first_sample`，下次一眼可辨。
+- 心率带型号、手机型号、系统版本、当时是否息屏 —— 日志都不含。
+
+## 三、Relay 侧行为核对
+
+- **本次没有发生 BLE 断开，因此没有触发 5 秒离线判定**：`room.report()` 由
+  心率样本驱动，而样本一直在产生（推断同上）。
+- 但**房间连接本身是坏的**：11:11–11:18 连续 13 次连接失败
+  （`Connection refused` / `Failed host lookup: 'mawj.asia'` /
+  `127.0.0.1` 拒绝），11:19 有 26 条状态抖动，11:36 三次 `Connection timed
+  out`。这些上报大多发不出去，房间里看不到数据是**网络侧**问题，与 BLE 无关。
+- 本地 Relay 在 09:00–11:12 被反复开关 10 次，期间房间号每次都变；如果当时
+  还有别的客户端，它们会被"旧房间消失"影响 —— 这也是日志里房间号忽变的来源。
+- 客户端日志**不含 Relay 的成员表**，所以"别人看到你离线"这件事本地无法证实；
+  要证实需要 Relay 端日志或第二台设备的截图。
+
+## 四、与代码侧结论的对照
+
+| 上一轮的结论 | 本次日志的判决 |
+|---|---|
+| 没有自动重连 → 一次掉线永久离线 | **成立**。idle 之后 22 分钟零 `connecting`。 |
+| 连接状态监听注册在 connect 之后 → 握手期掉线收不到 | **未涉及**（本会话没有握手期掉线）。仍保留。 |
+| 掉线只写 phase、不打日志 → 导出日志看不出断过 | **成立且更糟**：不仅没记断连，还把"没断"记成了 idle，863 行噪音把 22 分钟的真相盖住了。 |
+| 通知流没有 onError/onDone → 错误被吞 | **未涉及**（通知一直正常）。仍保留。 |
+| Android 无前台服务 → 息屏/后台被系统回收而导致断链 | **本次不成立**（进程没死、链路没断）。仍保留为"后台场景"候选，需要息屏场景的日志验证。 |
+| 断连后状态残留 / 重连白等 2 秒 | **未涉及**（没有重连发生）。仍保留。 |
+
+**新发现的根因（上一轮代码审查漏掉的路径）：**
+
+> **扫描收尾会把已经建立的连接状态覆写成 `idle`。**
+> `startScan()` 在 `await Future.delayed(timeout)` 之后无条件 `_emit(idle)`；
+> 用户在扫描结束前点「连接」时，10 秒后那一条陈旧的 idle 就把 `subscribed`
+> 冲掉。界面显示"空闲"，而链路和心率通知都还在跑。本会话 11:18:56.602 就是它。
+
+## 五、据此落地的修复（0.3.4）
+
+1. **扫描收尾不再写脏 phase**：`scan_tail.dart` 抽出纯函数决定收尾动作 ——
+   扫描已被接管（连接流程/新扫描）时什么都不写；链路活着时写回 `subscribed`；
+   否则才写 `idle`。传输层用 `_scanEpoch` 版本号判定"是否已被接管"。
+2. **服务层再防一道**：扫描期间到达的 `idle` 不视为掉线（等一拍再清标志，
+   避开快照异步投递的时序）。
+3. **空载荷通知不再刷 ERROR**：0 长度直接丢弃，记 debug
+   `code=hrs_empty_notification`。
+4. **链路状态可直读**：每次真实状态转变记一条 `link state=connected` /
+   `link state=disconnected wasUp=?`（`code=link_connected|link_disconnected`），
+   下次日志里"真断"和"误报"一眼可辨。
+5. **日志降噪**：`connection phase=` 只在 phase 真正变化时记录 —— 本会话
+   863/879 行（98%）是重复 idle，真正的证据被淹没。
+6. **数据流自证**：每次连接建立后的第一条心率样本记 info
+   `code=hrs_first_sample bpm=…`，一行就能证明"数据在动"，不必开 Debug。
+
+测试：`test/scan_tail_test.dart`（3 项，覆盖本次现场路径）+ `ble_reconnect_test.dart`
+新增 2 项（扫描收尾假掉连、phase 未变化不刷日志），全量 38 项通过。

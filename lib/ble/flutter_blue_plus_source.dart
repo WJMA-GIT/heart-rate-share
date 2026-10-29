@@ -7,6 +7,7 @@ import '../core/logging/app_logger.dart';
 import 'ble_models.dart';
 import 'heart_rate_sample.dart';
 import 'heart_rate_source.dart';
+import 'scan_tail.dart';
 
 /// Android reference transport. flutter_blue_plus is intentionally pinned in
 /// pubspec.yaml. Background execution is owned by native code, not this plugin.
@@ -49,6 +50,21 @@ final class FlutterBluePlusSource implements HeartRateSource {
   /// 不区分就会把「还没连上」误判成「刚掉线」，进而触发无谓的重连风暴。
   bool _linkUp = false;
 
+  /// 上一次观测到的链路状态，用于只记录真实的状态转变（初始值不算）。
+  BluetoothConnectionState? _lastLinkState;
+
+  /// 每次连接建立后第一条心率样本记一次 info：只要这一行出现，
+  /// 就能证明数据流是活的，不必依赖 debug 级别的逐包日志。
+  bool _firstSampleLogged = false;
+
+  /// 扫描轮次。扫描收尾（`Future.delayed(timeout)` 之后）如果这一轮已经被
+  /// 新的扫描或连接流程接管，就绝不能再往 snapshot 上写 phase。
+  ///
+  /// 这一条是 2026-10-29 现场日志实锤的：用户在扫描还没结束时点了连接，
+  /// 10 秒后扫描收尾把 `subscribed` 覆写成 `idle`，界面显示"空闲"而链路上
+  /// 心率通知仍在持续送达，用户看到的就是"它自己断开了"。
+  int _scanEpoch = 0;
+
   @override
   Stream<HeartRateSample> get samples => _samples.stream;
   @override
@@ -64,6 +80,7 @@ final class FlutterBluePlusSource implements HeartRateSource {
   Future<void> startScan({
     Duration timeout = const Duration(seconds: 10),
   }) async {
+    final epoch = ++_scanEpoch;
     _adapterSubscription ??= FlutterBluePlus.adapterState.listen((state) {
       _emit(_snapshot.copyWith(adapterState: state.name));
     });
@@ -112,13 +129,20 @@ final class FlutterBluePlusSource implements HeartRateSource {
     await Future<void>.delayed(timeout);
     await scanSubscription.cancel();
     _subscriptions.remove(scanSubscription);
-    // 扫描结束时如果链路仍然活着，不要把 phase 退回 idle：
-    // 服务层把「已连状态下出现 idle」当作掉线，会误触发一次重连。
-    if (!(_connected?.isConnected ?? false)) {
-      _emit(_snapshot.copyWith(phase: BleConnectionPhase.idle));
-    } else {
-      _emit(_snapshot.copyWith(phase: BleConnectionPhase.subscribed));
+    final next = scanTailPhase(
+      superseded: epoch != _scanEpoch,
+      linkIsUp: _connected?.isConnected ?? false,
+    );
+    if (next == null) {
+      // 这一轮扫描已被连接流程或新一轮扫描接管，收尾不得改动 phase。
+      _log.debug(
+        'ble',
+        'stale scan tail ignored epoch=$epoch',
+        code: 'scan_tail_ignored',
+      );
+      return;
     }
+    _emit(_snapshot.copyWith(phase: next));
   }
 
   @override
@@ -230,14 +254,34 @@ final class FlutterBluePlusSource implements HeartRateSource {
     final deviceId = device.remoteId.str;
     unawaited(_connectionSubscription?.cancel());
     _linkUp = false;
+    _lastLinkState = null;
+    _firstSampleLogged = false;
     _connectionSubscription = device.connectionState.listen(
       (state) {
+        // 只记真实转变；订阅时吐出的初始值不算，否则每次连接开头都会多一行噪音。
+        final previous = _lastLinkState;
+        _lastLinkState = state;
+        if (previous == state) return;
         switch (state) {
           case BluetoothConnectionState.connected:
             _linkUp = true;
+            _log.info(
+              'ble',
+              'link state=connected',
+              deviceId: deviceId,
+              code: 'link_connected',
+            );
           case BluetoothConnectionState.disconnected:
             final wasUp = _linkUp;
             _linkUp = false;
+            // 初始值（订阅瞬间的当前状态）不是掉线事件。
+            if (previous == null) return;
+            _log.info(
+              'ble',
+              'link state=disconnected wasUp=$wasUp',
+              deviceId: deviceId,
+              code: 'link_disconnected',
+            );
             if (!wasUp || _disposed) return;
             _onLinkDown(deviceId, 'gatt_disconnected');
         }
@@ -266,17 +310,45 @@ final class FlutterBluePlusSource implements HeartRateSource {
   }
 
   void _onNotification(String deviceId, List<int> bytes) {
+    // 使能 CCCD 时部分心率带会先发一条 0 长度通知。以前它会抛
+    // HrsFormatException 记成 ERROR（现场日志里那条 "Empty measurement"），
+    // 现在直接丢弃并留痕，不污染错误日志。
+    if (bytes.isEmpty) {
+      _log.debug(
+        'hrs',
+        'empty notification ignored',
+        deviceId: deviceId,
+        code: 'hrs_empty_notification',
+      );
+      return;
+    }
     _emit(_snapshot.copyWith(lastRawBytes: bytes));
     _log.debug('hrs', 'raw=${_hex(bytes)}', deviceId: deviceId);
+    HeartRateSample sample;
     try {
-      _samples.add(_decoder.decode(bytes));
+      sample = _decoder.decode(bytes);
     } on FormatException catch (error, stack) {
       _log.error('hrs', 'HRS parse failed: $error', deviceId, error, stack);
+      return;
     }
+    if (!_firstSampleLogged) {
+      _firstSampleLogged = true;
+      // 一行 info 就够证明数据流是活的，不用 debug 逐包刷。
+      _log.info(
+        'hrs',
+        'first sample bpm=${sample.bpm} rr=${sample.rrIntervalsMs.length} '
+            'contact=${sample.sensorContact}',
+        deviceId: deviceId,
+        code: 'hrs_first_sample',
+      );
+    }
+    _samples.add(sample);
   }
 
   @override
   Future<void> disconnect() async {
+    // 让还在等 10 秒超时的扫描收尾失效，避免它稍后覆写 phase。
+    _scanEpoch++;
     await _notificationSubscription?.cancel();
     _notificationSubscription = null;
     await _connectionSubscription?.cancel();
