@@ -1,0 +1,28 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+*.iml
+.idea/
+.vscode/
+.DS_Store
+
+# Signing and credentials -- never commit these.
+*.jks
+*.keystore
+key.properties
+*.p12
+*.p8
+*.mobileprovision
+*.pem
+*.key
+.env
+.env.*
+
+# Local diagnostic output.
+logs/
+*.log

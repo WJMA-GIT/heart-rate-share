@@ -1,0 +1,35 @@
+# File index
+
+- `pubspec.yaml` — pinned Flutter/Dart dependencies and app version.
+- `analysis_options.yaml` — standard Flutter lints, no SDK execution performed.
+- `.gitignore` — build output and signing/credential exclusions.
+- `lib/main.dart` — app startup and three-tab navigation.
+- `lib/core/config/app_config.dart` — centralized package/protocol/timing constants.
+- `lib/core/logging/app_logger.dart` — levels, sanitization, per-session files, export/share.
+- `lib/ble/ble_models.dart` — adapter/device/connection snapshot models.
+- `lib/ble/heart_rate_sample.dart` — HRS 0x2A37 flags/BPM/contact/RR parser.
+- `lib/ble/heart_rate_source.dart` — platform-neutral source interface and unsupported stub.
+- `lib/ble/flutter_blue_plus_source.dart` — Android scan/connect/notify implementation.
+- `lib/ble/heart_rate_service.dart` — stream orchestration and platform selection.
+- `lib/ble/platform/hrs_channel.dart` — native Windows/iOS channel contract.
+- `lib/room/protocol.dart` — versioned wire envelope, report and member models.
+- `lib/room/relay_store.dart` — authoritative member table, sequence/offline/expiry logic.
+- `lib/room/relay_server.dart` — loopback/LAN WebSocket relay and snapshot/delta fan-out.
+- `lib/room/room_client.dart` — 1 Hz latest-sample upload and room-state receive.
+- `lib/room/room_address.dart` — manual WebSocket address parser.
+- `lib/room/room_identity.dart` — secure random room/member identifiers.
+- `lib/room/discovery.dart` — mDNS boundary and explicit unimplemented adapter.
+- `lib/ui/app_state.dart` — shared application composition and stream lifecycle.
+- `lib/ui/widgets.dart` — raw-byte display helper.
+- `lib/ui/pages/heart_rate_page.dart` — large BPM and HRS device connection UI.
+- `lib/ui/pages/room_page.dart` — join/host controls and online/offline member grid.
+- `lib/ui/pages/settings_page.dart` — Debug toggle, version and log export.
+- `lib/debug/debug_controller.dart` — opt-in diagnostic state.
+- `lib/debug/debug_panel.dart` — BLE/room/raw-byte/error diagnostic panel.
+- `native/windows/HrsPlugin.cpp` — documented C++/WinRT native TODO stub.
+- `native/ios/HrsPlugin.swift` — documented Swift/CoreBluetooth native TODO stub.
+- `android/**` — minimal Android Gradle/manifest shell; no signing credentials.
+- `docs/protocol.md` — protocol version, fields, timing and security limitations.
+- `test/**` — parser, store, address, sanitizer and real WebSocket tests.
+- `tool/ci_prepare_android.sh` — CI-only missing Android scaffold/resource merge.
+- `.github/workflows/flutter-ci.yml` — analyze/test/debug-APK artifact workflow.
