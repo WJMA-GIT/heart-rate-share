@@ -37,6 +37,28 @@ final class RelayStore {
     return state;
   }
 
+  /// 仅更新已存在成员的昵称，不改心率、序列号或在线状态。
+  MemberState? rename(String memberId, String displayName) {
+    final previous = _members[memberId];
+    if (previous == null) return null;
+    final next = MemberState(
+      report: HeartRateReport(
+        memberId: previous.report.memberId,
+        displayName: displayName,
+        bpm: previous.report.bpm,
+        rrIntervalsMs: previous.report.rrIntervalsMs,
+        sensorContact: previous.report.sensorContact,
+        sequence: previous.report.sequence,
+        measuredAt: previous.report.measuredAt,
+      ),
+      lastSeen: previous.lastSeen,
+      online: previous.online,
+    );
+    _members[memberId] = next;
+    _changes.add(members);
+    return next;
+  }
+
   List<MemberState> prune() {
     final now = _clock();
     var changed = false;

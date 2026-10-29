@@ -12,12 +12,16 @@ import 'room_identity.dart';
 enum RoomConnectionState { disconnected, connecting, connected, error }
 
 final class RoomClient {
-  RoomClient({required this.displayName, AppLogger? logger})
-      : memberId = RoomIdentity.memberId(),
+  RoomClient({required String displayName, AppLogger? logger})
+      : _displayName = displayName,
+        memberId = RoomIdentity.memberId(),
         _log = logger ?? AppLogger.instance;
-  final String displayName;
+  String _displayName;
+  String get displayName => _displayName;
   final String memberId;
   final AppLogger _log;
+  String? _roomCode;
+  String? get roomCode => _roomCode;
   final _members = StreamController<List<MemberState>>.broadcast();
   final _states = StreamController<RoomConnectionState>.broadcast();
   final _byId = <String, MemberState>{};
@@ -49,8 +53,9 @@ final class RoomClient {
       final channel = WebSocketChannel.connect(uri);
       await channel.ready;
       _channel = channel;
+      _roomCode = uri.queryParameters['room'];
       _send(RoomMessageType.hello,
-          {'memberId': memberId, 'displayName': displayName});
+          {'memberId': memberId, 'displayName': _displayName});
       _subscription = channel.stream.listen(_onMessage, onDone: () {
         _setState(RoomConnectionState.disconnected);
       }, onError: (Object error, StackTrace stack) {
@@ -58,9 +63,8 @@ final class RoomClient {
         _log.error('room', 'WebSocket receive failed', memberId, error, stack);
       });
       _reportTimer = Timer.periodic(AppConfig.reportInterval, (_) => _flush());
-      _heartbeatTimer = Timer.periodic(AppConfig.heartbeatInterval, (_) {
-        _send(RoomMessageType.ping, {});
-      });
+      _heartbeatTimer =
+          Timer.periodic(AppConfig.heartbeatInterval, (_) => _sendPing());
       _setState(RoomConnectionState.connected);
     } catch (error, stack) {
       _setState(RoomConnectionState.error);
@@ -68,6 +72,16 @@ final class RoomClient {
       rethrow;
     }
   }
+
+  /// 昵称随下一次心跳以可选字段上报。旧服务端忽略该字段，保持 v1 兼容。
+  void updateDisplayName(String displayName) {
+    if (_displayName == displayName) return;
+    _displayName = displayName;
+    if (_state == RoomConnectionState.connected) _sendPing();
+  }
+
+  void _sendPing() =>
+      _send(RoomMessageType.ping, {'displayName': _displayName});
 
   void report({
     required int bpm,
@@ -148,6 +162,7 @@ final class RoomClient {
     _subscription = null;
     await _channel?.sink.close(status.normalClosure);
     _channel = null;
+    _roomCode = null;
     if (_state != RoomConnectionState.disconnected) {
       _setState(RoomConnectionState.disconnected);
     }

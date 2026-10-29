@@ -20,6 +20,18 @@ void main() {
     final members = await first.timeout(const Duration(seconds: 5));
     expect(members.single.report.bpm, 72);
     expect(members.single.online, isTrue);
+
+    final renamed = client.members.firstWhere(
+      (values) =>
+          values.isNotEmpty && values.single.report.displayName == '新昵称',
+    );
+    client.updateDisplayName('新昵称');
+    expect(
+        (await renamed.timeout(const Duration(seconds: 5)))
+            .single
+            .report
+            .displayName,
+        '新昵称');
   });
 
   test('protocol rejects incompatible version', () {

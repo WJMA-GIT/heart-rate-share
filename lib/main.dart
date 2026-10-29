@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/config/app_config.dart';
 import 'core/l10n/strings_zh.dart';
 import 'core/logging/app_logger.dart';
+import 'core/profile/user_profile_store.dart';
 import 'ui/app_state.dart';
 import 'ui/pages/heart_rate_page.dart';
 import 'ui/pages/room_page.dart';
@@ -11,7 +13,23 @@ import 'ui/pages/settings_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppLogger.instance.initialize();
-  final state = AppState();
+
+  UserProfileStore profileStore = InMemoryUserProfileStore();
+  String? savedNickname;
+  try {
+    profileStore = SharedPreferencesUserProfileStore(
+      await SharedPreferences.getInstance(),
+    );
+    savedNickname = await profileStore.loadNickname();
+  } catch (error, stack) {
+    AppLogger.instance
+        .error('profile', 'Load nickname failed: $error', null, error, stack);
+  }
+
+  final state = AppState(
+    nickname: savedNickname,
+    profileStore: profileStore,
+  );
   runApp(HeartRateApp(state: state));
 }
 

@@ -98,6 +98,15 @@ final class RelayServer {
                     RoomMessageType.memberDelta, {'member': state.toJson()});
               }
             case RoomMessageType.ping:
+              final nextName =
+                  _optionalDisplayName(envelope.data['displayName']);
+              if (memberId != null && nextName != null) {
+                final renamed = store.rename(memberId!, nextName);
+                if (renamed != null) {
+                  _broadcast(RoomMessageType.memberDelta,
+                      {'member': renamed.toJson()});
+                }
+              }
               socket.add(jsonEncode(const RoomEnvelope(
                 type: RoomMessageType.pong,
                 data: {},
@@ -125,9 +134,15 @@ final class RelayServer {
   }
 
   String _displayName(Object? value) {
-    if (value is! String || value.trim().isEmpty) {
+    final normalized = _optionalDisplayName(value);
+    if (normalized == null) {
       throw const FormatException('displayName must be non-empty');
     }
+    return normalized;
+  }
+
+  String? _optionalDisplayName(Object? value) {
+    if (value is! String || value.trim().isEmpty) return null;
     final trimmed = value.trim();
     return trimmed.length <= 32 ? trimmed : trimmed.substring(0, 32);
   }

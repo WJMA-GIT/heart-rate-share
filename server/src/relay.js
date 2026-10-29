@@ -109,6 +109,14 @@ class Room {
     return state;
   }
 
+  /** 仅更新已存在成员的昵称，不改心率、序列号、lastSeen 或在线状态。 */
+  rename(memberId, displayName) {
+    const member = this.members.get(memberId);
+    if (!member) return null;
+    member.report = { ...member.report, displayName };
+    return member;
+  }
+
   /** 返回 { changed: MemberState[], removed: string[] }，只用于广播增量。 */
   prune(now, offlineTimeoutMs) {
     const changed = [];
@@ -263,6 +271,15 @@ class RelayServer {
     }
 
     if (type === 'ping') {
+      // v1 可选扩展：仅更新已存在成员昵称；缺省或非法值一律忽略，保持旧客户端兼容。
+      const current = getMemberId();
+      const nextName = typeof msg.displayName === 'string' ? msg.displayName.trim() : '';
+      if (current && nextName) {
+        const renamed = room.rename(current, nextName.slice(0, MAX_DISPLAY_NAME));
+        if (renamed) {
+          this.broadcast(room, 'memberDelta', { member: room.memberJson(renamed, this.clock()) });
+        }
+      }
       socket.send(envelope('pong', {}));
       return;
     }

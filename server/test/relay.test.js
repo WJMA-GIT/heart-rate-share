@@ -282,6 +282,28 @@ test('ping → pong', async () => {
   await srv.close();
 });
 
+test('ping 的可选 displayName 更新已有成员昵称且不改其它字段', async () => {
+  const srv = await startServer();
+  const c = connect(srv.port);
+  await c.opened;
+  hello(c, 'm1', '张三');
+  await waitFor(() => c.of('welcome').length === 1);
+  report(c, 'm1', '张三', 72, 1);
+  await waitFor(() => c.of('memberDelta').length === 1);
+
+  c.send({ v: 1, type: 'ping', displayName: '新昵称' });
+  await waitFor(
+    () => c.of('memberDelta').some((d) => d.member.displayName === '新昵称'),
+    2000,
+    'rename delta',
+  );
+  const member = c.of('memberDelta').at(-1).member;
+  assert.equal(member.bpm, 72);
+  assert.equal(member.sequence, 1);
+  c.close();
+  await srv.close();
+});
+
 test('房间满员（ROOM_LIMIT=1）时新成员收到 ROOM_FULL 并被关闭', async () => {
   const srv = await startServer({ roomLimit: 1 });
   const a = connect(srv.port);

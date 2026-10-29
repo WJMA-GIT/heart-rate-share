@@ -37,8 +37,24 @@ docker compose up -d --build      # 默认 8765
 curl -s http://127.0.0.1:8765/healthz
 ```
 
-客户端把「中继地址」填成 `wss://你的域名` 或 `IP:8765` 即可，不需要改代码。
-详见 [`server/README.md`](server/README.md)。
+客户端把「服务器地址」填成 `wss://你的域名`、`你的域名` 或 `IP:8765` 即可；
+不填端口时 `ws` 默认 8765、`wss` 默认 443。详见 [`server/README.md`](server/README.md)。
+
+## 客户端使用（v0.2.0）
+
+- **我的昵称**：设置页可填 1–16 个字符，支持中文，保存在本地；未设置时显示「访客」。
+  改名通过协议 `ping` 的可选 `displayName` 发送，不需要等下一次心率上报。
+- **房间号**：房间页顶部大字显示，点击房间号或复制图标即可复制。未加入房间时显示空态。
+- **成员列表**：仅显示昵称与心率；离线成员灰显为「-- BPM / 已离线」，不展示过期心率。
+- **服务器地址**：支持域名、IP、`host:port`、`ws://`、`wss://`；非法输入会提示具体原因。
+- **默认服务器**：构建时可覆盖，不需要改代码：
+
+```bash
+flutter build apk --release --split-per-abi \
+  --dart-define=DEFAULT_SERVER=heart.example.com
+```
+
+`DEFAULT_SERVER` 的代码默认值留空；用户手动填写的地址优先于该默认值。
 
 ## Local authoring/build restriction
 
@@ -46,7 +62,7 @@ This repository was written without running Flutter, installing an SDK, or
 building. No claim is made that analysis/tests/build already passed. CI owns
 validation and artifacts.
 
-## CI and debug APK
+## CI and Android APK
 
 The included `.github/workflows/flutter-ci.yml` runs on a user-selected GitHub
 repository. It uses a hosted Flutter stable toolchain, then:
@@ -54,13 +70,13 @@ repository. It uses a hosted Flutter stable toolchain, then:
 1. `flutter pub get`, format check, `flutter analyze`, `flutter test`.
 2. Runs `tool/ci_prepare_android.sh` to merge missing Gradle wrapper/resources
    from the CI Flutter SDK without overwriting custom Kotlin/manifests.
-3. Builds `app-debug.apk` and uploads artifact `heartrate-debug-apk`.
+3. Builds `--release --split-per-abi` APKs. On a `v*` tag, the release job
+   publishes them directly as Release assets, so no zip extraction is needed.
 
-On GitHub: **Actions → flutter-ci → successful run → Artifacts**. Unzip the
-artifact, copy `app-debug.apk` to an Android device, allow installation from the
-chosen source, and install it. Debug signing is development-only; Play release
-requires a separate securely managed signing pipeline. No repository secrets
-are embedded in this project.
+Download the `arm64-v8a` asset for most modern phones, allow installation from
+the chosen source, and install it. Release builds currently use debug signing
+for sideload testing and are not store-ready; Play release requires a separate
+securely managed signing pipeline. No repository secrets are embedded.
 
 Windows/iOS CI jobs are intentionally not advertised until native runners and
 BLE implementations exist.
@@ -95,6 +111,8 @@ logs may contain nicknames, shortened device identifiers and stack traces.
 - Repository (resolved): https://github.com/WJMA-GIT/heart-rate-share
 - `YOUR_CI_SIGNING_SECRET_NAMES`: configure only in your CI secret manager;
   never write signing values into source or logs.
+- `DEFAULT_SERVER` (optional): build-time default hostname/IP via
+  `--dart-define`; leave empty to require the user to enter a server address.
 - `YOUR_HRS_DEVICE_MODEL`: test strap must expose standard HRS 0x180D/0x2A37.
 - `YOUR_WINDOWS_BLE_ADAPTER`: record model/driver for hardware validation.
 - Display name (resolved): 共享心率 — Android label and `AppConfig.displayName`.

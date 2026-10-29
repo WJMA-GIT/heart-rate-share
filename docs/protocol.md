@@ -2,9 +2,12 @@
 
 **Version:** 1 (`v: 1`)  
 **Transport:** one WebSocket per member to one Relay, `/ws?room=XXXXXX`.  
-**Status:** development `ws://` only. WSS, certificate validation, and join-token
-authentication are mandatory before production. Short codes are discovery IDs,
-not credentials. No payload, token, pairing key, or secret may be logged.
+**Status:** `ws://` is cleartext and development-only. The client accepts
+`wss://` (default port 443) using the platform's standard TLS certificate
+validation; no custom pinning or bypass is implemented, so self-signed
+certificates are not supported by default. Join-token authentication remains a
+production prerequisite. Short codes are discovery IDs, not credentials. No
+payload, token, pairing key, or secret may be logged.
 
 ## Envelope
 
@@ -17,7 +20,10 @@ versions/types are rejected. Maximum room size is 20 members.
 - `heartRate`: `memberId`, `displayName`, `bpm` integer, `rrMs` integer array,
   `sensorContact` true/false/null, `sequence` positive monotonically increasing
   integer, `measuredAt` UTC ISO-8601.
-- `ping`: no fields; Relay answers `pong`.
+- `ping`: optional `displayName`; Relay answers `pong`. When present and the
+  sender already exists in the room, a Relay may update that member's display
+  name and broadcast a normal `memberDelta`. Relays that do not implement this
+  optional field ignore it; no new message type is introduced and `v` stays 1.
 
 `sequence` prevents stale packets from replacing newer state. HRS contact null
 means the strap does not support contact detection; false means no contact.
@@ -47,8 +53,9 @@ Member object = heartRate fields plus `lastSeen` UTC ISO-8601 and `online` bool.
 
 Preferred discovery is mDNS/Bonjour `_heartrate._tcp`; the short code maps to a
 Relay address. This skeleton contains an explicit unimplemented discovery
-boundary, not fake results. Manual `host:port`, `ws://host:port`, or
-`wss://host:port` is always available. Default port: 8765.
+boundary, not fake results. Manual input accepts a domain or IP with optional
+port, plus `ws://` or `wss://`. Missing port defaults to 8765 for `ws` and 443
+for `wss`.
 
 UDP multicast is not on the data path. mDNS failure does not affect manual join.
 A Relay restart creates a new room epoch in production; sequence/epoch semantics

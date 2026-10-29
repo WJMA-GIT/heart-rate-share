@@ -67,7 +67,8 @@ final class _HeartRatePageState extends State<HeartRatePage> {
         DropdownButtonFormField<String>(
           value: _selected,
           decoration: const InputDecoration(
-              labelText: Zh.selectHeartRateStrap, border: OutlineInputBorder()),
+              labelText: Zh.selectHeartRateDevice,
+              border: OutlineInputBorder()),
           items: [
             for (final device in ble.devices)
               DropdownMenuItem(
@@ -84,7 +85,7 @@ final class _HeartRatePageState extends State<HeartRatePage> {
               ? null
               : () => _run(() => state.heartRate.connect(_selected!)),
           icon: const Icon(Icons.link),
-          label: const Text(Zh.connectHeartRateStrap),
+          label: const Text(Zh.connectHeartRateDevice),
         ),
         TextButton(
             onPressed: () => _run(state.heartRate.disconnect),
