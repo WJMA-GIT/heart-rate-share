@@ -26,6 +26,20 @@ WebSocket room relay. Application ID: `com.wjmagit.heartrateshare`.
   The current `ws://` relay is development-only and has no join authentication.
 - Full Windows/iOS platform runners, iOS signing, release signing and stores.
 
+## 服务器端中继（可选）
+
+`server/` 提供与 v1 协议兼容的 WebSocket Relay，可部署到有公网 IP 的服务器，
+替代「局域网里一台设备当 Relay」的模式。房间状态在内存中，无数据库；公网部署必须用
+`wss://`（由 Caddy/Nginx 终止 TLS）。
+
+```bash
+docker compose up -d --build      # 默认 8765
+curl -s http://127.0.0.1:8765/healthz
+```
+
+客户端把「中继地址」填成 `wss://你的域名` 或 `IP:8765` 即可，不需要改代码。
+详见 [`server/README.md`](server/README.md)。
+
 ## Local authoring/build restriction
 
 This repository was written without running Flutter, installing an SDK, or

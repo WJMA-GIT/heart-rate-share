@@ -1,0 +1,9 @@
+# 构建上下文里不需要的东西：镜像只需要 src/ 与 package*.json
+node_modules
+npm-debug.log*
+test
+Dockerfile
+.dockerignore
+.env
+.env.*
+*.md

@@ -1,0 +1,33 @@
+services:
+  relay:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: heart-rate-share-relay:0.1.0
+    container_name: heart-rate-relay
+    restart: unless-stopped
+    environment:
+      # 容器内监听端口；同时决定宿主机映射端口，改一个地方即可。
+      PORT: "${PORT:-8765}"
+      ROOM_LIMIT: "${ROOM_LIMIT:-20}"
+      OFFLINE_TIMEOUT_MS: "${OFFLINE_TIMEOUT_MS:-5000}"
+      MAX_CLIENTS: "${MAX_CLIENTS:-200}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    ports:
+      # 只绑 0.0.0.0 全接口；若前面有反向代理，建议改成 "127.0.0.1:${PORT:-8765}:${PORT:-8765}"
+      - "${PORT:-8765}:${PORT:-8765}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"fetch('http://127.0.0.1:'+process.env.PORT+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    logging:
+      # 日志轮转，避免长期运行把磁盘写满
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 无数据库状态，无需挂载卷；重启后房间由客户端重新上报自愈

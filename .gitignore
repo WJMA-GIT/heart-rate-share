@@ -22,6 +22,7 @@ key.properties
 *.key
 .env
 .env.*
+!.env.example
 
 # Local diagnostic output.
 logs/
@@ -31,3 +32,8 @@ logs/
 android/local.properties
 **/GeneratedPluginRegistrant.java
 android/.gradle/
+
+# 服务端（server/）依赖，不入库
+node_modules/
+npm-debug.log*
+.env
