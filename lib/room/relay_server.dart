@@ -86,7 +86,26 @@ final class RelayServer {
               if (memberId == null || memberId!.isEmpty) {
                 throw const FormatException('memberId');
               }
+              final previousSocket = _sockets[memberId!];
+              if (previousSocket != null &&
+                  !identical(previousSocket, socket)) {
+                // 同一标识重连：旧连接让位，避免一个成员占两条连接。
+                _log.info(
+                  'relay',
+                  'Member reconnected, replacing old socket',
+                  deviceId: memberId,
+                );
+                unawaited(previousSocket.close(4000, 'replaced'));
+              }
               _sockets[memberId!] = socket;
+              final resumed = store.resume(memberId!);
+              _log.info(
+                'relay',
+                resumed == null
+                    ? 'member new'
+                    : 'member resumed wasOnline=${resumed.online}',
+                deviceId: memberId,
+              );
               socket.add(
                 jsonEncode(
                   const RoomEnvelope(
@@ -148,7 +167,10 @@ final class RelayServer {
         }
       },
       onDone: () {
-        if (memberId != null) _sockets.remove(memberId);
+        // 只清理属于这条连接的映射：重连时旧连接关闭不能把新连接的登记删掉。
+        if (memberId != null && identical(_sockets[memberId], socket)) {
+          _sockets.remove(memberId);
+        }
       },
       onError: (Object error, StackTrace stack) {
         _log.error('relay', 'Socket error', memberId, error, stack);

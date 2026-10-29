@@ -263,8 +263,23 @@ class RelayServer {
           /* ignore */
         }
       }
+      const existing = room.members.get(id);
       room.sockets.set(id, socket);
       setMemberId(id);
+      if (existing) {
+        // 身份恢复：心率、序号、昵称一律保留，不新建成员。
+        // 仅当成员此刻仍在线时顺延 lastSeen —— "关掉 App 3 秒又回来"不该被判
+        // 离线再复活；而已经离线的成员必须等真实上报才恢复在线，不凭空点亮。
+        if (existing.online) existing.lastSeen = this.clock();
+        this.log.info('member_resumed', {
+          room: room.code,
+          member: shortId(id),
+          wasOnline: existing.online,
+          sequence: existing.report.sequence,
+        });
+      } else {
+        this.log.info('member_new', { room: room.code, member: shortId(id) });
+      }
       socket.send(envelope('welcome', {}));
       this.log.info('member_hello', { room: room.code, member: shortId(id) });
       return;

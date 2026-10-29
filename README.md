@@ -20,6 +20,11 @@ rollback steps.
 - Explicit C++/WinRT and Swift channel contracts/TODO stubs for Windows/iOS.
 - Relay member store, 1 Hz latest-sample reports, 1 s snapshots, deltas,
   sequence checks, 5 s offline, 2 min expiry, 20-member limit.
+- Member identity survives app restarts: a persisted install id (UUID v4) is used as
+  `memberId`, and the report `sequence` is persisted too, so relaunching rejoins the
+  same member with a live link instead of spawning a ghost. Per install, not per user:
+  reinstall = new member, two phones = two members. See
+  [`docs/identity.md`](docs/identity.md).
 - Three pages (heart, room, settings), opt-in Debug panel, per-session local
   logs, share/export, room short-code field and manual address fallback.
 - Unit tests and a real loopback WebSocket integration test.

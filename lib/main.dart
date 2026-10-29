@@ -4,7 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/config/app_config.dart';
 import 'core/l10n/strings_zh.dart';
 import 'core/logging/app_logger.dart';
+import 'core/profile/install_identity.dart';
 import 'core/profile/user_profile_store.dart';
+import 'room/sequence_counter.dart';
 import 'ui/app_state.dart';
 import 'ui/pages/heart_rate_page.dart';
 import 'ui/pages/room_page.dart';
@@ -15,11 +17,12 @@ Future<void> main() async {
   await AppLogger.instance.initialize();
 
   UserProfileStore profileStore = InMemoryUserProfileStore();
+  IdentityStore identityStore = InMemoryIdentityStore();
   String? savedNickname;
   try {
-    profileStore = SharedPreferencesUserProfileStore(
-      await SharedPreferences.getInstance(),
-    );
+    final preferences = await SharedPreferences.getInstance();
+    profileStore = SharedPreferencesUserProfileStore(preferences);
+    identityStore = SharedPreferencesIdentityStore(preferences);
     savedNickname = await profileStore.loadNickname();
   } catch (error, stack) {
     AppLogger.instance.error(
@@ -31,8 +34,52 @@ Future<void> main() async {
     );
   }
 
-  final state = AppState(nickname: savedNickname, profileStore: profileStore);
+  // 安装标识：重启 App 后必须还是同一个值，否则服务端会把回来的用户当成新成员。
+  final memberId = await _loadOrCreateInstallId(identityStore);
+  final sequence = await SequenceCounter.restore(identityStore);
+
+  final state = AppState(
+    nickname: savedNickname,
+    profileStore: profileStore,
+    memberId: memberId,
+    sequence: sequence,
+  );
   runApp(HeartRateApp(state: state));
+}
+
+/// 读本地安装标识；没有就生成一个并落盘。失败也不能挡住启动：
+/// 退化为本次进程内有效的随机标识（服务端会当成新成员，但功能可用）。
+Future<String> _loadOrCreateInstallId(IdentityStore store) async {
+  try {
+    final saved = await store.loadInstallId();
+    if (InstallId.isValid(saved)) {
+      AppLogger.instance.info(
+        'identity',
+        'install id loaded (same install reusing member identity)',
+        deviceId: saved!.trim(),
+        code: 'install_id_loaded',
+      );
+      return saved.trim();
+    }
+    final created = InstallId.generate();
+    await store.saveInstallId(created);
+    AppLogger.instance.info(
+      'identity',
+      'install id created (first launch or cleared data)',
+      deviceId: created,
+      code: 'install_id_created',
+    );
+    return created;
+  } catch (error, stack) {
+    AppLogger.instance.error(
+      'identity',
+      'Install id load failed',
+      null,
+      error,
+      stack,
+    );
+    return InstallId.generate();
+  }
 }
 
 final class HeartRateApp extends StatefulWidget {
