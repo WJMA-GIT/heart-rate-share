@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/config/app_config.dart';
 import 'core/l10n/strings_zh.dart';
 import 'core/logging/app_logger.dart';
+import 'core/profile/connection_profile.dart';
 import 'core/profile/install_identity.dart';
 import 'core/profile/user_profile_store.dart';
 import 'room/sequence_counter.dart';
@@ -38,11 +39,29 @@ Future<void> main() async {
   final memberId = await _loadOrCreateInstallId(identityStore);
   final sequence = await SequenceCounter.restore(identityStore);
 
+  // 最近连接配置与安装标识共用同一套本地存储；坏了就当空列表，不挡启动。
+  var recentProfiles = const <ConnectionProfile>[];
+  try {
+    recentProfiles = RecentProfiles.decode(
+      await identityStore.loadConnectionProfiles(),
+    );
+  } catch (error, stack) {
+    AppLogger.instance.error(
+      'room',
+      'Load recent profiles failed',
+      null,
+      error,
+      stack,
+    );
+  }
+
   final state = AppState(
     nickname: savedNickname,
     profileStore: profileStore,
     memberId: memberId,
     sequence: sequence,
+    identityStore: identityStore,
+    recentProfiles: recentProfiles,
   );
   runApp(HeartRateApp(state: state));
 }
@@ -122,7 +141,10 @@ final class _HeartRateAppState extends State<HeartRateApp>
   Widget build(BuildContext context) {
     const titles = [Zh.heartRateTitle, Zh.roomTitle, Zh.settingsTitle];
     final pages = [
-      HeartRatePage(state: widget.state),
+      HeartRatePage(
+        state: widget.state,
+        onSwitchRoom: () => setState(() => _index = 1),
+      ),
       RoomPage(state: widget.state),
       SettingsPage(state: widget.state),
     ];

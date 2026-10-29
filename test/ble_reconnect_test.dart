@@ -85,6 +85,11 @@ final class FakeHeartRateSource implements HeartRateSource {
     emit(_snapshot.copyWith(phase: BleConnectionPhase.idle));
   }
 
+  final forgotten = <String>[];
+
+  @override
+  Future<void> forget(String deviceId) async => forgotten.add(deviceId);
+
   @override
   Future<void> dispose() async {
     await _samples.close();

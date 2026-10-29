@@ -17,6 +17,10 @@ abstract interface class HeartRateSource {
     Duration timeout = AppConfig.connectTimeout,
   });
   Future<void> disconnect();
+
+  /// 从设备列表里移除（忽略）一台设备；如果它正连着，先断开。
+  Future<void> forget(String deviceId);
+
   Future<void> dispose();
 }
 
@@ -47,6 +51,8 @@ final class UnsupportedHeartRateSource implements HeartRateSource {
   }) async => _unsupported();
   @override
   Future<void> disconnect() async {}
+  @override
+  Future<void> forget(String deviceId) async {}
   @override
   Future<void> dispose() async {
     await _samples.close();

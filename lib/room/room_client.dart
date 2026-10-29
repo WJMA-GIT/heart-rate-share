@@ -8,6 +8,7 @@ import '../core/config/app_config.dart';
 import '../core/logging/app_logger.dart';
 import 'protocol.dart';
 import 'room_identity.dart';
+import 'room_transport.dart';
 import 'sequence_counter.dart';
 
 enum RoomConnectionState { disconnected, connecting, connected, error }
@@ -20,21 +21,36 @@ final class RoomClient {
     required String displayName,
     String? memberId,
     SequenceCounter? sequence,
+    RoomTls? tls,
     AppLogger? logger,
   }) => RoomClient._(
     displayName,
     memberId ?? RoomIdentity.memberId(),
     sequence,
+    tls ?? RoomTls.none,
     logger ?? AppLogger.instance,
   );
 
-  RoomClient._(this._displayName, this.memberId, this._sequence, this._log);
+  RoomClient._(
+    this._displayName,
+    this.memberId,
+    this._sequence,
+    this._tls,
+    this._log,
+  );
 
   String _displayName;
   String get displayName => _displayName;
   final String memberId;
   final AppLogger _log;
   final SequenceCounter? _sequence;
+  final RoomTls _tls;
+
+  /// 最近一次连接失败的可分辨原因（证书类错误与网络错误分开）。
+  RoomErrorCode? lastErrorCode;
+
+  /// 是否钉住了服务端证书指纹。
+  bool get tlsPinned => _tls.hasPin;
   String? _roomCode;
   String? get roomCode => _roomCode;
   final _members = StreamController<List<MemberState>>.broadcast();
@@ -66,8 +82,14 @@ final class RoomClient {
     }
     await disconnect();
     _setState(RoomConnectionState.connecting);
+    lastErrorCode = null;
+    var pinMismatch = false;
     try {
-      final channel = WebSocketChannel.connect(uri);
+      final channel = openRoomChannel(
+        uri,
+        tls: _tls,
+        onPinMismatch: () => pinMismatch = true,
+      );
       await channel.ready;
       _channel = channel;
       _roomCode = uri.queryParameters['room'];
@@ -99,7 +121,16 @@ final class RoomClient {
       _setState(RoomConnectionState.connected);
     } catch (error, stack) {
       _setState(RoomConnectionState.error);
-      _log.error('room', 'WebSocket connect failed', memberId, error, stack);
+      final code = classifyRoomError(error, pinMismatch: pinMismatch);
+      lastErrorCode = code;
+      _log.error(
+        'room',
+        'WebSocket connect failed code=${code.name} '
+            'endpoint=${uri.scheme}://${uri.host}:${uri.port}',
+        memberId,
+        error,
+        stack,
+      );
       rethrow;
     }
   }

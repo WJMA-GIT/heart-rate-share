@@ -1,6 +1,7 @@
 import '../../ble/ble_models.dart';
 import '../profile/nickname.dart';
 import '../../room/room_address.dart';
+import '../../room/room_transport.dart';
 import '../../room/room_client.dart';
 
 /// 轻量中文文案层：当前只有中文，集中常量即可；暂不引入完整 l10n 工具链。
@@ -28,6 +29,45 @@ abstract final class Zh {
   static const connectionStatusLabel = '连接状态';
   static const bleErrorTitle = '蓝牙连接失败，请按提示处理后重试';
   static const bleReconnectFailed = '多次自动重连仍未成功，请确认心率带已佩戴且电量正常后重新连接。';
+
+  // ---- 连接方式 / 最近连接 ----
+  static const officialServer = '官方服务器';
+  static const officialServerConnect = '连接';
+  static const officialServerSwitch = '切换';
+  static const roomModeChoose = '选择连接方式后才能进入房间';
+  static const connectOfficialServer = '连接官方服务器';
+  static const createLocalRoom = '在本机创建房间';
+  static const localRoomHint = '本机房间只在这台手机上，其他设备需要用同一局域网地址加入';
+  static const recentConnections = '最近连接';
+  static const recentEmpty = '还没有连接记录';
+  static const forgetProfile = '删除这条记录';
+  static const manualAddressSection = '高级：手动填写地址';
+  static const serverEndpointLabel = '服务器地址';
+  static const secureConnection = '加密连接（wss）';
+  static const plainConnection = '明文连接（ws，仅限本机/局域网）';
+  static const certPinned = '已钉住证书指纹';
+  static const certSystemCa = '使用系统 CA 校验';
+
+  // ---- 设备列表 ----
+  static const heartRateDevices = '心率设备';
+  static const noHeartRateDevices = '未扫描到设备。点「扫描设备」开始搜索。';
+  static const connectNow = '连接';
+  static const connectedDevice = '已连接';
+  static const removeFromList = '从列表移除';
+  static const deviceRemoved = '已从列表移除该设备';
+  static const rssiLabel = '信号';
+  static const deviceIdLabel = '标识';
+
+  static String roomErrorCode(RoomErrorCode code) => switch (code) {
+    RoomErrorCode.certificateUntrusted => '服务器证书未通过系统 CA 校验（可能是自签证书）。',
+    RoomErrorCode.certificatePinnedMismatch => '服务器证书与内置指纹不一致，已拒绝连接。',
+    RoomErrorCode.tlsHandshake => 'TLS 握手失败，请确认服务端已开启 wss。',
+    RoomErrorCode.dnsFailure => '域名解析失败，请检查网络或服务器地址。',
+    RoomErrorCode.connectionRefused => '服务器拒绝连接，请确认服务已启动且端口正确。',
+    RoomErrorCode.connectionTimeout => '连接超时，请检查网络。',
+    RoomErrorCode.handshakeRejected => '服务器未接受 WebSocket 升级，请检查反向代理配置。',
+    RoomErrorCode.unknown => '连接失败，请查看诊断日志。',
+  };
 
   static const roomNumber = '房间号';
   static const roomNumberHint = '输入房间号加入';

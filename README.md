@@ -27,6 +27,17 @@ rollback steps.
   [`docs/identity.md`](docs/identity.md).
 - Three pages (heart, room, settings), opt-in Debug panel, per-session local
   logs, share/export, room short-code field and manual address fallback.
+- Connection choices are explicit: official server (`wss://mawj.asia:8766`, the
+  address is shown only on the settings page) or "create a room on this device".
+  There is no implicit local room. Recent connection profiles are persisted and
+  re-usable with one tap, in the same store as the install identity. See
+  [`docs/client-0.5.0.md`](docs/client-0.5.0.md).
+- wss uses the system CA store by default; self-signed servers can be trusted by
+  pinning a fingerprint at build time (`--dart-define=CERT_SHA256=...`). There is
+  no accept-all switch, and certificate failures are reported with a distinct code.
+- Heart-rate devices are listed (name / RSSI / id) with per-row connect plus
+  "disconnect" and "remove from list"; the heart page shows a BPM-driven ECG
+  animation that stops entirely when there is no data.
 - Unit tests and a real loopback WebSocket integration test.
 
 ## Not implemented (do not assume it works)
