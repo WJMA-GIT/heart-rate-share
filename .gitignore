@@ -26,3 +26,8 @@ key.properties
 # Local diagnostic output.
 logs/
 *.log
+
+# Flutter/Android 生成物：机器相关路径，绝不能入库（会让 CI 指向本地 SDK）
+android/local.properties
+**/GeneratedPluginRegistrant.java
+android/.gradle/
