@@ -89,8 +89,36 @@ jobs:
           restore-keys: gradle-${{ runner.os }}-
       - run: flutter pub get
       - run: bash tool/ci_prepare_android.sh
+      - name: Decode release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # 固定 release keystore：跨版本覆盖安装的前提。
+          # 明文只落在 runner 临时目录与 gitignore 的 key.properties，构建后即删。
+          KS="$RUNNER_TEMP/release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KS"
+          chmod 600 "$KS"
+          cat > android/key.properties <<EOF
+          storeFile=$KS
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          chmod 600 android/key.properties
+          echo "keystore decoded: $(stat -c%s "$KS") bytes"
       - name: Build split-per-abi release APKs
         run: flutter build apk --release --split-per-abi
+      - name: Print APK signing certificate
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -1)
+          APK=$(ls build/app/outputs/flutter-apk/app-arm64-v8a-release.apk)
+          echo "--- 签名证书（SHA-256 指纹应与基线一致，否则说明签名材料变了）---"
+          "$APKSIGNER" verify --print-certs "$APK" | head -8
       - name: Resolve app version from pubspec
         id: ver
         run: |
@@ -114,6 +142,13 @@ jobs:
           path: out/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Clean up signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/release.jks" android/key.properties
+          echo "signing material removed"
+
 
   # ------------------------------------------------------------- Windows 桌面
   windows:
