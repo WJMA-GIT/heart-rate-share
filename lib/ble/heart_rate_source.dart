@@ -25,13 +25,13 @@ final class UnsupportedHeartRateSource implements HeartRateSource {
   Stream<BleSnapshot> get snapshots => _snapshots.stream;
 
   Never _unsupported() => throw UnsupportedError(
-        '$platform native HRS transport is not implemented: $reason',
-      );
+    '$platform native HRS transport is not implemented: $reason',
+  );
 
   @override
-  Future<void> startScan(
-          {Duration timeout = const Duration(seconds: 10)}) async =>
-      _unsupported();
+  Future<void> startScan({
+    Duration timeout = const Duration(seconds: 10),
+  }) async => _unsupported();
   @override
   Future<void> connect(String deviceId) async => _unsupported();
   @override

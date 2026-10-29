@@ -41,7 +41,8 @@ final class HrsDecoder {
     final reserved = flags & 0xe0;
     if (reserved != 0) {
       throw HrsFormatException(
-          'Reserved flag bits set: 0x${reserved.toRadixString(16)}');
+        'Reserved flag bits set: 0x${reserved.toRadixString(16)}',
+      );
     }
     var offset = 1;
     final int bpm;

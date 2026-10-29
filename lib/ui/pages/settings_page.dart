@@ -23,15 +23,17 @@ final class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _nicknameController = TextEditingController(text: widget.state.nickname);
-    PackageInfo.fromPlatform().then((info) {
-      if (mounted) {
-        setState(() => _version = '${info.version}+${info.buildNumber}');
-      }
-    }).catchError((_) {
-      if (mounted) {
-        setState(() => _version = Zh.versionUnavailable);
-      }
-    });
+    PackageInfo.fromPlatform()
+        .then((info) {
+          if (mounted) {
+            setState(() => _version = '${info.version}+${info.buildNumber}');
+          }
+        })
+        .catchError((_) {
+          if (mounted) {
+            setState(() => _version = Zh.versionUnavailable);
+          }
+        });
   }
 
   @override
@@ -46,8 +48,9 @@ final class _SettingsPageState extends State<SettingsPage> {
       _savingNickname = true;
     });
     try {
-      final validation =
-          await widget.state.updateNickname(_nicknameController.text);
+      final validation = await widget.state.updateNickname(
+        _nicknameController.text,
+      );
       if (!mounted) return;
       if (validation != null) {
         setState(() => _nicknameError = Zh.nicknameError(validation));
@@ -113,7 +116,8 @@ final class _SettingsPageState extends State<SettingsPage> {
                   } catch (error) {
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(Zh.exportError(error))));
+                        SnackBar(content: Text(Zh.exportError(error))),
+                      );
                     }
                   }
                 },
@@ -123,8 +127,9 @@ final class _SettingsPageState extends State<SettingsPage> {
                 subtitle: Text(Zh.roomAddressHelp),
               ),
               ListTile(
-                  title: const Text(Zh.aboutVersion),
-                  subtitle: Text('$_version · ${AppConfig.applicationId}')),
+                title: const Text(Zh.aboutVersion),
+                subtitle: Text('$_version · ${AppConfig.applicationId}'),
+              ),
             ],
           ),
         ),

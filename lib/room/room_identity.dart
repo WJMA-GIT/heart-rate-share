@@ -9,7 +9,9 @@ final class RoomIdentity {
   static String shortCode({int length = 6}) {
     final random = Random.secure();
     return List.generate(
-        length, (_) => _alphabet[random.nextInt(_alphabet.length)]).join();
+      length,
+      (_) => _alphabet[random.nextInt(_alphabet.length)],
+    ).join();
   }
 
   static String memberId() {

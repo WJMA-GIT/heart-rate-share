@@ -46,13 +46,12 @@ final class BleSnapshot {
     String? lastError,
     List<int>? lastRawBytes,
     bool clearError = false,
-  }) =>
-      BleSnapshot(
-        adapterState: adapterState ?? this.adapterState,
-        phase: phase ?? this.phase,
-        devices: devices ?? this.devices,
-        connectedDeviceId: connectedDeviceId ?? this.connectedDeviceId,
-        lastError: clearError ? null : lastError ?? this.lastError,
-        lastRawBytes: lastRawBytes ?? this.lastRawBytes,
-      );
+  }) => BleSnapshot(
+    adapterState: adapterState ?? this.adapterState,
+    phase: phase ?? this.phase,
+    devices: devices ?? this.devices,
+    connectedDeviceId: connectedDeviceId ?? this.connectedDeviceId,
+    lastError: clearError ? null : lastError ?? this.lastError,
+    lastRawBytes: lastRawBytes ?? this.lastRawBytes,
+  );
 }

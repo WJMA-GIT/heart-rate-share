@@ -8,7 +8,7 @@ enum RoomMessageType {
   memberDelta,
   ping,
   pong,
-  error
+  error,
 }
 
 final class HeartRateReport {
@@ -30,14 +30,14 @@ final class HeartRateReport {
   final DateTime measuredAt;
 
   Map<String, Object?> toJson() => {
-        'memberId': memberId,
-        'displayName': displayName,
-        'bpm': bpm,
-        'rrMs': rrIntervalsMs,
-        'sensorContact': sensorContact,
-        'sequence': sequence,
-        'measuredAt': measuredAt.toUtc().toIso8601String(),
-      };
+    'memberId': memberId,
+    'displayName': displayName,
+    'bpm': bpm,
+    'rrMs': rrIntervalsMs,
+    'sensorContact': sensorContact,
+    'sequence': sequence,
+    'measuredAt': measuredAt.toUtc().toIso8601String(),
+  };
 }
 
 final class MemberState {
@@ -50,19 +50,21 @@ final class MemberState {
   final DateTime lastSeen;
   final bool online;
 
-  MemberState copyWith(
-          {HeartRateReport? report, DateTime? lastSeen, bool? online}) =>
-      MemberState(
-        report: report ?? this.report,
-        lastSeen: lastSeen ?? this.lastSeen,
-        online: online ?? this.online,
-      );
+  MemberState copyWith({
+    HeartRateReport? report,
+    DateTime? lastSeen,
+    bool? online,
+  }) => MemberState(
+    report: report ?? this.report,
+    lastSeen: lastSeen ?? this.lastSeen,
+    online: online ?? this.online,
+  );
 
   Map<String, Object?> toJson() => {
-        ...report.toJson(),
-        'lastSeen': lastSeen.toUtc().toIso8601String(),
-        'online': online,
-      };
+    ...report.toJson(),
+    'lastSeen': lastSeen.toUtc().toIso8601String(),
+    'online': online,
+  };
 }
 
 final class RoomEnvelope {
@@ -71,10 +73,10 @@ final class RoomEnvelope {
   final Map<String, Object?> data;
 
   Map<String, Object?> toJson() => {
-        'v': AppConfig.protocolVersion,
-        'type': type.name,
-        ...data,
-      };
+    'v': AppConfig.protocolVersion,
+    'type': type.name,
+    ...data,
+  };
 
   static RoomEnvelope fromJson(Map<String, Object?> json) {
     if (json['v'] != AppConfig.protocolVersion) {

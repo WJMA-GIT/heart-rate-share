@@ -17,8 +17,10 @@ void main() {
 
     test('rejects empty and more than 16 characters', () {
       expect(Nickname.validate('   '), NicknameValidationError.empty);
-      expect(Nickname.validate('一二三四五六七八九十一二三四五六七'),
-          NicknameValidationError.tooLong);
+      expect(
+        Nickname.validate('一二三四五六七八九十一二三四五六七'),
+        NicknameValidationError.tooLong,
+      );
     });
   });
 

@@ -32,15 +32,17 @@ final class _HeartRatePageState extends State<HeartRatePage> {
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
-        Text(sample == null ? '--' : '${sample.bpm}',
-            textAlign: TextAlign.center,
-            style: Theme.of(context)
-                .textTheme
-                .displayLarge
-                ?.copyWith(fontSize: 96)),
-        Text('BPM',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleLarge),
+        Text(
+          sample == null ? '--' : '${sample.bpm}',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.displayLarge
+              ?.copyWith(fontSize: 96),
+        ),
+        Text(
+          'BPM',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
         if (sample == null)
           const Padding(
             padding: EdgeInsets.only(top: 8),
@@ -48,14 +50,19 @@ final class _HeartRatePageState extends State<HeartRatePage> {
           ),
         const SizedBox(height: 8),
         Text(
-            '${Zh.connectionStatusLabel}：${Zh.blePhase(ble.phase)} · '
-            '${Zh.adapterLabel}：${Zh.adapterState(ble.adapterState)}',
-            textAlign: TextAlign.center),
+          '${Zh.connectionStatusLabel}：${Zh.blePhase(ble.phase)} · '
+          '${Zh.adapterLabel}：${Zh.adapterState(ble.adapterState)}',
+          textAlign: TextAlign.center,
+        ),
         if (sample != null) ...[
-          Text('${Zh.sensorContactLabel}：${Zh.contact(sample.sensorContact)}',
-              textAlign: TextAlign.center),
-          Text('${Zh.rrIntervalsLabel}：${sample.rrIntervalsMs.join(', ')} ms',
-              textAlign: TextAlign.center),
+          Text(
+            '${Zh.sensorContactLabel}：${Zh.contact(sample.sensorContact)}',
+            textAlign: TextAlign.center,
+          ),
+          Text(
+            '${Zh.rrIntervalsLabel}：${sample.rrIntervalsMs.join(', ')} ms',
+            textAlign: TextAlign.center,
+          ),
         ],
         const SizedBox(height: 24),
         FilledButton.icon(
@@ -65,17 +72,20 @@ final class _HeartRatePageState extends State<HeartRatePage> {
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
-          value: _selected,
+          initialValue: _selected,
           decoration: const InputDecoration(
-              labelText: Zh.selectHeartRateDevice,
-              border: OutlineInputBorder()),
+            labelText: Zh.selectHeartRateDevice,
+            border: OutlineInputBorder(),
+          ),
           items: [
             for (final device in ble.devices)
               DropdownMenuItem(
-                  value: device.id,
-                  child: Text(
-                      '${device.name.isEmpty ? Zh.unnamedDevice : device.name} '
-                      '(${device.rssi} dBm)')),
+                value: device.id,
+                child: Text(
+                  '${device.name.isEmpty ? Zh.unnamedDevice : device.name} '
+                  '(${device.rssi} dBm)',
+                ),
+              ),
           ],
           onChanged: (value) => setState(() => _selected = value),
         ),
@@ -88,12 +98,15 @@ final class _HeartRatePageState extends State<HeartRatePage> {
           label: const Text(Zh.connectHeartRateDevice),
         ),
         TextButton(
-            onPressed: () => _run(state.heartRate.disconnect),
-            child: const Text(Zh.disconnect)),
+          onPressed: () => _run(state.heartRate.disconnect),
+          child: const Text(Zh.disconnect),
+        ),
         if (ble.phase == BleConnectionPhase.error)
-          Text(ble.lastError == null
-              ? Zh.bleErrorTitle
-              : Zh.bleError(ble.lastError!)),
+          Text(
+            ble.lastError == null
+                ? Zh.bleErrorTitle
+                : Zh.bleError(ble.lastError!),
+          ),
       ],
     );
   }

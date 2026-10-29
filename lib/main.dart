@@ -22,14 +22,16 @@ Future<void> main() async {
     );
     savedNickname = await profileStore.loadNickname();
   } catch (error, stack) {
-    AppLogger.instance
-        .error('profile', 'Load nickname failed: $error', null, error, stack);
+    AppLogger.instance.error(
+      'profile',
+      'Load nickname failed: $error',
+      null,
+      error,
+      stack,
+    );
   }
 
-  final state = AppState(
-    nickname: savedNickname,
-    profileStore: profileStore,
-  );
+  final state = AppState(nickname: savedNickname, profileStore: profileStore);
   runApp(HeartRateApp(state: state));
 }
 
@@ -74,16 +76,22 @@ final class _HeartRateAppState extends State<HeartRateApp> {
       theme: ThemeData(colorSchemeSeed: Colors.redAccent, useMaterial3: true),
       home: Scaffold(
         appBar: AppBar(title: Text(titles[_index])),
-        body: SafeArea(child: IndexedStack(index: _index, children: pages)),
+        body: SafeArea(
+          child: IndexedStack(index: _index, children: pages),
+        ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _index,
           onDestinationSelected: (index) => setState(() => _index = index),
           destinations: const [
             NavigationDestination(
-                icon: Icon(Icons.favorite), label: Zh.navHeartRate),
+              icon: Icon(Icons.favorite),
+              label: Zh.navHeartRate,
+            ),
             NavigationDestination(icon: Icon(Icons.groups), label: Zh.navRoom),
             NavigationDestination(
-                icon: Icon(Icons.settings), label: Zh.navSettings),
+              icon: Icon(Icons.settings),
+              label: Zh.navSettings,
+            ),
           ],
         ),
       ),

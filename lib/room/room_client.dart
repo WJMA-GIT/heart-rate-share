@@ -12,10 +12,12 @@ import 'room_identity.dart';
 enum RoomConnectionState { disconnected, connecting, connected, error }
 
 final class RoomClient {
-  RoomClient({required String displayName, AppLogger? logger})
-      : _displayName = displayName,
-        memberId = RoomIdentity.memberId(),
-        _log = logger ?? AppLogger.instance;
+  factory RoomClient({required String displayName, AppLogger? logger}) =>
+      RoomClient._(displayName, logger ?? AppLogger.instance);
+
+  RoomClient._(this._displayName, this._log)
+    : memberId = RoomIdentity.memberId();
+
   String _displayName;
   String get displayName => _displayName;
   final String memberId;
@@ -54,17 +56,31 @@ final class RoomClient {
       await channel.ready;
       _channel = channel;
       _roomCode = uri.queryParameters['room'];
-      _send(RoomMessageType.hello,
-          {'memberId': memberId, 'displayName': _displayName});
-      _subscription = channel.stream.listen(_onMessage, onDone: () {
-        _setState(RoomConnectionState.disconnected);
-      }, onError: (Object error, StackTrace stack) {
-        _setState(RoomConnectionState.error);
-        _log.error('room', 'WebSocket receive failed', memberId, error, stack);
+      _send(RoomMessageType.hello, {
+        'memberId': memberId,
+        'displayName': _displayName,
       });
+      _subscription = channel.stream.listen(
+        _onMessage,
+        onDone: () {
+          _setState(RoomConnectionState.disconnected);
+        },
+        onError: (Object error, StackTrace stack) {
+          _setState(RoomConnectionState.error);
+          _log.error(
+            'room',
+            'WebSocket receive failed',
+            memberId,
+            error,
+            stack,
+          );
+        },
+      );
       _reportTimer = Timer.periodic(AppConfig.reportInterval, (_) => _flush());
-      _heartbeatTimer =
-          Timer.periodic(AppConfig.heartbeatInterval, (_) => _sendPing());
+      _heartbeatTimer = Timer.periodic(
+        AppConfig.heartbeatInterval,
+        (_) => _sendPing(),
+      );
       _setState(RoomConnectionState.connected);
     } catch (error, stack) {
       _setState(RoomConnectionState.error);
@@ -109,8 +125,9 @@ final class RoomClient {
 
   void _send(RoomMessageType type, Map<String, Object?> data) {
     // Never log envelope payloads: future join credentials belong here.
-    _channel?.sink
-        .add(jsonEncode(RoomEnvelope(type: type, data: data).toJson()));
+    _channel?.sink.add(
+      jsonEncode(RoomEnvelope(type: type, data: data).toJson()),
+    );
   }
 
   void _onMessage(Object? data) {
@@ -126,12 +143,16 @@ final class RoomClient {
             _byId[member.report.memberId] = member;
           }
         case RoomMessageType.memberDelta:
-          final member =
-              _member(envelope.data['member'] as Map<String, Object?>);
+          final member = _member(
+            envelope.data['member'] as Map<String, Object?>,
+          );
           _byId[member.report.memberId] = member;
         case RoomMessageType.error:
-          _log.warn('room', 'Relay error=${envelope.data['code']}',
-              deviceId: memberId);
+          _log.warn(
+            'room',
+            'Relay error=${envelope.data['code']}',
+            deviceId: memberId,
+          );
         default:
           break;
       }
@@ -142,18 +163,18 @@ final class RoomClient {
   }
 
   MemberState _member(Map<String, Object?> json) => MemberState(
-        report: HeartRateReport(
-          memberId: json['memberId'] as String,
-          displayName: json['displayName'] as String,
-          bpm: json['bpm'] as int,
-          rrIntervalsMs: (json['rrMs'] as List).cast<int>(),
-          sensorContact: json['sensorContact'] as bool?,
-          sequence: json['sequence'] as int,
-          measuredAt: DateTime.parse(json['measuredAt'] as String).toUtc(),
-        ),
-        lastSeen: DateTime.parse(json['lastSeen'] as String).toUtc(),
-        online: json['online'] as bool,
-      );
+    report: HeartRateReport(
+      memberId: json['memberId'] as String,
+      displayName: json['displayName'] as String,
+      bpm: json['bpm'] as int,
+      rrIntervalsMs: (json['rrMs'] as List).cast<int>(),
+      sensorContact: json['sensorContact'] as bool?,
+      sequence: json['sequence'] as int,
+      measuredAt: DateTime.parse(json['measuredAt'] as String).toUtc(),
+    ),
+    lastSeen: DateTime.parse(json['lastSeen'] as String).toUtc(),
+    online: json['online'] as bool,
+  );
 
   Future<void> disconnect() async {
     _reportTimer?.cancel();

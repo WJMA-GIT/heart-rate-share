@@ -78,43 +78,43 @@ abstract final class Zh {
   static const recentDiagnostics = '最近诊断信息';
 
   static String blePhase(BleConnectionPhase phase) => switch (phase) {
-        BleConnectionPhase.idle => '空闲',
-        BleConnectionPhase.adapterOff => '蓝牙未开启',
-        BleConnectionPhase.permissionDenied => '请授予附近设备权限',
-        BleConnectionPhase.scanning => '正在扫描',
-        BleConnectionPhase.connecting => '正在连接',
-        BleConnectionPhase.discovering => '正在读取设备服务',
-        BleConnectionPhase.subscribed => '已连接，正在接收心率',
-        BleConnectionPhase.disconnecting => '正在断开连接',
-        BleConnectionPhase.error => '连接异常',
-      };
+    BleConnectionPhase.idle => '空闲',
+    BleConnectionPhase.adapterOff => '蓝牙未开启',
+    BleConnectionPhase.permissionDenied => '请授予附近设备权限',
+    BleConnectionPhase.scanning => '正在扫描',
+    BleConnectionPhase.connecting => '正在连接',
+    BleConnectionPhase.discovering => '正在读取设备服务',
+    BleConnectionPhase.subscribed => '已连接，正在接收心率',
+    BleConnectionPhase.disconnecting => '正在断开连接',
+    BleConnectionPhase.error => '连接异常',
+  };
 
   static String adapterState(String state) => switch (state) {
-        'on' => '已开启',
-        'off' => '蓝牙未开启',
-        'unauthorized' => '请授予附近设备权限',
-        'unavailable' => '当前设备不支持蓝牙',
-        'unknown' => '未知',
-        _ => state,
-      };
+    'on' => '已开启',
+    'off' => '蓝牙未开启',
+    'unauthorized' => '请授予附近设备权限',
+    'unavailable' => '当前设备不支持蓝牙',
+    'unknown' => '未知',
+    _ => state,
+  };
 
   static String roomState(RoomConnectionState state) => switch (state) {
-        RoomConnectionState.disconnected => '未连接',
-        RoomConnectionState.connecting => '正在连接',
-        RoomConnectionState.connected => '已连接',
-        RoomConnectionState.error => '连接失败',
-      };
+    RoomConnectionState.disconnected => '未连接',
+    RoomConnectionState.connecting => '正在连接',
+    RoomConnectionState.connected => '已连接',
+    RoomConnectionState.error => '连接失败',
+  };
 
   static String contact(bool? value) => switch (value) {
-        true => contactSupported,
-        false => contactNotSupported,
-        null => contactUnknown,
-      };
+    true => contactSupported,
+    false => contactNotSupported,
+    null => contactUnknown,
+  };
 
   static String nicknameError(NicknameValidationError error) => switch (error) {
-        NicknameValidationError.empty => nicknameEmptyError,
-        NicknameValidationError.tooLong => nicknameTooLongError,
-      };
+    NicknameValidationError.empty => nicknameEmptyError,
+    NicknameValidationError.tooLong => nicknameTooLongError,
+  };
 
   static String bleError(Object error) {
     final text = '$error';

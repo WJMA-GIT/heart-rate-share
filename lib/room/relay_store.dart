@@ -7,8 +7,8 @@ import 'protocol.dart';
 /// Relay-side source of truth. Call prune periodically (at least once/sec).
 final class RelayStore {
   RelayStore({AppLogger? logger, DateTime Function()? clock})
-      : _log = logger ?? AppLogger.instance,
-        _clock = clock ?? (() => DateTime.now().toUtc());
+    : _log = logger ?? AppLogger.instance,
+      _clock = clock ?? (() => DateTime.now().toUtc());
   final AppLogger _log;
   final DateTime Function() _clock;
   final _members = <String, MemberState>{};
@@ -27,8 +27,11 @@ final class RelayStore {
       return null;
     }
     if (previous == null && _members.length >= AppConfig.maxMembers) {
-      _log.warn('relay', 'Room full, member rejected',
-          deviceId: report.memberId);
+      _log.warn(
+        'relay',
+        'Room full, member rejected',
+        deviceId: report.memberId,
+      );
       throw StateError('ROOM_FULL');
     }
     final state = MemberState(report: report, lastSeen: _clock(), online: true);

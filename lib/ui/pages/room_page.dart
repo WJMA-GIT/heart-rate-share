@@ -39,8 +39,9 @@ final class _RoomPageState extends State<RoomPage> {
       return;
     }
     try {
-      await widget.state.room
-          .connect(RoomAddress.parse(_address.text, roomCode: _roomCode.text));
+      await widget.state.room.connect(
+        RoomAddress.parse(_address.text, roomCode: _roomCode.text),
+      );
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -88,11 +89,8 @@ final class _RoomPageState extends State<RoomPage> {
       );
     }
 
-    final textStyle = Theme.of(context).textTheme.displayLarge?.copyWith(
-          fontSize: 64,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 8,
-        );
+    final textStyle = Theme.of(context).textTheme.displayLarge
+        ?.copyWith(fontSize: 64, fontWeight: FontWeight.bold, letterSpacing: 8);
     return Semantics(
       button: true,
       label: Zh.copyRoomNumber,
@@ -104,8 +102,10 @@ final class _RoomPageState extends State<RoomPage> {
             padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
             child: Column(
               children: [
-                Text(Zh.roomNumber,
-                    style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  Zh.roomNumber,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
                 const SizedBox(height: 4),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -123,8 +123,10 @@ final class _RoomPageState extends State<RoomPage> {
                     ),
                   ],
                 ),
-                Text(Zh.roomNumberTapToCopy,
-                    style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                  Zh.roomNumberTapToCopy,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ],
             ),
           ),
@@ -155,16 +157,16 @@ final class _RoomPageState extends State<RoomPage> {
             Text(
               member.online ? '${member.report.bpm} BPM' : '-- BPM',
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color:
-                        member.online ? null : Theme.of(context).disabledColor,
-                    fontWeight: FontWeight.bold,
-                  ),
+                color: member.online ? null : Theme.of(context).disabledColor,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             if (!member.online)
-              Text(Zh.offline,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).disabledColor,
-                      )),
+              Text(
+                Zh.offline,
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: Theme.of(context).disabledColor),
+              ),
           ],
         ),
       ),
@@ -189,7 +191,8 @@ final class _RoomPageState extends State<RoomPage> {
                 ),
               const SizedBox(height: 8),
               Text(
-                  '${Zh.connectionStatusLabel}：${Zh.roomState(state.room.state)}'),
+                '${Zh.connectionStatusLabel}：${Zh.roomState(state.room.state)}',
+              ),
               const SizedBox(height: 12),
               TextField(
                 controller: _roomCode,
@@ -208,18 +211,26 @@ final class _RoomPageState extends State<RoomPage> {
                 ),
               ),
               const SizedBox(height: 8),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                FilledButton(
-                    onPressed: _connect, child: const Text(Zh.joinRoom)),
-                OutlinedButton(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton(
+                    onPressed: _connect,
+                    child: const Text(Zh.joinRoom),
+                  ),
+                  OutlinedButton(
                     onPressed: state.room.disconnect,
-                    child: const Text(Zh.leaveRoom)),
-                OutlinedButton(
-                  onPressed: _toggleRelay,
-                  child:
-                      Text(state.relay == null ? Zh.hostRelay : Zh.stopRelay),
-                ),
-              ]),
+                    child: const Text(Zh.leaveRoom),
+                  ),
+                  OutlinedButton(
+                    onPressed: _toggleRelay,
+                    child: Text(
+                      state.relay == null ? Zh.hostRelay : Zh.stopRelay,
+                    ),
+                  ),
+                ],
+              ),
               if (state.relay != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -229,8 +240,10 @@ final class _RoomPageState extends State<RoomPage> {
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Text(Zh.developmentTransportWarning),
               ),
-              Text(Zh.roomMembers,
-                  style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                Zh.roomMembers,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               if (state.members.isEmpty)
                 const Padding(
                   padding: EdgeInsets.only(top: 8),

@@ -11,7 +11,7 @@ permissions:
   contents: write   # 发布 Release 需要；只作用于本仓库
 
 env:
-  FLUTTER_VERSION: '3.27.4'
+  FLUTTER_VERSION: '3.47.8'
   # 版本号不再写死：从 pubspec.yaml 的 `version:` 派生，
   # 否则每次升版都会出现「Release 是 0.1.1、资产名却是 0.1.0」的漂移。
 

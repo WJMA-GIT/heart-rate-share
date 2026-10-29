@@ -9,12 +9,11 @@ final class RoomAddressException implements FormatException {
 
   @override
   String get message => switch (reason) {
-        RoomAddressError.empty => 'Address is empty',
-        RoomAddressError.unsupportedScheme =>
-          'Expected ws://, wss://, host or IP',
-        RoomAddressError.invalidHost => 'Invalid host',
-        RoomAddressError.invalidPort => 'Invalid port',
-      };
+    RoomAddressError.empty => 'Address is empty',
+    RoomAddressError.unsupportedScheme => 'Expected ws://, wss://, host or IP',
+    RoomAddressError.invalidHost => 'Invalid host',
+    RoomAddressError.invalidPort => 'Invalid port',
+  };
 
   @override
   int? get offset => null;
@@ -69,8 +68,8 @@ final class RoomAddress {
     final port = base.hasPort
         ? base.port
         : base.scheme == 'wss'
-            ? AppConfig.defaultSecureWebSocketPort
-            : AppConfig.defaultWebSocketPort;
+        ? AppConfig.defaultSecureWebSocketPort
+        : AppConfig.defaultWebSocketPort;
 
     final query = <String, String>{
       ...base.queryParameters,

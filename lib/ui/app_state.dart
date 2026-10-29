@@ -28,10 +28,10 @@ final class AppState extends ChangeNotifier {
     AppLogger? logger,
     String? nickname,
     UserProfileStore? profileStore,
-  })  : logger = logger ?? AppLogger.instance,
-        heartRate = heartRate ?? HeartRateService(logger: logger),
-        _profileStore = profileStore ?? InMemoryUserProfileStore(),
-        _nickname = _initialNickname(nickname) {
+  }) : logger = logger ?? AppLogger.instance,
+       heartRate = heartRate ?? HeartRateService(logger: logger),
+       _profileStore = profileStore ?? InMemoryUserProfileStore(),
+       _nickname = _initialNickname(nickname) {
     debug = DebugController(this.logger);
     room = RoomClient(displayName: _nickname, logger: this.logger);
     discovery = UnimplementedRoomDiscovery(logger: this.logger);

@@ -13,15 +13,15 @@ abstract final class HrsChannel {
   // connect({deviceId}), disconnect({deviceId}).
   // Events: adapter, scanResult, connection, notification, error.
   static Map<String, Object?> scanResult(String id, String name, int rssi) => {
-        'type': 'scanResult',
-        'deviceId': id,
-        'name': name,
-        'rssi': rssi,
-      };
+    'type': 'scanResult',
+    'deviceId': id,
+    'name': name,
+    'rssi': rssi,
+  };
   static Map<String, Object?> notification(String id, List<int> bytes) => {
-        'type': 'notification',
-        'deviceId': id,
-        'bytes': bytes,
-      };
+    'type': 'notification',
+    'deviceId': id,
+    'bytes': bytes,
+  };
   static String encode(Map<String, Object?> event) => jsonEncode(event);
 }

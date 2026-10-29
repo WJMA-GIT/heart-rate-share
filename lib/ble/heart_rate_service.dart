@@ -11,8 +11,8 @@ import 'heart_rate_source.dart';
 
 final class HeartRateService {
   HeartRateService({HeartRateSource? source, AppLogger? logger})
-      : _source = source ?? _defaultSource(),
-        _log = logger ?? AppLogger.instance {
+    : _source = source ?? _defaultSource(),
+      _log = logger ?? AppLogger.instance {
     _sampleSubscription = _source.samples.listen(_onSample);
     _snapshotSubscription = _source.snapshots.listen(_onSnapshot);
   }
@@ -49,8 +49,11 @@ final class HeartRateService {
   void _onSnapshot(BleSnapshot next) {
     _snapshot = next;
     _snapshots.add(next);
-    _log.info('ble', 'connection phase=${next.phase.name}',
-        deviceId: next.connectedDeviceId);
+    _log.info(
+      'ble',
+      'connection phase=${next.phase.name}',
+      deviceId: next.connectedDeviceId,
+    );
   }
 
   void _onSample(HeartRateSample sample) {
@@ -76,8 +79,13 @@ final class HeartRateService {
         lastError: '$error',
       );
       _snapshots.add(_snapshot);
-      _log.error('ble', 'BLE operation failed: $error',
-          _snapshot.connectedDeviceId, error, stack);
+      _log.error(
+        'ble',
+        'BLE operation failed: $error',
+        _snapshot.connectedDeviceId,
+        error,
+        stack,
+      );
       rethrow;
     }
   }

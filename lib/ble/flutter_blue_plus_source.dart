@@ -11,7 +11,7 @@ import 'heart_rate_source.dart';
 /// pubspec.yaml. Background execution is owned by native code, not this plugin.
 final class FlutterBluePlusSource implements HeartRateSource {
   FlutterBluePlusSource({AppLogger? logger})
-      : _log = logger ?? AppLogger.instance;
+    : _log = logger ?? AppLogger.instance;
 
   static final _hrsService = Guid('0000180d-0000-1000-8000-00805f9b34fb');
   static final _hrsMeasurement = Guid('00002a37-0000-1000-8000-00805f9b34fb');
@@ -41,8 +41,9 @@ final class FlutterBluePlusSource implements HeartRateSource {
   }
 
   @override
-  Future<void> startScan(
-      {Duration timeout = const Duration(seconds: 10)}) async {
+  Future<void> startScan({
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
     _adapterSubscription ??= FlutterBluePlus.adapterState.listen((state) {
       _emit(_snapshot.copyWith(adapterState: state.name));
     });
@@ -53,35 +54,41 @@ final class FlutterBluePlusSource implements HeartRateSource {
     }
     _devices.clear();
     _rssiById.clear();
-    _emit(_snapshot.copyWith(
-      phase: BleConnectionPhase.scanning,
-      devices: const [],
-      clearError: true,
-    ));
+    _emit(
+      _snapshot.copyWith(
+        phase: BleConnectionPhase.scanning,
+        devices: const [],
+        clearError: true,
+      ),
+    );
     late final StreamSubscription<List<ScanResult>> scanSubscription;
-    scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-      for (final result in results) {
-        final serviceUuids = result.advertisementData.serviceUuids;
-        if (serviceUuids.contains(_hrsService)) {
-          _devices[result.device.remoteId.str] = result.device;
-          _rssiById[result.device.remoteId.str] = result.rssi;
+    scanSubscription = FlutterBluePlus.scanResults.listen(
+      (results) {
+        for (final result in results) {
+          final serviceUuids = result.advertisementData.serviceUuids;
+          if (serviceUuids.contains(_hrsService)) {
+            _devices[result.device.remoteId.str] = result.device;
+            _rssiById[result.device.remoteId.str] = result.rssi;
+          }
         }
-      }
-      final infos = _devices.entries.map((entry) {
-        return BleDeviceInfo(
-          id: entry.key,
-          name: entry.value.platformName,
-          rssi: _rssiById[entry.key] ?? -127,
-        );
-      }).toList()
-        ..sort((a, b) => b.rssi.compareTo(a.rssi));
-      _emit(_snapshot.copyWith(devices: infos));
-    }, onError: (Object error, StackTrace stack) {
-      _log.error('ble', 'Scan failed: $error', null, error, stack);
-    });
+        final infos = _devices.entries.map((entry) {
+          return BleDeviceInfo(
+            id: entry.key,
+            name: entry.value.platformName,
+            rssi: _rssiById[entry.key] ?? -127,
+          );
+        }).toList()..sort((a, b) => b.rssi.compareTo(a.rssi));
+        _emit(_snapshot.copyWith(devices: infos));
+      },
+      onError: (Object error, StackTrace stack) {
+        _log.error('ble', 'Scan failed: $error', null, error, stack);
+      },
+    );
     _subscriptions.add(scanSubscription);
     await FlutterBluePlus.startScan(
-        withServices: [_hrsService], timeout: timeout);
+      withServices: [_hrsService],
+      timeout: timeout,
+    );
     await Future<void>.delayed(timeout);
     await scanSubscription.cancel();
     _subscriptions.remove(scanSubscription);
@@ -96,15 +103,18 @@ final class FlutterBluePlusSource implements HeartRateSource {
     }
     await disconnect();
     _connected = device;
-    _emit(_snapshot.copyWith(
-      phase: BleConnectionPhase.connecting,
-      connectedDeviceId: deviceId,
-      clearError: true,
-    ));
+    _emit(
+      _snapshot.copyWith(
+        phase: BleConnectionPhase.connecting,
+        connectedDeviceId: deviceId,
+        clearError: true,
+      ),
+    );
     await device.connect(
-        license: License.nonprofit,
-        timeout: const Duration(seconds: 15),
-        autoConnect: false);
+      license: License.nonprofit,
+      timeout: const Duration(seconds: 15),
+      autoConnect: false,
+    );
     _connectionSubscription = device.connectionState.listen((state) {
       if (state == BluetoothConnectionState.disconnected) {
         _emit(_snapshot.copyWith(phase: BleConnectionPhase.idle));

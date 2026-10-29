@@ -18,7 +18,7 @@ abstract interface class RoomDiscovery {
 /// desktop socket support, so no fake discovered room is emitted here.
 final class UnimplementedRoomDiscovery implements RoomDiscovery {
   UnimplementedRoomDiscovery({AppLogger? logger})
-      : _log = logger ?? AppLogger.instance;
+    : _log = logger ?? AppLogger.instance;
   final AppLogger _log;
   final _rooms = StreamController<List<DiscoveredRoom>>.broadcast();
   @override

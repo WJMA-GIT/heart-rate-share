@@ -15,7 +15,8 @@ void main() {
     addTearDown(client.dispose);
     final first = client.members.firstWhere((members) => members.isNotEmpty);
     await client.connect(
-        RoomAddress.parse('127.0.0.1:${relay.port}', roomCode: relay.roomCode));
+      RoomAddress.parse('127.0.0.1:${relay.port}', roomCode: relay.roomCode),
+    );
     client.report(bpm: 72, rrIntervalsMs: const [833], sensorContact: true);
     final members = await first.timeout(const Duration(seconds: 5));
     expect(members.single.report.bpm, 72);
@@ -27,15 +28,18 @@ void main() {
     );
     client.updateDisplayName('新昵称');
     expect(
-        (await renamed.timeout(const Duration(seconds: 5)))
-            .single
-            .report
-            .displayName,
-        '新昵称');
+      (await renamed.timeout(const Duration(seconds: 5)))
+          .single
+          .report
+          .displayName,
+      '新昵称',
+    );
   });
 
   test('protocol rejects incompatible version', () {
-    expect(() => RoomEnvelope.fromJson({'v': 999, 'type': 'ping'}),
-        throwsFormatException);
+    expect(
+      () => RoomEnvelope.fromJson({'v': 999, 'type': 'ping'}),
+      throwsFormatException,
+    );
   });
 }

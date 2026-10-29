@@ -13,9 +13,9 @@ import 'room_identity.dart';
 /// public/store use. Deliberately not claimed as secure in this MVP skeleton.
 final class RelayServer {
   RelayServer({AppLogger? logger})
-      : store = RelayStore(logger: logger),
-        _log = logger ?? AppLogger.instance,
-        roomCode = RoomIdentity.shortCode();
+    : store = RelayStore(logger: logger),
+      _log = logger ?? AppLogger.instance,
+      roomCode = RoomIdentity.shortCode();
   final RelayStore store;
   final AppLogger _log;
   final String roomCode;
@@ -31,20 +31,24 @@ final class RelayServer {
       'ws://localhost:${_server?.port ?? AppConfig.defaultWebSocketPort}'
       '${AppConfig.webSocketPath}?room=$roomCode';
 
-  Future<void> start(
-      {InternetAddress? host,
-      int port = AppConfig.defaultWebSocketPort}) async {
+  Future<void> start({
+    InternetAddress? host,
+    int port = AppConfig.defaultWebSocketPort,
+  }) async {
     if (_server != null || _stopped) {
       throw StateError('RelayServer instances can only be started once');
     }
     _server = await HttpServer.bind(host ?? InternetAddress.anyIPv4, port);
-    _server!.listen(_onRequest, onError: (Object error, StackTrace stack) {
-      _log.error('relay', 'HTTP server error', null, error, stack);
-    });
+    _server!.listen(
+      _onRequest,
+      onError: (Object error, StackTrace stack) {
+        _log.error('relay', 'HTTP server error', null, error, stack);
+      },
+    );
     _pruneTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       final before = {
         for (final member in store.members)
-          member.report.memberId: member.online
+          member.report.memberId: member.online,
       };
       final after = store.prune();
       for (final member in after) {
@@ -83,10 +87,14 @@ final class RelayServer {
                 throw const FormatException('memberId');
               }
               _sockets[memberId!] = socket;
-              socket.add(jsonEncode(const RoomEnvelope(
-                type: RoomMessageType.welcome,
-                data: {},
-              ).toJson()));
+              socket.add(
+                jsonEncode(
+                  const RoomEnvelope(
+                    type: RoomMessageType.welcome,
+                    data: {},
+                  ).toJson(),
+                ),
+              );
             case RoomMessageType.heartRate:
               final report = _report(envelope.data);
               if (memberId != report.memberId) {
@@ -94,33 +102,49 @@ final class RelayServer {
               }
               final state = store.accept(report);
               if (state != null) {
-                _broadcast(
-                    RoomMessageType.memberDelta, {'member': state.toJson()});
+                _broadcast(RoomMessageType.memberDelta, {
+                  'member': state.toJson(),
+                });
               }
             case RoomMessageType.ping:
-              final nextName =
-                  _optionalDisplayName(envelope.data['displayName']);
+              final nextName = _optionalDisplayName(
+                envelope.data['displayName'],
+              );
               if (memberId != null && nextName != null) {
                 final renamed = store.rename(memberId!, nextName);
                 if (renamed != null) {
-                  _broadcast(RoomMessageType.memberDelta,
-                      {'member': renamed.toJson()});
+                  _broadcast(RoomMessageType.memberDelta, {
+                    'member': renamed.toJson(),
+                  });
                 }
               }
-              socket.add(jsonEncode(const RoomEnvelope(
-                type: RoomMessageType.pong,
-                data: {},
-              ).toJson()));
+              socket.add(
+                jsonEncode(
+                  const RoomEnvelope(
+                    type: RoomMessageType.pong,
+                    data: {},
+                  ).toJson(),
+                ),
+              );
             default:
               throw FormatException('Client cannot send ${envelope.type.name}');
           }
         } catch (error, stack) {
           _log.error(
-              'relay', 'Bad client message: $error', memberId, error, stack);
-          socket.add(jsonEncode(const RoomEnvelope(
-            type: RoomMessageType.error,
-            data: {'code': 'BAD_MESSAGE'},
-          ).toJson()));
+            'relay',
+            'Bad client message: $error',
+            memberId,
+            error,
+            stack,
+          );
+          socket.add(
+            jsonEncode(
+              const RoomEnvelope(
+                type: RoomMessageType.error,
+                data: {'code': 'BAD_MESSAGE'},
+              ).toJson(),
+            ),
+          );
         }
       },
       onDone: () {
@@ -148,14 +172,14 @@ final class RelayServer {
   }
 
   HeartRateReport _report(Map<String, Object?> json) => HeartRateReport(
-        memberId: json['memberId'] as String,
-        displayName: _displayName(json['displayName']),
-        bpm: json['bpm'] as int,
-        rrIntervalsMs: (json['rrMs'] as List).cast<int>(),
-        sensorContact: json['sensorContact'] as bool?,
-        sequence: json['sequence'] as int,
-        measuredAt: DateTime.parse(json['measuredAt'] as String).toUtc(),
-      );
+    memberId: json['memberId'] as String,
+    displayName: _displayName(json['displayName']),
+    bpm: json['bpm'] as int,
+    rrIntervalsMs: (json['rrMs'] as List).cast<int>(),
+    sensorContact: json['sensorContact'] as bool?,
+    sequence: json['sequence'] as int,
+    measuredAt: DateTime.parse(json['measuredAt'] as String).toUtc(),
+  );
 
   void _broadcast(RoomMessageType type, Map<String, Object?> data) {
     final text = jsonEncode(RoomEnvelope(type: type, data: data).toJson());
