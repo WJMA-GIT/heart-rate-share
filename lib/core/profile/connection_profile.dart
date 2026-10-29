@@ -1,5 +1,8 @@
 import 'dart:convert';
 
+import '../config/app_config.dart';
+import '../../room/room_address.dart';
+
 /// 房间连接方式。三选一是**显式**的：没有隐式默认，必须由用户选择。
 enum ConnectionMode {
   /// 官方服务器（默认 wss://mawj.asia:8766）。
@@ -24,15 +27,42 @@ final class ConnectionProfile {
     required this.secure,
     this.roomCode,
     this.lastUsedAt,
+    this.path = '/ws',
   });
 
-  factory ConnectionProfile.official({String? roomCode}) => ConnectionProfile(
-    mode: ConnectionMode.official,
-    host: 'mawj.asia',
-    port: 8766,
-    secure: true,
-    roomCode: roomCode,
-  );
+  /// 官方服务器：`wss://relay.mawj.asia`（443），可被 --dart-define=DEFAULT_SERVER 覆盖。
+  /// 裸主机名会被纠正成 wss；显式写 ws:// 会抛异常，避免明文打到 443。
+  factory ConnectionProfile.official({String? roomCode}) =>
+      ConnectionProfile.fromEndpoint(
+        AppConfig.effectiveOfficialServer,
+        mode: ConnectionMode.official,
+        roomCode: roomCode,
+      );
+
+  /// 备用线路（443 被运营商封时用），**不是默认值**。
+  factory ConnectionProfile.officialSecondary({String? roomCode}) =>
+      ConnectionProfile.fromEndpoint(
+        AppConfig.effectiveSecondaryServer,
+        mode: ConnectionMode.official,
+        roomCode: roomCode,
+      );
+
+  /// 从「可能没写协议」的地址构造：官方/备用都走 [SecureEndpoint] 强制 wss。
+  factory ConnectionProfile.fromEndpoint(
+    String endpoint, {
+    ConnectionMode mode = ConnectionMode.remote,
+    String? roomCode,
+  }) {
+    final uri = SecureEndpoint.parse(endpoint);
+    return ConnectionProfile(
+      mode: mode,
+      host: uri.host,
+      port: uri.port,
+      secure: uri.scheme == 'wss',
+      roomCode: roomCode,
+      path: uri.path.isEmpty ? '/ws' : uri.path,
+    );
+  }
 
   factory ConnectionProfile.local() => const ConnectionProfile(
     mode: ConnectionMode.local,
@@ -48,6 +78,9 @@ final class ConnectionProfile {
   final String? roomCode;
   final DateTime? lastUsedAt;
 
+  /// 握手路径，默认 `/ws`。DEFAULT_SERVER 里带了别的路径时以它为准。
+  final String path;
+
   String get scheme => secure ? 'wss' : 'ws';
 
   /// 稳定主键：官方/自填按端点区分，本机只有一个。
@@ -62,9 +95,11 @@ final class ConnectionProfile {
     final literal = host.contains(':') && !host.startsWith('[')
         ? '[$host]'
         : host;
+    // wss 的 443 是协议默认值，不重复展示（用户看到的是 wss://relay.mawj.asia）。
+    final showPort = !(secure && port == 443);
     return switch (mode) {
       ConnectionMode.local => 'ws://$literal:<本机端口>',
-      _ => '$scheme://$literal:$port',
+      _ => showPort ? '$scheme://$literal:$port' : '$scheme://$literal',
     };
   }
 
@@ -79,20 +114,25 @@ final class ConnectionProfile {
     secure: secure,
     roomCode: roomCode ?? this.roomCode,
     lastUsedAt: lastUsedAt ?? this.lastUsedAt,
+    path: path,
   );
 
   /// 生成实际连接用的 URI。[portOverride] 用于本机房间的运行时端口。
+  /// 拼出 `/ws?room=<短码>`。房间号先按 `^[A-Za-z0-9_-]{1,64}$` 校验，
+  /// 非法就直接抛，避免拿着 400/404 回来再猜。
   Uri toUri({String? roomCode, int? portOverride}) {
     final effectivePort = portOverride ?? port;
+    final code = roomCode ?? this.roomCode;
+    final includePort = effectivePort > 0 && !(secure && effectivePort == 443);
+    final query = <String, String>{
+      if (code != null && code.trim().isNotEmpty) 'room': code.trim(),
+    };
     return Uri(
       scheme: scheme,
       host: host,
-      port: effectivePort <= 0 ? null : effectivePort,
-      path: '/ws',
-      queryParameters: {
-        if ((roomCode ?? this.roomCode)?.trim().isNotEmpty ?? false)
-          'room': (roomCode ?? this.roomCode)!.trim(),
-      },
+      port: includePort ? effectivePort : null,
+      path: path,
+      queryParameters: query.isEmpty ? null : query,
     );
   }
 
@@ -101,6 +141,7 @@ final class ConnectionProfile {
     'host': host,
     'port': port,
     'secure': secure,
+    'path': path,
     'roomCode': roomCode,
     'lastUsedAt': lastUsedAt?.toUtc().toIso8601String(),
   };
@@ -121,6 +162,9 @@ final class ConnectionProfile {
       port: port,
       secure: secure,
       roomCode: room is String && room.trim().isNotEmpty ? room.trim() : null,
+      path: json['path'] is String && (json['path'] as String).isNotEmpty
+          ? json['path'] as String
+          : '/ws',
       lastUsedAt: used is String ? DateTime.tryParse(used)?.toUtc() : null,
     );
   }

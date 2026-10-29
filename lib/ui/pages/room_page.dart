@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/l10n/strings_zh.dart';
+import '../../core/config/app_config.dart';
 import '../../core/profile/connection_profile.dart';
+import '../../room/room_code.dart';
 import '../../room/room_address.dart';
 import '../../room/room_client.dart';
 import '../app_state.dart';
@@ -34,9 +36,23 @@ final class _RoomPageState extends State<RoomPage> {
     super.dispose();
   }
 
-  String? get _typedRoom {
-    final value = _roomCode.text.trim();
-    return value.isEmpty ? null : value;
+  /// 只有通过 `^[A-Za-z0-9_-]{1,64}$` 才算有效房间号：先在本地拦住，
+  /// 免得拼进 URL 后拿 400/404 回来再猜。
+  String? get _typedRoom => RoomCode.normalize(_roomCode.text);
+
+  bool get _roomCodeLooksInvalid =>
+      _roomCode.text.trim().isNotEmpty && !RoomCode.isValid(_roomCode.text);
+
+  bool _requireRoomCode() {
+    if (_typedRoom != null) return true;
+    final message = _roomCodeLooksInvalid
+        ? Zh.roomError(
+            const RoomAddressException(RoomAddressError.invalidRoomCode),
+          )
+        : Zh.roomNumberRequired;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+    return false;
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -76,11 +92,7 @@ final class _RoomPageState extends State<RoomPage> {
   /// 官方服务器：需要房间号（可用最近记录里的，或用户手填）。
   Future<void> _connectOfficial() async {
     final code = _typedRoom;
-    if (code == null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text(Zh.roomNumberRequired)));
-      return;
-    }
+    if (!_requireRoomCode()) return;
     await _run(
       () => widget.state.connectProfile(
         ConnectionProfile.official(),
@@ -98,11 +110,7 @@ final class _RoomPageState extends State<RoomPage> {
       return;
     }
     final code = _typedRoom ?? profile.roomCode;
-    if (code == null || code.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text(Zh.roomNumberRequired)));
-      return;
-    }
+    if (!RoomCode.isValid(code) && !_requireRoomCode()) return;
     await _run(() => widget.state.connectProfile(profile, roomCode: code));
   }
 
@@ -115,11 +123,7 @@ final class _RoomPageState extends State<RoomPage> {
       return;
     }
     final code = _typedRoom;
-    if (code == null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text(Zh.roomNumberRequired)));
-      return;
-    }
+    if (!_requireRoomCode()) return;
     await _run(() async {
       final uri = RoomAddress.parse(raw, roomCode: code);
       await widget.state.connectProfile(
@@ -337,9 +341,17 @@ final class _RoomPageState extends State<RoomPage> {
               const SizedBox(height: 12),
               TextField(
                 controller: _roomCode,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: Zh.roomNumber,
                   hintText: Zh.roomNumberHint,
+                  helperText: Zh.roomCodeRuleHint,
+                  errorText: _roomCodeLooksInvalid
+                      ? Zh.roomError(
+                          const RoomAddressException(
+                            RoomAddressError.invalidRoomCode,
+                          ),
+                        )
+                      : null,
                 ),
                 onChanged: (_) => setState(() {}),
               ),
@@ -411,12 +423,25 @@ final class _RoomPageState extends State<RoomPage> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: FilledButton.tonal(
-                      onPressed: _busy ? null : _connectManual,
-                      child: const Text(Zh.joinRoom),
-                    ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.tonal(
+                        onPressed: _busy ? null : _connectManual,
+                        child: const Text(Zh.joinRoom),
+                      ),
+                      // 443 被运营商封时的备用线路（不设为默认）
+                      TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () => setState(() {
+                                _address.text =
+                                    AppConfig.effectiveSecondaryServer;
+                              }),
+                        child: const Text(Zh.useSecondaryServer),
+                      ),
+                    ],
                   ),
                 ],
               ),

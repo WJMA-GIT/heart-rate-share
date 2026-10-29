@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:heartrate/room/room_address.dart';
+import 'package:heartrate/room/room_code.dart';
 
 void main() {
   group('RoomAddress.parse', () {
@@ -164,6 +165,58 @@ void main() {
     expect(
       RoomAddress.normalizedEndpoint('wss://[::1]:8766'),
       'wss://[::1]:8766',
+    );
+  });
+
+  test('官方服务器必须 wss：裸域名纠正、显式 ws:// 拒绝', () {
+    final bare = SecureEndpoint.parse('relay.mawj.asia');
+    expect(bare.scheme, 'wss');
+    expect(bare.host, 'relay.mawj.asia');
+    expect(bare.port, 443);
+    expect(bare.path, '/ws');
+
+    final explicit = SecureEndpoint.parse('wss://relay.mawj.asia:8766');
+    expect(explicit.port, 8766);
+
+    expect(
+      () => SecureEndpoint.parse('ws://relay.mawj.asia'),
+      throwsA(
+        isA<RoomAddressException>().having(
+          (e) => e.reason,
+          'reason',
+          RoomAddressError.insecureScheme,
+        ),
+      ),
+    );
+  });
+
+  test('裸地址带 :443 会自动按 wss 解析（明文打 443 必然失败）', () {
+    final uri = RoomAddress.parse('relay.mawj.asia:443');
+    expect(uri.scheme, 'wss');
+    expect(uri.port, 443);
+    // 不带端口的裸地址仍按局域网明文处理，保持旧行为
+    expect(RoomAddress.parse('192.168.1.10').scheme, 'ws');
+  });
+
+  test('房间号必须符合字母数字下划线短横线且不超过 64 位', () {
+    expect(RoomCode.isValid('ABC123'), isTrue);
+    expect(RoomCode.isValid('a-b_c'), isTrue);
+    expect(RoomCode.isValid('x' * 64), isTrue);
+    expect(RoomCode.isValid('x' * 65), isFalse);
+    expect(RoomCode.isValid('has space'), isFalse);
+    expect(RoomCode.isValid('中文'), isFalse);
+    expect(RoomCode.isValid(''), isFalse);
+    expect(RoomCode.isValid(null), isFalse);
+
+    expect(
+      () => RoomAddress.parse('relay.mawj.asia:443', roomCode: 'has space'),
+      throwsA(
+        isA<RoomAddressException>().having(
+          (e) => e.reason,
+          'reason',
+          RoomAddressError.invalidRoomCode,
+        ),
+      ),
     );
   });
 }

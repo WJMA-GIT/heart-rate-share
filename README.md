@@ -27,8 +27,10 @@ rollback steps.
   [`docs/identity.md`](docs/identity.md).
 - Three pages (heart, room, settings), opt-in Debug panel, per-session local
   logs, share/export, room short-code field and manual address fallback.
-- Connection choices are explicit: official server (`wss://mawj.asia:8766`, the
-  address is shown only on the settings page) or "create a room on this device".
+- Connection choices are explicit: official server (`wss://relay.mawj.asia`, the
+  address is shown only on the settings page, `--dart-define=DEFAULT_SERVER=...`
+  overrides it, and `SECONDARY_SERVER` keeps the `:8766` fallback for networks
+  that block 443) or "create a room on this device".
   There is no implicit local room. Recent connection profiles are persisted and
   re-usable with one tap, in the same store as the install identity. See
   [`docs/client-0.5.0.md`](docs/client-0.5.0.md).

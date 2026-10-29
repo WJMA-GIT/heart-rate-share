@@ -60,6 +60,9 @@ abstract final class Zh {
 
   static String roomErrorCode(RoomErrorCode code) => switch (code) {
     RoomErrorCode.certificateUntrusted => '服务器证书未通过系统 CA 校验（可能是自签证书）。',
+    RoomErrorCode.certificateHostMismatch =>
+      '服务器证书与访问的域名不匹配：证书可能是 *.mawj.asia 通配，'
+          '必须用 relay.mawj.asia 这类子域访问（根域不在证书范围内）。',
     RoomErrorCode.certificatePinnedMismatch => '服务器证书与内置指纹不一致，已拒绝连接。',
     RoomErrorCode.tlsHandshake => 'TLS 握手失败，请确认服务端已开启 wss。',
     RoomErrorCode.dnsFailure => '域名解析失败：找不到服务器地址。请检查网络连接与域名是否正确。',
@@ -69,6 +72,9 @@ abstract final class Zh {
       '当前网络不支持 IPv6。这台服务器只有 IPv6 地址（AAAA 记录），'
           '请改用支持 IPv6 的网络，或请管理员提供 IPv4 入口。',
     RoomErrorCode.handshakeRejected => '服务器未接受 WebSocket 升级，请检查反向代理配置。',
+    RoomErrorCode.badRequest => '服务器返回 400：请求被拒绝，通常是房间号或参数格式不对。',
+    RoomErrorCode.endpointNotFound =>
+      '服务器返回 404：路径或房间号不对（路径应为 /ws，且带正确的 ?room=短码）。',
     RoomErrorCode.unknown => '连接失败，请查看诊断日志。',
   };
 
@@ -98,6 +104,9 @@ abstract final class Zh {
   static const customServer = '自定义服务器';
   static const profileDetails = '连接详情';
   static const seeDiagnostics = '诊断';
+  static const roomCodeRuleHint = '房间号：字母、数字、下划线、短横线，1–64 位';
+  static const useSecondaryServer = '切换备用端口（443 被运营商封时用）';
+  static const officialServerSecondary = '备用线路';
   static const noRoomMembers = '暂无成员，等待其他设备加入';
   static const online = '在线';
   static const offline = '已离线';
@@ -200,6 +209,9 @@ abstract final class Zh {
         '地址格式不正确，请使用域名、IP，或 ws://、wss:// 开头的地址。',
       RoomAddressError.invalidHost => '服务器地址中的域名或 IP 不正确，请检查后重试。',
       RoomAddressError.invalidPort => '端口必须是 1–65535 之间的数字，请检查后重试。',
+      RoomAddressError.invalidRoomCode => '房间号只能使用字母、数字、下划线和短横线，长度 1–64。',
+      RoomAddressError.insecureScheme =>
+        '官方服务器必须使用 wss://（443 端口）。地址若没有写协议，请确认已带 wss://。',
       null => '无法加入房间，请检查网络、房间号和服务器地址后重试。',
     };
   }

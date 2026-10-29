@@ -147,4 +147,54 @@ void main() {
       await opened.channel.sink.close();
     });
   });
+
+  group('路径/房间号拼错时能分辨 400/404', () {
+    test('服务器返回 404 时归类为 endpointNotFound', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) {
+        request.response.statusCode = HttpStatus.notFound;
+        request.response.write('not found');
+        request.response.close();
+      });
+
+      await expectLater(
+        openRoomChannelResolved(
+          Uri.parse('ws://127.0.0.1:${server.port}/ws?room=NOPE'),
+          perAddress: const Duration(seconds: 2),
+        ),
+        throwsA(
+          isA<RoomOpenException>().having(
+            (e) => e.code,
+            'code',
+            RoomErrorCode.endpointNotFound,
+          ),
+        ),
+      );
+    });
+
+    test('服务器返回 400 时归类为 badRequest', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) {
+        request.response.statusCode = HttpStatus.badRequest;
+        request.response.write('bad room');
+        request.response.close();
+      });
+
+      await expectLater(
+        openRoomChannelResolved(
+          Uri.parse('ws://127.0.0.1:${server.port}/ws?room=BAD'),
+          perAddress: const Duration(seconds: 2),
+        ),
+        throwsA(
+          isA<RoomOpenException>().having(
+            (e) => e.code,
+            'code',
+            RoomErrorCode.badRequest,
+          ),
+        ),
+      );
+    });
+  });
 }
