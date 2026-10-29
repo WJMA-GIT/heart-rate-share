@@ -16,7 +16,14 @@ versions/types are rejected. Maximum room size is 20 members.
 
 ## Client → Relay
 
-- `hello`: `memberId` (random opaque ID), `displayName` (maximum 32 characters).
+- `hello`: `memberId` (opaque ID), `displayName` (maximum 32 characters).
+  Since 0.4.0 the client derives `memberId` from a **persisted install id** (UUID v4,
+  created on first launch), so relaunching the app rejoins the same member instead of
+  creating a new one. It identifies an **install**, not a person: reinstalling or
+  clearing app data yields a new member, and two phones are always two members.
+  Cross-device identity would require an account system and is out of scope.
+  The server keys member state by `memberId`, so v1 is unchanged: old clients keep
+  sending random IDs and behave exactly as before.
 - `heartRate`: `memberId`, `displayName`, `bpm` integer, `rrMs` integer array,
   `sensorContact` true/false/null, `sequence` positive monotonically increasing
   integer, `measuredAt` UTC ISO-8601.

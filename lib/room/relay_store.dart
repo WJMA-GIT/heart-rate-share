@@ -40,6 +40,18 @@ final class RelayStore {
     return state;
   }
 
+  /// 身份恢复：成员已存在时不新建、不覆盖心率与序号，只在其当前仍在线时
+  /// 顺延 `lastSeen`。这样"关掉 App 几秒又回来"不会被 5 秒判定先打成离线，
+  /// 而已离线的成员仍要等真实上报才恢复在线（不凭空点亮）。
+  MemberState? resume(String memberId) {
+    final previous = _members[memberId];
+    if (previous == null) return null;
+    if (!previous.online) return previous;
+    final next = previous.copyWith(lastSeen: _clock());
+    _members[memberId] = next;
+    return next;
+  }
+
   /// 仅更新已存在成员的昵称，不改心率、序列号或在线状态。
   MemberState? rename(String memberId, String displayName) {
     final previous = _members[memberId];

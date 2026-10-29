@@ -14,6 +14,7 @@ import '../room/discovery.dart';
 import '../room/protocol.dart';
 import '../room/relay_server.dart';
 import '../room/room_client.dart';
+import '../room/sequence_counter.dart';
 
 final class AppState extends ChangeNotifier {
   static String _initialNickname(String? candidate) {
@@ -28,12 +29,19 @@ final class AppState extends ChangeNotifier {
     AppLogger? logger,
     String? nickname,
     UserProfileStore? profileStore,
+    String? memberId,
+    SequenceCounter? sequence,
   }) : logger = logger ?? AppLogger.instance,
        heartRate = heartRate ?? HeartRateService(logger: logger),
        _profileStore = profileStore ?? InMemoryUserProfileStore(),
        _nickname = _initialNickname(nickname) {
     debug = DebugController(this.logger);
-    room = RoomClient(displayName: _nickname, logger: this.logger);
+    room = RoomClient(
+      displayName: _nickname,
+      memberId: memberId,
+      sequence: sequence,
+      logger: this.logger,
+    );
     discovery = UnimplementedRoomDiscovery(logger: this.logger);
     _subscriptions = [
       this.heartRate.samples.listen(_onSample),

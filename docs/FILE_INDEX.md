@@ -6,6 +6,7 @@
 - `lib/main.dart` — app startup and three-tab navigation.
 - `lib/core/config/app_config.dart` — centralized package/protocol/timing constants.
 - `lib/core/logging/app_logger.dart` — levels, sanitization, per-session files, export/share.
+- `lib/core/profile/install_identity.dart` — persisted install identity (per install, not per user) and reserved report sequence.
 - `lib/ble/ble_models.dart` — adapter/device/connection snapshot models.
 - `lib/ble/heart_rate_sample.dart` — HRS 0x2A37 flags/BPM/contact/RR parser.
 - `lib/ble/heart_rate_source.dart` — platform-neutral source interface and unsupported stub.
@@ -19,7 +20,8 @@
 - `lib/room/protocol.dart` — versioned wire envelope, report and member models.
 - `lib/room/relay_store.dart` — authoritative member table, sequence/offline/expiry logic.
 - `lib/room/relay_server.dart` — loopback/LAN WebSocket relay and snapshot/delta fan-out.
-- `lib/room/room_client.dart` — 1 Hz latest-sample upload and room-state receive.
+- `lib/room/room_client.dart` — 1 Hz latest-sample upload and room-state receive; memberId and sequence are injected from persistent storage.
+- `lib/room/sequence_counter.dart` — cross-launch monotonic report sequence (block-reserved, self-healing).
 - `lib/room/room_address.dart` — manual WebSocket address parser.
 - `lib/room/room_identity.dart` — secure random room/member identifiers.
 - `lib/room/discovery.dart` — mDNS boundary and explicit unimplemented adapter.
@@ -35,6 +37,7 @@
 - `android/**` — minimal Android Gradle/manifest shell; no signing credentials.
 - `android/app/src/main/kotlin/com/wjmagit/heartrateshare/BleKeepAliveService.kt` — connectedDevice foreground service so the OS does not reclaim the GATT link.
 - `docs/protocol.md` — protocol version, fields, timing and security limitations.
+- `docs/identity.md` — member identity options, chosen install-id approach, reinstall/new-phone semantics.
 - `docs/ble-disconnect-v0.3.3.md` — BLE auto-disconnect root causes, fix, and field-data checklist.
 - `docs/ble-field-log-2026-10-29.md` — field log postmortem: the "disconnect" was a stale scan-tail writing `idle` over a live link.
 - `test/**` — parser, store, address, sanitizer, reconnect-policy and reconnect-supervisor tests.

@@ -8,20 +8,33 @@ import '../core/config/app_config.dart';
 import '../core/logging/app_logger.dart';
 import 'protocol.dart';
 import 'room_identity.dart';
+import 'sequence_counter.dart';
 
 enum RoomConnectionState { disconnected, connecting, connected, error }
 
 final class RoomClient {
-  factory RoomClient({required String displayName, AppLogger? logger}) =>
-      RoomClient._(displayName, logger ?? AppLogger.instance);
+  /// [memberId] 由 `IdentityStore` 持久化提供：重启 App 后必须还是同一个值，
+  /// 否则服务端会把回来的用户当成新成员（旧成员滞留成幽灵）。
+  /// 缺省值仅供测试/演示使用，正式路径必须显式传入。
+  factory RoomClient({
+    required String displayName,
+    String? memberId,
+    SequenceCounter? sequence,
+    AppLogger? logger,
+  }) => RoomClient._(
+    displayName,
+    memberId ?? RoomIdentity.memberId(),
+    sequence,
+    logger ?? AppLogger.instance,
+  );
 
-  RoomClient._(this._displayName, this._log)
-    : memberId = RoomIdentity.memberId();
+  RoomClient._(this._displayName, this.memberId, this._sequence, this._log);
 
   String _displayName;
   String get displayName => _displayName;
   final String memberId;
   final AppLogger _log;
+  final SequenceCounter? _sequence;
   String? _roomCode;
   String? get roomCode => _roomCode;
   final _members = StreamController<List<MemberState>>.broadcast();
@@ -32,7 +45,9 @@ final class RoomClient {
   Timer? _heartbeatTimer;
   StreamSubscription<Object?>? _subscription;
   HeartRateReport? _pending;
-  int _sequence = 0;
+
+  /// 缺省（未注入计数器）时退化为进程内自增，仅用于测试。
+  int _localSequence = 0;
   RoomConnectionState _state = RoomConnectionState.disconnected;
 
   Stream<List<MemberState>> get members => _members.stream;
@@ -111,7 +126,7 @@ final class RoomClient {
       bpm: bpm,
       rrIntervalsMs: rrIntervalsMs,
       sensorContact: sensorContact,
-      sequence: ++_sequence,
+      sequence: _nextSequence(),
       measuredAt: (measuredAt ?? DateTime.now()).toUtc(),
     );
   }
@@ -156,6 +171,10 @@ final class RoomClient {
         default:
           break;
       }
+      // 自愈：从服务端快照里看到自己的序号更大（本地序号存储被清、或从旧
+      // 备份恢复），就把本地计数器抬上去，避免上报被当成旧包一直丢弃。
+      final self = _byId[memberId];
+      if (self != null) _sequence?.bumpAbove(self.report.sequence);
       _members.add(List.unmodifiable(_byId.values));
     } catch (error, stack) {
       _log.error('room', 'Invalid relay message', memberId, error, stack);
@@ -176,6 +195,9 @@ final class RoomClient {
     online: json['online'] as bool,
   );
 
+  /// 序号必须跨启动单调递增，否则服务端会把重启后的上报当旧包丢弃。
+  int _nextSequence() => _sequence?.next() ?? ++_localSequence;
+
   Future<void> disconnect() async {
     _reportTimer?.cancel();
     _heartbeatTimer?.cancel();
@@ -191,6 +213,7 @@ final class RoomClient {
 
   Future<void> dispose() async {
     await disconnect();
+    await _sequence?.flush();
     await _members.close();
     await _states.close();
   }
