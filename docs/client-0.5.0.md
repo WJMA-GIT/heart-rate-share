@@ -7,7 +7,7 @@
 
 | 决策 | 实现位置 |
 |---|---|
-| 官方服务器固定 `wss://mawj.asia:8766` | `lib/core/config/app_config.dart`（`officialServerHost/Port/Secure`） |
+| 官方服务器固定 `wss://relay.mawj.asia`（443，不带端口） | `lib/core/config/app_config.dart`（`officialServerHost/Port/Secure` + `DEFAULT_SERVER`） |
 | 主界面只显示「官方服务器」一行 + 一个按钮（连接/切换） | `lib/ui/pages/heart_rate_page.dart#_officialServerRow` |
 | 地址只在设置页露出 | `lib/ui/pages/settings_page.dart#_serverTile` |
 
@@ -159,3 +159,58 @@ IP 与端口只在「连接详情」弹窗里出现。
 - `ConnectionProfile`：IPv6 字面量端点与 `toUri` 带方括号。
 - **端到端**：在本机 `::1` 上起真实 Relay，经 `ws://[::1]:<port>/ws` 连上并收到 `welcome`
   （无 DNS、无 IPv4 路径），验证连接工厂 + 升级 + 握手链路。
+
+
+---
+
+# 追加：官方端点最终确定为 `wss://relay.mawj.asia`（0.5.2）
+
+## 端点
+
+| 项 | 值 | 可覆盖 |
+|---|---|---|
+| 官方服务器默认 | `wss://relay.mawj.asia`（443，**不显式带端口**） | `--dart-define=DEFAULT_SERVER=wss://...` |
+| 备用线路（443 被运营商封时用） | `wss://relay.mawj.asia:8766` | `--dart-define=SECONDARY_SERVER=...` |
+| 路径 | `/ws?room=<短码>` | `DEFAULT_SERVER` 带路径时以它为准 |
+
+为什么是 `relay` 子域：家庭 NAS + 仅公网 IPv6，边界由 fn-knock 反代网关终止
+TLS；证书是 `*.mawj.asia` 通配、**不含根域**，用 `mawj.asia` 会直接命中
+"证书与域名不匹配"。运维侧配置见仓库 `deploy/fnknock-setup.md`。
+
+## 三个必须显式处理的坑
+
+1. **必须带 `wss://`**：`RoomAddress.parse` 对裸主机名默认补 `ws://`（本机/局域网
+   的旧行为），明文打到 443 必然失败。所以官方/备用地址统一走
+   `SecureEndpoint.parse()`：裸主机名**纠正**为 `wss://`，显式写 `ws://` **直接
+   报错**（`RoomAddressError.insecureScheme`），让配置错误立刻暴露。
+   另外裸地址带 `:443` 时 `RoomAddress.parse` 也会自动按 `wss` 解析。
+2. **房间号先校验再拼**：`^[A-Za-z0-9_-]{1,64}$`（`lib/room/room_code.dart`），
+   与服务端 `MAX_ROOM_CODE_LEN=64` 一致。非法值在本地就拦下并给中文提示，
+   不会拿 400/404 回来再猜。
+3. **400/404 能分辨**：升级失败后会回探一次等价 HTTP（`wss→https`、`ws→http`）的
+   状态码 —— 400 →「请求被拒绝，通常是房间号或参数格式不对」，
+   404 →「路径或房间号不对（路径应为 /ws，且带正确的 ?room=短码）」，
+   其余仍是「反向代理没配 upgrade」。
+
+## 证书提示指向域名不匹配
+
+新增 `RoomErrorCode.certificateHostMismatch`：异常文本含 `Hostname mismatch` /
+`certificate is not valid for` 时单独归类，中文提示直接写清
+「证书可能是 `*.mawj.asia` 通配，必须用 `relay.mawj.asia` 这类子域访问
+（根域不在证书范围内）」——通配证书场景下这是真实高频失败。
+
+## 界面
+
+- 主界面仍只有「官方服务器」+ 按钮，**不露域名与端口**；地址只在设置页显示，
+  显示的是 `AppConfig.effectiveOfficialServer`（即实际生效的那个值）。
+- 房间页「高级」里保留「切换备用端口（443 被运营商封时用）」按钮，
+  点了只是把备用地址填进地址框，**不会自动改默认**。
+- 失败提示继续是四类（无 IPv6 / DNS / 超时 / 证书），证书再细分
+  「不受信」与「域名不匹配」，都带可复制的诊断信息。
+
+## 构建时实际使用的 define
+
+本次交付的 APK **没有传任何 `--dart-define`**，即全部走代码默认值：
+`DEFAULT_SERVER` 未设置 → `wss://relay.mawj.asia`；
+`SECONDARY_SERVER` 未设置 → `wss://relay.mawj.asia:8766`；
+`CERT_SHA256` 未设置 → 走系统 CA 校验（fn-knock 用的是通配正式证书，不需要钉扎）。

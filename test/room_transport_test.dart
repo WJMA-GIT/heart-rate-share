@@ -26,6 +26,18 @@ void main() {
       );
     });
 
+    test('通配证书不含根域 → 域名不匹配单独成类', () {
+      expect(
+        classifyRoomError(
+          const HandshakeException(
+            'CERTIFICATE_VERIFY_FAILED: Hostname mismatch, '
+            'certificate is not valid for mawj.asia',
+          ),
+        ),
+        RoomErrorCode.certificateHostMismatch,
+      );
+    });
+
     test('网络类错误逐项可分辨', () {
       expect(
         classifyRoomError(

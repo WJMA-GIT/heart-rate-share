@@ -9,8 +9,12 @@ import '../core/config/app_config.dart';
 /// 连接失败的**可分辨**原因。证书类错误必须能和"网断了"分开，
 /// 否则运维排查时分不清是证书没配好还是服务没起。
 enum RoomErrorCode {
-  /// 系统 CA 校验不通过（自签、过期、域名不匹配）。
+  /// 系统 CA 校验不通过（自签、过期）。
   certificateUntrusted,
+
+  /// 证书本身有效，但和访问的域名不匹配（通配证书不含根域时最常见：
+  /// `*.mawj.asia` 不覆盖 `mawj.asia`）。
+  certificateHostMismatch,
 
   /// 配了 CERT_SHA256，但服务端证书指纹对不上（换证书/中间人）。
   certificatePinnedMismatch,
@@ -26,8 +30,14 @@ enum RoomErrorCode {
   /// EAFNOSUPPORT）。家庭 NAS 只有 AAAA 记录时，这条是最常见的失败。
   ipv6Unreachable,
 
-  /// 连上了但对方没按 WebSocket 升级（路径不对、反向代理没配 upgrade）。
+  /// 连上了但对方没按 WebSocket 升级（反向代理没配 upgrade 等）。
   handshakeRejected,
+
+  /// 升级失败后回探到 HTTP 400：房间号/参数格式不对。
+  badRequest,
+
+  /// 升级失败后回探到 HTTP 404：路径或房间号不对。
+  endpointNotFound,
   unknown,
 }
 
@@ -81,6 +91,13 @@ WebSocketChannel openRoomChannel(
 RoomErrorCode classifyRoomError(Object error, {bool pinMismatch = false}) {
   if (pinMismatch) return RoomErrorCode.certificatePinnedMismatch;
   final text = '$error';
+  if (text.contains('Hostname mismatch') ||
+      text.contains('hostname mismatch') ||
+      text.contains('certificate is not valid for') ||
+      text.contains('IP address mismatch') ||
+      text.contains('does not match any of the expected hostnames')) {
+    return RoomErrorCode.certificateHostMismatch;
+  }
   if (text.contains('CERTIFICATE_VERIFY_FAILED') ||
       text.contains('certificate is not trusted') ||
       text.contains('CERTIFICATE_UNKNOWN') ||

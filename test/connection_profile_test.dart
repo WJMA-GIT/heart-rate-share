@@ -2,17 +2,36 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:heartrate/core/config/app_config.dart';
 import 'package:heartrate/core/profile/connection_profile.dart';
 import 'package:heartrate/core/profile/install_identity.dart';
+import 'package:heartrate/room/room_address.dart';
 
 void main() {
   group('ConnectionProfile', () {
-    test('官方服务器默认 wss://mawj.asia:8766，地址不出现在常规界面', () {
+    test('官方服务器默认 wss://relay.mawj.asia（443，不带端口）', () {
       final official = ConnectionProfile.official();
-      expect(official.host, 'mawj.asia');
-      expect(official.port, 8766);
+      expect(official.host, 'relay.mawj.asia');
+      expect(official.port, 443);
       expect(official.secure, isTrue);
       expect(official.scheme, 'wss');
-      expect(official.endpoint, 'wss://mawj.asia:8766');
-      expect(official.id, 'official|wss://mawj.asia:8766');
+      expect(official.endpoint, 'wss://relay.mawj.asia');
+      expect(official.toUri().toString(), 'wss://relay.mawj.asia/ws');
+    });
+
+    test('备用线路 wss://relay.mawj.asia:8766（不是默认值）', () {
+      final secondary = ConnectionProfile.officialSecondary();
+      expect(secondary.port, 8766);
+      expect(secondary.secure, isTrue);
+      expect(secondary.endpoint, 'wss://relay.mawj.asia:8766');
+      expect(secondary.id, isNot(ConnectionProfile.official().id));
+    });
+
+    test('裸主机名会被纠正成 wss，写死 ws:// 直接拒绝', () {
+      final corrected = ConnectionProfile.fromEndpoint('relay.mawj.asia');
+      expect(corrected.scheme, 'wss');
+      expect(corrected.port, 443);
+      expect(
+        () => ConnectionProfile.fromEndpoint('ws://relay.mawj.asia'),
+        throwsA(isA<RoomAddressException>()),
+      );
     });
 
     test('本机房间 id 稳定（端口每次变也不会刷出多条记录）', () {
@@ -28,10 +47,10 @@ void main() {
     test('toUri 带房间号且走 /ws', () {
       final uri = ConnectionProfile.official(roomCode: 'ABC123').toUri();
       expect(uri.scheme, 'wss');
-      expect(uri.host, 'mawj.asia');
-      expect(uri.port, 8766);
+      expect(uri.host, 'relay.mawj.asia');
       expect(uri.path, '/ws');
       expect(uri.queryParameters['room'], 'ABC123');
+      expect(uri.toString(), 'wss://relay.mawj.asia/ws?room=ABC123');
     });
 
     test('IPv6 字面量端点带方括号', () {

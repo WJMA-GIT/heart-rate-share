@@ -77,8 +77,7 @@ final class _SettingsPageState extends State<SettingsPage> {
         leading: const Icon(Icons.cloud_outlined),
         title: const Text(Zh.officialServer),
         subtitle: Text(
-          '${Zh.serverEndpointLabel}：${AppConfig.officialServerHost}:'
-          '${AppConfig.officialServerPort}\n'
+          '${Zh.serverEndpointLabel}：${AppConfig.effectiveOfficialServer}\n'
           '${AppConfig.officialServerSecure ? Zh.secureConnection : Zh.plainConnection} · '
           '${pinned ? Zh.certPinned : Zh.certSystemCa}',
         ),

@@ -9,10 +9,46 @@ abstract final class AppConfig {
   static const defaultWebSocketPort = 8765;
   static const defaultSecureWebSocketPort = 443;
 
-  /// 官方服务器：默认走 wss。地址只允许出现在设置/调试页，主界面不露出。
-  static const officialServerHost = 'mawj.asia';
-  static const officialServerPort = 8766;
+  /// 官方服务器（运维最终确定）：`wss://relay.mawj.asia`，走 443、不显式带端口。
+  ///
+  /// 为什么是 `relay` 子域：家庭 NAS + 仅公网 IPv6，边界由 fn-knock 反代网关
+  /// 终止 TLS；证书是 `*.mawj.asia` 通配，**不含根域**，所以必须用子域访问，
+  /// 用 `mawj.asia` 会命中"证书与域名不匹配"。
+  ///
+  /// 可用 `--dart-define=DEFAULT_SERVER=wss://relay.mawj.asia` 覆盖；
+  /// **必须带 wss:// 前缀**，裸主机名会被当成明文 ws（打到 443 必然失败），
+  /// 所以解析走 `RoomAddress.parseSecure` 显式纠正。
+  static const officialServerHost = 'relay.mawj.asia';
+  static const officialServerPort = 443;
   static const officialServerSecure = true;
+
+  static const configuredServer = String.fromEnvironment(
+    'DEFAULT_SERVER',
+    defaultValue: '',
+  );
+
+  /// 官方服务器实际使用的端点：未注入就用内置默认（带 wss://）。
+  static String get effectiveOfficialServer {
+    final value = configuredServer.trim();
+    if (value.isEmpty) return 'wss://$officialServerHost';
+    return value;
+  }
+
+  /// 备用端点：443 被运营商封时用。**不是默认值**，只在"高级"里手动切换。
+  static const configuredSecondaryServer = String.fromEnvironment(
+    'SECONDARY_SERVER',
+    defaultValue: 'wss://relay.mawj.asia:8766',
+  );
+
+  static String get effectiveSecondaryServer {
+    final value = configuredSecondaryServer.trim();
+    return value.isEmpty
+        ? 'wss://$officialServerHost:$secondaryServerPort'
+        : value;
+  }
+
+  /// 备用端口（文档与测试用）。
+  static const secondaryServerPort = 8766;
 
   /// 自签证书的可配置信任方式：钉住服务端证书的 SHA-256 指纹（十六进制，
   /// 大小写与冒号不敏感）。留空 = 走系统 CA 校验。

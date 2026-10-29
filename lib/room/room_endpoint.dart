@@ -240,7 +240,14 @@ Future<RoomOpenResult> openRoomChannelResolved(
       ),
     );
   } on Object catch (error) {
-    final code = _finalCode(error, attempts, pinMismatch: pinMismatch);
+    var code = _finalCode(error, attempts, pinMismatch: pinMismatch);
+    // 升级失败时再回探一次 HTTP 状态码：路径/房间号拼错会拿到 400/404，
+    // 这两个原因必须能和"反向代理没配 upgrade"分开。
+    if (code == RoomErrorCode.handshakeRejected) {
+      final status = await _probeHttpStatus(uri, perAddress);
+      if (status == 400) code = RoomErrorCode.badRequest;
+      if (status == 404) code = RoomErrorCode.endpointNotFound;
+    }
     throw RoomOpenException(
       code,
       RoomDiagnostics(
@@ -279,4 +286,23 @@ RoomErrorCode _finalCode(
   });
   if (onlyV6 && unreachable) return RoomErrorCode.ipv6Unreachable;
   return base;
+}
+
+/// 升级失败后回探一次普通 HTTP 状态码（4096 之类的代理错误也会走到这里）。
+/// 只用于把失败原因说清楚，不影响正常连接路径。
+Future<int?> _probeHttpStatus(Uri uri, Duration timeout) async {
+  // HttpClient 不认 ws/wss，回探要走等价的 http/https。
+  final probe = uri.replace(scheme: uri.scheme == 'wss' ? 'https' : 'http');
+  final client = HttpClient()..connectionTimeout = timeout;
+  try {
+    final request = await client.getUrl(probe).timeout(timeout);
+    final response = await request.close().timeout(timeout);
+    final status = response.statusCode;
+    await response.drain<void>().timeout(timeout);
+    return status;
+  } on Object {
+    return null;
+  } finally {
+    client.close(force: true);
+  }
 }
