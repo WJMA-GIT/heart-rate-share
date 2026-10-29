@@ -39,13 +39,17 @@ final class ConnectionProfile {
         roomCode: roomCode,
       );
 
-  /// 备用线路（443 被运营商封时用），**不是默认值**。
-  factory ConnectionProfile.officialSecondary({String? roomCode}) =>
-      ConnectionProfile.fromEndpoint(
-        AppConfig.effectiveSecondaryServer,
-        mode: ConnectionMode.official,
-        roomCode: roomCode,
-      );
+  /// 备用线路：只有注入 `--dart-define=SECONDARY_SERVER=...` 时才存在，
+  /// 未配置返回 null（界面据此隐藏备用按钮，不凭空给一个死地址）。
+  static ConnectionProfile? officialSecondary({String? roomCode}) {
+    final endpoint = AppConfig.effectiveSecondaryServer;
+    if (endpoint == null) return null;
+    return ConnectionProfile.fromEndpoint(
+      endpoint,
+      mode: ConnectionMode.official,
+      roomCode: roomCode,
+    );
+  }
 
   /// 从「可能没写协议」的地址构造：官方/备用都走 [SecureEndpoint] 强制 wss。
   factory ConnectionProfile.fromEndpoint(

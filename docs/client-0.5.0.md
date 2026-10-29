@@ -214,3 +214,50 @@ TLS；证书是 `*.mawj.asia` 通配、**不含根域**，用 `mawj.asia` 会直
 `DEFAULT_SERVER` 未设置 → `wss://relay.mawj.asia`；
 `SECONDARY_SERVER` 未设置 → `wss://relay.mawj.asia:8766`；
 `CERT_SHA256` 未设置 → 走系统 CA 校验（fn-knock 用的是通配正式证书，不需要钉扎）。
+
+
+---
+
+# 追加：默认地址定稿 `wss://heart.mawj.asia:10086`（0.5.3）
+
+| 项 | 值 |
+|---|---|
+| 官方服务器（内置默认） | `wss://heart.mawj.asia:10086`（**必须保留 wss:// 与显式 :10086**） |
+| 覆盖 | `--dart-define=DEFAULT_SERVER=wss://heart.mawj.asia:10086` |
+| 备用线路 | 默认**不配置**；需要时 `--dart-define=SECONDARY_SERVER=...`，房间页「高级」里的按钮只在配置后出现 |
+| 路径 | `/ws?room=<短码>`（`^[A-Za-z0-9_-]{1,64}$`） |
+
+## 端口不能丢
+
+10086 是非标准端口，凡是"看到 443 就省略端口"的写法都会连错服务。当前实现里：
+
+- `RoomAddress.parse` 保留显式端口，只有**没写端口**时才用协议默认值（wss→443）；
+- `ConnectionProfile.toUri()` / `endpoint` 只在 `secure && port == 443` 时省略端口，
+  10086 一律显式保留；
+- 逐地址建连用的是 `uri.port`（本机房间用 `relay.port` 覆盖），不会回落到默认端口；
+- 诊断信息 `endpoint=` 同样带端口。
+
+单测覆盖：`wss://heart.mawj.asia:10086` 经解析 / `SecureEndpoint.parse` /
+`normalizedEndpoint` / `toUri` / `RoomDiagnostics` 五个层次，端口都必须是 10086。
+
+## 证书判据
+
+证书是 `*.mawj.asia` 通配，`heart.mawj.asia` 在其覆盖范围内 —— 所以正常情况**不应该**
+出现证书错误。一旦出现，说明是真实的域名/证书不匹配（或反代换了证书），
+提示直接写：
+
+> 服务器证书与访问的域名不匹配（不是网络问题）：证书是 `*.mawj.asia` 通配，
+> `heart.mawj.asia` 本应在其覆盖范围内；若报此错，说明反代用的证书与该域名对不上，
+> 请联系管理员核对证书与 SNI。
+
+## IPv6 与四类失败提示（不变）
+
+域名解析出 AAAA 正常建连、IPv6 字面量方括号、多地址逐个回退（每地址 4 秒预算）
+都不变；失败仍是四类：无 IPv6 / DNS 解析失败 / 连接超时 / TLS 证书错误（证书再分
+不受信、域名不匹配、指纹不匹配）。
+
+## 本版构建参数
+
+`flutter build apk --release --split-per-abi --dart-define=DEFAULT_SERVER=wss://heart.mawj.asia:10086`
+
+（`SECONDARY_SERVER`、`CERT_SHA256` 未传，走默认：无备用线路 / 系统 CA 校验。）

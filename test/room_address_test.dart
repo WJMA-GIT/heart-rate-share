@@ -219,4 +219,27 @@ void main() {
       ),
     );
   });
+
+  test('非标准端口 10086 在每一层都不能被丢掉', () {
+    final uri = RoomAddress.parse(
+      'wss://heart.mawj.asia:10086',
+      roomCode: 'ABC123',
+    );
+    expect(uri.scheme, 'wss');
+    expect(uri.host, 'heart.mawj.asia');
+    expect(uri.port, 10086);
+    expect(uri.path, '/ws');
+    expect(uri.toString(), 'wss://heart.mawj.asia:10086/ws?room=ABC123');
+
+    // 官方服务器解析（SecureEndpoint）同样保留端口
+    final secure = SecureEndpoint.parse('heart.mawj.asia:10086');
+    expect(secure.scheme, 'wss');
+    expect(secure.port, 10086);
+
+    // 格式化端点也不能吃掉端口
+    expect(
+      RoomAddress.normalizedEndpoint('wss://heart.mawj.asia:10086'),
+      'wss://heart.mawj.asia:10086',
+    );
+  });
 }
