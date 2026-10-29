@@ -35,6 +35,11 @@ rollback steps.
 - wss uses the system CA store by default; self-signed servers can be trusted by
   pinning a fingerprint at build time (`--dart-define=CERT_SHA256=...`). There is
   no accept-all switch, and certificate failures are reported with a distinct code.
+- IPv6-first servers work: the host is resolved to *all* A/AAAA records and each
+  address is tried with a short per-address budget (SNI/cert validation still
+  uses the original hostname). IPv6 literals are bracketed everywhere. Failures
+  are split into "network has no IPv6", DNS failure, timeout and TLS/certificate
+  problems, with copyable diagnostics for support.
 - Heart-rate devices are listed (name / RSSI / id) with per-row connect plus
   "disconnect" and "remove from list"; the heart page shows a BPM-driven ECG
   animation that stops entirely when there is no data.

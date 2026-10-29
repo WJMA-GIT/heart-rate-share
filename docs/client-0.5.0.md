@@ -1,6 +1,6 @@
-# 客户端四项改造（0.5.0）
+# 客户端四项改造 + IPv6 连通（0.5.1）
 
-版本 0.5.0+11。协议仍为 v1：1 Hz 上报、5 秒离线判定、20 人容量、消息字段全部未动，
+版本 0.5.1+12（0.5.0 为四项改造，0.5.1 追加 IPv6/多地址回退/失败诊断）。协议仍为 v1：1 Hz 上报、5 秒离线判定、20 人容量、消息字段全部未动，
 服务端代码零改动。
 
 ## 需求一：默认服务器 + 地址不露出
@@ -102,3 +102,60 @@ ConnectionProfile { mode(official|remote|local), host, port, secure, roomCode, l
 - 既有 54 项（BLE 重连/通知重订阅/身份/序号/Relay）全部保持通过。
 
 `dart format` / `flutter analyze` 干净。
+
+
+---
+
+# 追加：IPv6 连通、多地址回退、失败诊断（0.5.1）
+
+背景：目标服务器是家庭 NAS + 家宽，**只有公网 IPv6**，`mawj.asia` 只有 AAAA
+记录（这是正常的，不是配置错误）。上一轮现场把 `Failed host lookup` 当成断连原因
+追偏过，所以这次把"能不能连、卡在哪一步"做成可读、可复制的。
+
+## 实现（`lib/room/room_endpoint.dart`）
+
+1. **自己解析地址**：`resolveHost()` 先用 `InternetAddress.tryParse` 认字面量
+   （IPv6 字面量不走 DNS），否则 `InternetAddress.lookup()` 拿**全部** A/AAAA。
+   没有任何"只取第一条""默认 IPv4"的假设。
+2. **逐地址快速回退**：`connectFirstAvailable()` 依次尝试，每个地址单独限时
+   （默认 4 秒），首选失败立刻换下一个，并把每次结果记进诊断。
+3. **保住 TLS 校验目标**：用 `HttpClient.connectionFactory` 自己建 socket，
+   请求 URI 仍然是最初的域名 —— SNI 与证书校验依旧针对 `mawj.asia`，
+   不会因为"先连 IP"而变成对 IP 校验（那样会一证书失败就全盘连不上）。
+4. **IPv6 字面量方括号**：`RoomAddress.bracket()` / `ConnectionProfile.endpoint`
+   统一处理；`Uri` 构造本身会给 host 补括号，手拼字符串的地方全部改走这两个入口。
+   裸 `::1` 这种输入会自动补成 `ws://[::1]`。
+5. **新增错误码 `ipv6Unreachable`**：只有 IPv6 地址且所有尝试都是
+   `Network is unreachable` / `Address family not supported` / `Cannot assign
+   requested address` 时归到这里，中文提示明确指向"当前网络不支持 IPv6"。
+
+## 四种必须区分的中文提示（`Zh.roomErrorCode`）
+
+| 场景 | 文案要点 |
+|---|---|
+| 当前网络不支持 IPv6 | 「这台服务器只有 IPv6 地址（AAAA 记录），请改用支持 IPv6 的网络，或请管理员提供 IPv4 入口」 |
+| DNS 解析失败 | 「域名解析失败：找不到服务器地址」 |
+| 连接超时 | 「连接超时：服务器没有响应，请检查 IPv6 是否可用、端口是否开放」 |
+| TLS 证书错误 | 分「未通过系统 CA 校验」与「与内置指纹不一致」两句 |
+
+用户界面不会出现 `Failed host lookup`、`SocketException` 这类原始文本；
+原始细节在「诊断信息」里（`RoomDiagnostics.toClipboardText()`：端点、解析到的
+每个地址及家族、逐地址结果与耗时、最终归类），可一键复制。
+
+## 官方服务器那一栏
+
+仍然只显示「官方服务器」+ 按钮，不露地址；失败时先给一句中文原因，
+SnackBar 上带「诊断」→ 弹窗展示可复制的诊断信息（同一份也会进导出日志）。
+最近连接列表同样改用友好命名：官方服务器 / 本机房间 / 自定义服务器，
+IP 与端口只在「连接详情」弹窗里出现。
+
+## 测试
+
+`flutter test` **82 项全过**（新增 9 项）：
+- `connectFirstAvailable`：首选失败立刻换下一个、单地址超时不拖住后面、全失败抛最后错误。
+- `resolveHost('::1')`：字面量直接解析不走 DNS。
+- `RoomDiagnostics`：IPv6 端点方括号、复制文本含 result/resolved/attempt。
+- `RoomAddress`：`[::1]:8766`、裸 `::1`、`wss://[2001:db8::5]:8766` 解析与格式化。
+- `ConnectionProfile`：IPv6 字面量端点与 `toUri` 带方括号。
+- **端到端**：在本机 `::1` 上起真实 Relay，经 `ws://[::1]:<port>/ws` 连上并收到 `welcome`
+  （无 DNS、无 IPv4 路径），验证连接工厂 + 升级 + 握手链路。

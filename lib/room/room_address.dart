@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../core/config/app_config.dart';
 
 enum RoomAddressError { empty, unsupportedScheme, invalidHost, invalidPort }
@@ -35,10 +37,19 @@ final class RoomAddress {
     return Uri(scheme: uri.scheme, host: uri.host, port: uri.port).toString();
   }
 
+  /// IPv6 字面量在 URL 里必须加方括号；裸的 `::1` 直接拼会得到非法 URL。
+  static String bracket(String host) =>
+      host.contains(':') && !host.startsWith('[') ? '[$host]' : host;
+
   static Uri parse(String input, {String? roomCode}) {
-    final trimmed = input.trim();
+    var trimmed = input.trim();
     if (trimmed.isEmpty) {
       throw const RoomAddressException(RoomAddressError.empty);
+    }
+    // 支持裸 IPv6 字面量（如 `fe80::1`、`::1`）：补方括号再按 URL 解析。
+    if (!trimmed.contains('://') &&
+        InternetAddress.tryParse(trimmed)?.type == InternetAddressType.IPv6) {
+      trimmed = 'ws://[${trimmed.replaceAll('[', '').replaceAll(']', '')}]';
     }
 
     final withScheme = trimmed.contains('://') ? trimmed : 'ws://$trimmed';

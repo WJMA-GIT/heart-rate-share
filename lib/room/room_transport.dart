@@ -22,6 +22,10 @@ enum RoomErrorCode {
   connectionRefused,
   connectionTimeout,
 
+  /// 解析出来的只有 IPv6 地址，而当前网络没有 IPv6 出口（ENETUNREACH /
+  /// EAFNOSUPPORT）。家庭 NAS 只有 AAAA 记录时，这条是最常见的失败。
+  ipv6Unreachable,
+
   /// 连上了但对方没按 WebSocket 升级（路径不对、反向代理没配 upgrade）。
   handshakeRejected,
   unknown,
@@ -90,6 +94,11 @@ RoomErrorCode classifyRoomError(Object error, {bool pinMismatch = false}) {
   }
   if (text.contains('Connection refused')) {
     return RoomErrorCode.connectionRefused;
+  }
+  if (text.contains('Network is unreachable') ||
+      text.contains('Address family not supported') ||
+      text.contains('Cannot assign requested address')) {
+    return RoomErrorCode.ipv6Unreachable;
   }
   if (text.contains('Connection timed out') ||
       text.contains('Connection timeout') ||

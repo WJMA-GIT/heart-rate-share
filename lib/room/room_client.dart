@@ -7,6 +7,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../core/config/app_config.dart';
 import '../core/logging/app_logger.dart';
 import 'protocol.dart';
+import 'room_endpoint.dart';
 import 'room_identity.dart';
 import 'room_transport.dart';
 import 'sequence_counter.dart';
@@ -51,6 +52,9 @@ final class RoomClient {
 
   /// 是否钉住了服务端证书指纹。
   bool get tlsPinned => _tls.hasPin;
+
+  /// 最近一次失败的可复制诊断（解析到的地址、逐地址结果、最终归类）。
+  RoomDiagnostics? lastDiagnostics;
   String? _roomCode;
   String? get roomCode => _roomCode;
   final _members = StreamController<List<MemberState>>.broadcast();
@@ -83,13 +87,13 @@ final class RoomClient {
     await disconnect();
     _setState(RoomConnectionState.connecting);
     lastErrorCode = null;
-    var pinMismatch = false;
+    lastDiagnostics = null;
     try {
-      final channel = openRoomChannel(
-        uri,
-        tls: _tls,
-        onPinMismatch: () => pinMismatch = true,
-      );
+      // 自己解析 + 逐地址回退：AAAA-only 的家庭 NAS 也能连，
+      // 首选地址失败会立刻换下一个。
+      final opened = await openRoomChannelResolved(uri, tls: _tls);
+      lastDiagnostics = opened.diagnostics;
+      final channel = opened.channel;
       await channel.ready;
       _channel = channel;
       _roomCode = uri.queryParameters['room'];
@@ -121,7 +125,10 @@ final class RoomClient {
       _setState(RoomConnectionState.connected);
     } catch (error, stack) {
       _setState(RoomConnectionState.error);
-      final code = classifyRoomError(error, pinMismatch: pinMismatch);
+      final code = error is RoomOpenException
+          ? error.code
+          : classifyRoomError(error);
+      if (error is RoomOpenException) lastDiagnostics = error.diagnostics;
       lastErrorCode = code;
       _log.error(
         'room',

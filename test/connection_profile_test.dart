@@ -34,6 +34,17 @@ void main() {
       expect(uri.queryParameters['room'], 'ABC123');
     });
 
+    test('IPv6 字面量端点带方括号', () {
+      final profile = ConnectionProfile(
+        mode: ConnectionMode.remote,
+        host: '2001:db8::5',
+        port: 8766,
+        secure: true,
+      );
+      expect(profile.endpoint, 'wss://[2001:db8::5]:8766');
+      expect(profile.toUri().toString(), contains('[2001:db8::5]'));
+    });
+
     test('JSON 往返保持字段', () {
       final profile = ConnectionProfile(
         mode: ConnectionMode.remote,

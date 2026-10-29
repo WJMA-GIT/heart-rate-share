@@ -139,4 +139,31 @@ void main() {
       );
     });
   });
+
+  test('IPv6 字面量：带方括号、裸地址、带端口都能解析', () {
+    final bracketed = RoomAddress.parse('[::1]:8766', roomCode: 'R1');
+    expect(bracketed.scheme, 'ws');
+    expect(bracketed.host, '::1');
+    expect(bracketed.port, 8766);
+    expect(bracketed.queryParameters['room'], 'R1');
+
+    final bare = RoomAddress.parse('::1');
+    expect(bare.host, '::1');
+    expect(bare.port, 8765);
+
+    final secure = RoomAddress.parse('wss://[2001:db8::5]:8766');
+    expect(secure.scheme, 'wss');
+    expect(secure.host, '2001:db8::5');
+    expect(secure.port, 8766);
+  });
+
+  test('IPv6 端点格式化会补方括号', () {
+    expect(RoomAddress.bracket('::1'), '[::1]');
+    expect(RoomAddress.bracket('[::1]'), '[::1]');
+    expect(RoomAddress.bracket('mawj.asia'), 'mawj.asia');
+    expect(
+      RoomAddress.normalizedEndpoint('wss://[::1]:8766'),
+      'wss://[::1]:8766',
+    );
+  });
 }

@@ -56,11 +56,17 @@ final class ConnectionProfile {
     _ => '${mode.name}|$scheme://$host:$port',
   };
 
-  /// 端点字符串。**只在设置/调试页展示**，主界面不露出。
-  String get endpoint => switch (mode) {
-    ConnectionMode.local => 'ws://$host:<本机端口>',
-    _ => '$scheme://$host:$port',
-  };
+  /// 端点字符串。**只在设置/调试/诊断里展示**，主界面不露出。
+  /// IPv6 字面量必须方括号括起，否则拼出来的 URL 是错的。
+  String get endpoint {
+    final literal = host.contains(':') && !host.startsWith('[')
+        ? '[$host]'
+        : host;
+    return switch (mode) {
+      ConnectionMode.local => 'ws://$literal:<本机端口>',
+      _ => '$scheme://$literal:$port',
+    };
+  }
 
   ConnectionProfile copyWith({
     String? roomCode,
