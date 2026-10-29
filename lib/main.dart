@@ -42,13 +42,21 @@ final class HeartRateApp extends StatefulWidget {
   State<HeartRateApp> createState() => _HeartRateAppState();
 }
 
-final class _HeartRateAppState extends State<HeartRateApp> {
+final class _HeartRateAppState extends State<HeartRateApp>
+    with WidgetsBindingObserver {
   int _index = 0;
 
   @override
   void initState() {
     super.initState();
     widget.state.addListener(_changed);
+    // 断连复现时要能一眼看出当时是前台、息屏还是切了后台。
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    AppLogger.instance.info('app', 'lifecycle=${state.name}');
   }
 
   void _changed() {
@@ -57,6 +65,7 @@ final class _HeartRateAppState extends State<HeartRateApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.state.removeListener(_changed);
     widget.state.dispose();
     super.dispose();

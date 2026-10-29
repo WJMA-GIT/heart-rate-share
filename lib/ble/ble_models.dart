@@ -7,6 +7,12 @@ enum BleConnectionPhase {
   discovering,
   subscribed,
   disconnecting,
+
+  /// 链路非用户主动断开，正在按退避策略自动重连。
+  reconnecting,
+
+  /// 自动重连配额用尽，需要用户手动重连。
+  reconnectFailed,
   error,
 }
 

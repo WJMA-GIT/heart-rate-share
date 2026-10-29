@@ -25,6 +25,14 @@ abstract final class AppConfig {
   static const reportInterval = Duration(seconds: 1);
   static const heartbeatInterval = Duration(seconds: 3);
   static const offlineAfter = Duration(seconds: 5);
+
+  /// 用户点「连接」时的连接超时，允许慢设备慢慢建链。
+  static const connectTimeout = Duration(seconds: 15);
+
+  /// 自动重连单次尝试的超时：必须比 [offlineAfter] 同量级，
+  /// 否则一次尝试就能把房间状态拖到离线。
+  static const reconnectConnectTimeout = Duration(seconds: 6);
+
   static const removeMemberAfter = Duration(minutes: 2);
   static const maxMembers = 20;
   static const snapshotInterval = Duration(seconds: 1);

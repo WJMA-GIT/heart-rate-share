@@ -99,12 +99,14 @@ final class AppLogger {
     );
   }
 
-  void debug(String module, String message, {String? deviceId}) =>
-      _add(LogLevel.debug, module, message, deviceId);
-  void info(String module, String message, {String? deviceId}) =>
-      _add(LogLevel.info, module, message, deviceId);
-  void warn(String module, String message, {String? deviceId}) =>
-      _add(LogLevel.warn, module, message, deviceId);
+  /// [code] 是便于 grep 的短错误码（如 `gatt_disconnected`、`notify_error`），
+  /// 会写进导出日志的 `code=` 字段，方便按断连原因筛选。
+  void debug(String module, String message, {String? deviceId, String? code}) =>
+      _add(LogLevel.debug, module, message, deviceId, code);
+  void info(String module, String message, {String? deviceId, String? code}) =>
+      _add(LogLevel.info, module, message, deviceId, code);
+  void warn(String module, String message, {String? deviceId, String? code}) =>
+      _add(LogLevel.warn, module, message, deviceId, code);
   void error(
     String module,
     String message,
