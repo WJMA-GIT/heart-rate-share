@@ -27,6 +27,7 @@ abstract final class Zh {
   static const adapterLabel = '蓝牙适配器';
   static const connectionStatusLabel = '连接状态';
   static const bleErrorTitle = '蓝牙连接失败，请按提示处理后重试';
+  static const bleReconnectFailed = '多次自动重连仍未成功，请确认心率带已佩戴且电量正常后重新连接。';
 
   static const roomNumber = '房间号';
   static const roomNumberHint = '输入房间号加入';
@@ -88,6 +89,8 @@ abstract final class Zh {
     BleConnectionPhase.discovering => '正在读取设备服务',
     BleConnectionPhase.subscribed => '已连接，正在接收心率',
     BleConnectionPhase.disconnecting => '正在断开连接',
+    BleConnectionPhase.reconnecting => '连接已断开，正在自动重连',
+    BleConnectionPhase.reconnectFailed => '自动重连失败，请手动重连',
     BleConnectionPhase.error => '连接异常',
   };
 

@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- 前台服务通知（API 33+ 起声明；被拒绝时服务仍在跑，只是通知不显示）。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="共享心率"
         android:name="${applicationName}"
@@ -29,5 +31,10 @@
             </intent-filter>
         </activity>
         <meta-data android:name="flutterEmbedding" android:value="2" />
+        <!-- BLE 链路存活期间的前台服务：防止息屏/切后台被系统回收而断连。 -->
+        <service
+            android:name=".BleKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

@@ -10,8 +10,10 @@
 - `lib/ble/heart_rate_sample.dart` — HRS 0x2A37 flags/BPM/contact/RR parser.
 - `lib/ble/heart_rate_source.dart` — platform-neutral source interface and unsupported stub.
 - `lib/ble/flutter_blue_plus_source.dart` — Android scan/connect/notify implementation.
-- `lib/ble/heart_rate_service.dart` — stream orchestration and platform selection.
+- `lib/ble/heart_rate_service.dart` — stream orchestration, platform selection and drop-triggered reconnect supervision.
+- `lib/ble/reconnect_policy.dart` — pure backoff policy for auto-reconnect (capped below the relay offline window).
 - `lib/ble/platform/hrs_channel.dart` — native Windows/iOS channel contract.
+- `lib/ble/platform/hrs_foreground.dart` — Android foreground-service bridge (keeps the process alive while the link is up).
 - `lib/room/protocol.dart` — versioned wire envelope, report and member models.
 - `lib/room/relay_store.dart` — authoritative member table, sequence/offline/expiry logic.
 - `lib/room/relay_server.dart` — loopback/LAN WebSocket relay and snapshot/delta fan-out.
@@ -29,7 +31,9 @@
 - `native/windows/HrsPlugin.cpp` — documented C++/WinRT native TODO stub.
 - `native/ios/HrsPlugin.swift` — documented Swift/CoreBluetooth native TODO stub.
 - `android/**` — minimal Android Gradle/manifest shell; no signing credentials.
+- `android/app/src/main/kotlin/com/wjmagit/heartrateshare/BleKeepAliveService.kt` — connectedDevice foreground service so the OS does not reclaim the GATT link.
 - `docs/protocol.md` — protocol version, fields, timing and security limitations.
-- `test/**` — parser, store, address, sanitizer and real WebSocket tests.
+- `docs/ble-disconnect-v0.3.3.md` — BLE auto-disconnect root causes, fix, and field-data checklist.
+- `test/**` — parser, store, address, sanitizer, reconnect-policy and reconnect-supervisor tests.
 - `tool/ci_prepare_android.sh` — CI-only missing Android scaffold/resource merge.
 - `.github/workflows/flutter-ci.yml` — analyze/test/debug-APK artifact workflow.

@@ -1,13 +1,21 @@
 import 'dart:async';
 
+import '../core/config/app_config.dart';
 import 'ble_models.dart';
 import 'heart_rate_sample.dart';
 
 abstract interface class HeartRateSource {
   Stream<HeartRateSample> get samples;
   Stream<BleSnapshot> get snapshots;
-  Future<void> startScan({Duration timeout});
-  Future<void> connect(String deviceId);
+
+  Future<void> startScan({Duration timeout = const Duration(seconds: 10)});
+
+  /// [timeout] 为连接超时：手动连接用 [AppConfig.connectTimeout]，
+  /// 自动重连用 [AppConfig.reconnectConnectTimeout]。
+  Future<void> connect(
+    String deviceId, {
+    Duration timeout = AppConfig.connectTimeout,
+  });
   Future<void> disconnect();
   Future<void> dispose();
 }
@@ -33,7 +41,10 @@ final class UnsupportedHeartRateSource implements HeartRateSource {
     Duration timeout = const Duration(seconds: 10),
   }) async => _unsupported();
   @override
-  Future<void> connect(String deviceId) async => _unsupported();
+  Future<void> connect(
+    String deviceId, {
+    Duration timeout = AppConfig.connectTimeout,
+  }) async => _unsupported();
   @override
   Future<void> disconnect() async {}
   @override

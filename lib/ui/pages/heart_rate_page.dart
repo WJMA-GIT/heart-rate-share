@@ -107,6 +107,8 @@ final class _HeartRatePageState extends State<HeartRatePage> {
                 ? Zh.bleErrorTitle
                 : Zh.bleError(ble.lastError!),
           ),
+        if (ble.phase == BleConnectionPhase.reconnectFailed)
+          const Text(Zh.bleReconnectFailed),
       ],
     );
   }

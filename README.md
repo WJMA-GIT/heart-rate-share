@@ -11,8 +11,12 @@ rollback steps.
 ## Implemented
 
 - HRS 0x180D / 0x2A37 scan-connect-notify path for Android using
-  `flutter_blue_plus: 2.3.13`; parser supports 8/16-bit BPM, sensor-contact bits,
+  `flutter_blue_plus: 2.3.14`; parser supports 8/16-bit BPM, sensor-contact bits,
   Energy Expended skipping, and multiple RR values (1/1024 s → ms).
+- System-initiated disconnects are detected (connection-state, notify error and
+  notify-closed paths) and recovered by a capped-backoff reconnect supervisor;
+  a user-initiated disconnect is never auto-reconnected. A `connectedDevice`
+  foreground service keeps the process alive while the link is up.
 - Explicit C++/WinRT and Swift channel contracts/TODO stubs for Windows/iOS.
 - Relay member store, 1 Hz latest-sample reports, 1 s snapshots, deltas,
   sequence checks, 5 s offline, 2 min expiry, 20-member limit.
@@ -26,7 +30,9 @@ rollback steps.
   `UnsupportedError` rather than simulate a connection.
 - Actual mDNS registration/discovery. `nsd: 4.0.0` is pinned, but its integration
   is deferred until API compatibility is checked by CI; manual address works.
-- Android foreground service and OEM-specific background recovery.
+- OEM-specific background recovery (Xiaomi/Huawei/OPPO power savers can still
+  kill the app; the foreground service only covers stock Android behaviour).
+- iOS/Windows BLE background modes and state restoration.
 - WSS/TLS, certificate validation, room authentication and room epoch recovery.
   The current `ws://` relay is development-only and has no join authentication.
 - Full Windows/iOS platform runners, iOS signing, release signing and stores.
@@ -63,9 +69,11 @@ flutter build apk --release --split-per-abi \
 
 ## Local authoring/build restriction
 
-This repository was written without running Flutter, installing an SDK, or
-building. No claim is made that analysis/tests/build already passed. CI owns
-validation and artifacts.
+The repository skeleton was originally written without running Flutter. Since
+v0.3.3 the BLE-disconnect changes were validated locally (Flutter 3.47.8,
+`dart format` clean, `flutter analyze` clean, full `flutter test`, and
+`flutter build apk --release --split-per-abi`). CI still owns the signed
+release artifacts and remains the source of truth for merge gating.
 
 ## CI and Android APK
 
@@ -105,6 +113,15 @@ Message keys resembling token/secret/password/authorization/API/pairing keys
 are redacted. Network envelopes are never logged. Raw HRS bytes are logged only
 when Debug is enabled. Users should still inspect exported files before sharing;
 logs may contain nicknames, shortened device identifiers and stack traces.
+
+BLE lifecycle evidence is grep-able by `code=`: `connect_start`,
+`hrs_subscribed`, `gatt_disconnected`, `notify_error`, `notify_closed`,
+`reconnect_scheduled`, `reconnect_attempt`, `reconnect_ok`,
+`reconnect_exhausted`, `notify_unverified`, `fg_unavailable`. `[app]
+lifecycle=...` records foreground/background transitions. Background/native
+GATT messages (including Android 133-class errors) are captured under `[fbp]`
+when Debug is on. See [`docs/ble-disconnect-v0.3.3.md`](docs/ble-disconnect-v0.3.3.md)
+for the disconnect root-cause analysis and the field-data checklist.
 
 ## Placeholders / user-provided inputs
 
