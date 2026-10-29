@@ -85,15 +85,19 @@ docker run -d --name heartrate-relay -p 9000:9000 -e PORT=9000 mawjgit/heart-rat
 适合「只想把服务跑起来」的部署场景。
 
 ```bash
-# 最少两条命令
-curl -O https://raw.githubusercontent.com/WJMA-GIT/heart-rate-share/main/docker-compose-hub.yml
+# 方式一：只要这一个文件（仓库当前是私有的，需要带凭据；公开后可直接 curl）
+gh api repos/WJMA-GIT/heart-rate-share/contents/docker-compose-hub.yml \
+  --jq .content | base64 -d > docker-compose-hub.yml
 docker compose -f docker-compose-hub.yml up -d
 
-# 或者整仓 clone 后
+# 方式二（推荐）：整仓 clone，文件随仓库一起下来
 git clone https://github.com/WJMA-GIT/heart-rate-share.git
 cd heart-rate-share
 docker compose -f docker-compose-hub.yml up -d
 ```
+
+> 仓库私有期间 `curl -O raw.githubusercontent.com/...` 会返回 404，必须带 token 或用上面的 `gh api`
+> 写法；仓库公开后那条 curl 可以直接用。
 
 跑起来后自检：
 
