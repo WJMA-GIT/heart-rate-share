@@ -9,46 +9,48 @@ abstract final class AppConfig {
   static const defaultWebSocketPort = 8765;
   static const defaultSecureWebSocketPort = 443;
 
-  /// 官方服务器（运维最终确定）：`wss://relay.mawj.asia`，走 443、不显式带端口。
+  /// 官方服务器（运维最终确定，真机使用）：`wss://heart.mawj.asia:10086`。
   ///
-  /// 为什么是 `relay` 子域：家庭 NAS + 仅公网 IPv6，边界由 fn-knock 反代网关
-  /// 终止 TLS；证书是 `*.mawj.asia` 通配，**不含根域**，所以必须用子域访问，
-  /// 用 `mawj.asia` 会命中"证书与域名不匹配"。
+  /// **必须保留 `wss://` 与显式 `:10086`**：10086 是非标准端口，任何地方把端口
+  /// 丢掉或与默认 443 混用都会连到错误的服务上。
   ///
-  /// 可用 `--dart-define=DEFAULT_SERVER=wss://relay.mawj.asia` 覆盖；
-  /// **必须带 wss:// 前缀**，裸主机名会被当成明文 ws（打到 443 必然失败），
-  /// 所以解析走 `RoomAddress.parseSecure` 显式纠正。
-  static const officialServerHost = 'relay.mawj.asia';
-  static const officialServerPort = 443;
+  /// 证书是 `*.mawj.asia` 通配，`heart.mawj.asia` 在其覆盖范围内；若真报证书错误，
+  /// 说明域名/证书确实不匹配（或反代换了张证书），提示会指向"域名与证书不匹配"。
+  ///
+  /// 可用 `--dart-define=DEFAULT_SERVER=wss://heart.mawj.asia:10086` 覆盖；
+  /// 裸主机名会被 `SecureEndpoint.parse` 纠正成 wss，显式 `ws://` 直接报错。
+  static const officialServerHost = 'heart.mawj.asia';
+  static const officialServerPort = 10086;
   static const officialServerSecure = true;
+
+  /// 内置默认串（带 wss:// 与显式端口）。
+  static const builtInOfficialServer = 'wss://heart.mawj.asia:10086';
 
   static const configuredServer = String.fromEnvironment(
     'DEFAULT_SERVER',
     defaultValue: '',
   );
 
-  /// 官方服务器实际使用的端点：未注入就用内置默认（带 wss://）。
+  /// 官方服务器实际使用的端点：未注入就用内置默认。
   static String get effectiveOfficialServer {
     final value = configuredServer.trim();
-    if (value.isEmpty) return 'wss://$officialServerHost';
-    return value;
+    return value.isEmpty ? builtInOfficialServer : value;
   }
 
-  /// 备用端点：443 被运营商封时用。**不是默认值**，只在"高级"里手动切换。
+  /// 备用线路：**默认不配置**（不凭空给一个可能不存在的端点）。
+  /// 需要时用 `--dart-define=SECONDARY_SERVER=wss://host:port` 注入，
+  /// 房间页「高级」里的备用按钮只在配置后才出现。
   static const configuredSecondaryServer = String.fromEnvironment(
     'SECONDARY_SERVER',
-    defaultValue: 'wss://relay.mawj.asia:8766',
+    defaultValue: '',
   );
 
-  static String get effectiveSecondaryServer {
+  static String? get effectiveSecondaryServer {
     final value = configuredSecondaryServer.trim();
-    return value.isEmpty
-        ? 'wss://$officialServerHost:$secondaryServerPort'
-        : value;
+    return value.isEmpty ? null : value;
   }
 
-  /// 备用端口（文档与测试用）。
-  static const secondaryServerPort = 8766;
+  static bool get hasSecondaryServer => effectiveSecondaryServer != null;
 
   /// 自签证书的可配置信任方式：钉住服务端证书的 SHA-256 指纹（十六进制，
   /// 大小写与冒号不敏感）。留空 = 走系统 CA 校验。

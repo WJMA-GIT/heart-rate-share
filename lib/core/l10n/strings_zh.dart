@@ -61,8 +61,9 @@ abstract final class Zh {
   static String roomErrorCode(RoomErrorCode code) => switch (code) {
     RoomErrorCode.certificateUntrusted => '服务器证书未通过系统 CA 校验（可能是自签证书）。',
     RoomErrorCode.certificateHostMismatch =>
-      '服务器证书与访问的域名不匹配：证书可能是 *.mawj.asia 通配，'
-          '必须用 relay.mawj.asia 这类子域访问（根域不在证书范围内）。',
+      '服务器证书与访问的域名不匹配（不是网络问题）：证书是 *.mawj.asia 通配，'
+          'heart.mawj.asia 本应在其覆盖范围内；若报此错，说明反代用的证书'
+          '与该域名对不上，请联系管理员核对证书与 SNI。',
     RoomErrorCode.certificatePinnedMismatch => '服务器证书与内置指纹不一致，已拒绝连接。',
     RoomErrorCode.tlsHandshake => 'TLS 握手失败，请确认服务端已开启 wss。',
     RoomErrorCode.dnsFailure => '域名解析失败：找不到服务器地址。请检查网络连接与域名是否正确。',
@@ -105,7 +106,7 @@ abstract final class Zh {
   static const profileDetails = '连接详情';
   static const seeDiagnostics = '诊断';
   static const roomCodeRuleHint = '房间号：字母、数字、下划线、短横线，1–64 位';
-  static const useSecondaryServer = '切换备用端口（443 被运营商封时用）';
+  static const useSecondaryServer = '使用备用线路';
   static const officialServerSecondary = '备用线路';
   static const noRoomMembers = '暂无成员，等待其他设备加入';
   static const online = '在线';

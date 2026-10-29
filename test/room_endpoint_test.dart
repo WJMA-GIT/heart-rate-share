@@ -197,4 +197,20 @@ void main() {
       );
     });
   });
+
+  test('诊断信息里保留非标准端口', () {
+    const diagnostics = RoomDiagnostics(
+      scheme: 'wss',
+      host: 'heart.mawj.asia',
+      port: 10086,
+      resolved: ['IPv6 2400:1234::9'],
+      attempts: [],
+      code: RoomErrorCode.certificateHostMismatch,
+    );
+    expect(diagnostics.endpoint, 'wss://heart.mawj.asia:10086');
+    expect(
+      diagnostics.toClipboardText(),
+      contains('endpoint=wss://heart.mawj.asia:10086'),
+    );
+  });
 }

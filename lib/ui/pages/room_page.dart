@@ -115,6 +115,10 @@ final class _RoomPageState extends State<RoomPage> {
   }
 
   /// 高级：手动地址（ws:// 或 wss:// 都行），沿用原来的解析器。
+  void _fillSecondary(String endpoint) {
+    setState(() => _address.text = endpoint);
+  }
+
   Future<void> _connectManual() async {
     final raw = _address.text.trim();
     if (raw.isEmpty) {
@@ -313,6 +317,7 @@ final class _RoomPageState extends State<RoomPage> {
     final roomCode = state.currentRoomCode;
     final connected = state.room.state == RoomConnectionState.connected;
     final recents = state.recentProfiles;
+    final secondaryServer = AppConfig.effectiveSecondaryServer;
 
     return CustomScrollView(
       slivers: [
@@ -431,16 +436,14 @@ final class _RoomPageState extends State<RoomPage> {
                         onPressed: _busy ? null : _connectManual,
                         child: const Text(Zh.joinRoom),
                       ),
-                      // 443 被运营商封时的备用线路（不设为默认）
-                      TextButton(
-                        onPressed: _busy
-                            ? null
-                            : () => setState(() {
-                                _address.text =
-                                    AppConfig.effectiveSecondaryServer;
-                              }),
-                        child: const Text(Zh.useSecondaryServer),
-                      ),
+                      // 备用线路：只有注入了 SECONDARY_SERVER 才出现（不设默认）
+                      if (secondaryServer != null)
+                        TextButton(
+                          onPressed: _busy
+                              ? null
+                              : () => _fillSecondary(secondaryServer),
+                          child: const Text(Zh.useSecondaryServer),
+                        ),
                     ],
                   ),
                 ],
