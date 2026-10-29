@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../config/app_config.dart';
+import '../l10n/strings_zh.dart';
 
 enum LogLevel { debug, info, warn, error }
 
@@ -148,8 +149,7 @@ final class AppLogger {
         XFile(file.path,
             mimeType: 'text/plain', name: 'heartrate-$_sessionId.txt')
       ],
-      text:
-          'HeartRate diagnostic session $_sessionId (no credentials intended)',
+      text: '${Zh.appName}诊断日志（会话 $_sessionId）',
     );
   }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'core/config/app_config.dart';
+import 'core/l10n/strings_zh.dart';
 import 'core/logging/app_logger.dart';
 import 'ui/app_state.dart';
 import 'ui/pages/heart_rate_page.dart';
@@ -43,7 +44,7 @@ final class _HeartRateAppState extends State<HeartRateApp> {
 
   @override
   Widget build(BuildContext context) {
-    final titles = ['Heart rate', 'Room', 'Settings'];
+    const titles = [Zh.heartRateTitle, Zh.roomTitle, Zh.settingsTitle];
     final pages = [
       HeartRatePage(state: widget.state),
       RoomPage(state: widget.state),
@@ -60,10 +61,11 @@ final class _HeartRateAppState extends State<HeartRateApp> {
           selectedIndex: _index,
           onDestinationSelected: (index) => setState(() => _index = index),
           destinations: const [
-            NavigationDestination(icon: Icon(Icons.favorite), label: 'Heart'),
-            NavigationDestination(icon: Icon(Icons.groups), label: 'Room'),
             NavigationDestination(
-                icon: Icon(Icons.settings), label: 'Settings'),
+                icon: Icon(Icons.favorite), label: Zh.navHeartRate),
+            NavigationDestination(icon: Icon(Icons.groups), label: Zh.navRoom),
+            NavigationDestination(
+                icon: Icon(Icons.settings), label: Zh.navSettings),
           ],
         ),
       ),

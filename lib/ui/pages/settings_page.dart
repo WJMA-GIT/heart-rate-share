@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/l10n/strings_zh.dart';
 import '../../debug/debug_panel.dart';
 import '../app_state.dart';
 
@@ -13,7 +14,7 @@ final class SettingsPage extends StatefulWidget {
 }
 
 final class _SettingsPageState extends State<SettingsPage> {
-  String _version = 'loading…';
+  String _version = Zh.loadingVersion;
 
   @override
   void initState() {
@@ -24,7 +25,7 @@ final class _SettingsPageState extends State<SettingsPage> {
       }
     }).catchError((_) {
       if (mounted) {
-        setState(() => _version = 'unavailable (CI/native shell pending)');
+        setState(() => _version = Zh.versionUnavailable);
       }
     });
   }
@@ -35,35 +36,32 @@ final class _SettingsPageState extends State<SettingsPage> {
     return Column(
       children: [
         SwitchListTile(
-          title: const Text('Debug diagnostics'),
-          subtitle:
-              const Text('Off by default; enables verbose local HRS logs'),
+          title: const Text(Zh.debugDiagnostics),
+          subtitle: const Text(Zh.debugDescription),
           value: state.debug.enabled,
           onChanged: state.debug.setEnabled,
         ),
         ListTile(
           leading: const Icon(Icons.ios_share),
-          title: const Text('Export / share local logs'),
-          subtitle: Text(
-              state.logger.filePath ?? 'Log file is initialized at startup'),
+          title: const Text(Zh.exportLogs),
+          subtitle: const Text(Zh.shareLogFile),
           onTap: () async {
             try {
               await state.debug.shareLogs();
             } catch (error) {
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Export failed: $error')));
+                    SnackBar(content: Text(Zh.exportError(error))));
               }
             }
           },
         ),
         const ListTile(
-          title: Text('Room address'),
-          subtitle: Text(
-              'Set on the Room tab. Short code discovery and manual address are separate fields.'),
+          title: Text(Zh.relayAddress),
+          subtitle: Text(Zh.roomAddressHelp),
         ),
         ListTile(
-            title: const Text('Version'),
+            title: const Text(Zh.aboutVersion),
             subtitle: Text('$_version · ${AppConfig.applicationId}')),
         const Divider(),
         if (state.debug.enabled) Expanded(child: DebugPanel(state: state)),

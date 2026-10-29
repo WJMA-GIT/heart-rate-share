@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/strings_zh.dart';
 import '../../room/room_address.dart';
 import '../app_state.dart';
 
@@ -28,7 +29,20 @@ final class _RoomPageState extends State<RoomPage> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$error')));
+            .showSnackBar(SnackBar(content: Text(Zh.roomError(error))));
+      }
+    }
+  }
+
+  Future<void> _toggleRelay() async {
+    try {
+      await (widget.state.relay == null
+          ? widget.state.startRelay()
+          : widget.state.stopRelay());
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(Zh.roomError(error))));
       }
     }
   }
@@ -42,45 +56,52 @@ final class _RoomPageState extends State<RoomPage> {
           padding: const EdgeInsets.all(16),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
-              Text('Connection: ${state.room.state.name}'),
+              Text(
+                  '${Zh.connectionStatusLabel}：${Zh.roomState(state.room.state)}'),
               const SizedBox(height: 8),
               TextField(
                   controller: _roomCode,
-                  decoration:
-                      const InputDecoration(labelText: 'Room short code')),
+                  decoration: const InputDecoration(
+                      labelText: Zh.roomShortCode,
+                      hintText: Zh.roomShortCodeHint)),
               const SizedBox(height: 8),
               TextField(
                 controller: _address,
                 decoration: const InputDecoration(
-                  labelText: 'Relay address (fallback)',
-                  hintText: '192.168.1.10:8765 or ws://host:8765',
+                  labelText: Zh.relayAddress,
+                  hintText: Zh.relayAddressHint,
                 ),
               ),
               const SizedBox(height: 8),
               Wrap(spacing: 8, children: [
                 FilledButton(
-                    onPressed: _connect, child: const Text('Join room')),
+                    onPressed: _connect, child: const Text(Zh.joinRoom)),
                 OutlinedButton(
                     onPressed: state.room.disconnect,
-                    child: const Text('Leave')),
+                    child: const Text(Zh.leaveRoom)),
                 OutlinedButton(
-                  onPressed:
-                      state.relay == null ? state.startRelay : state.stopRelay,
-                  child: Text(
-                      state.relay == null ? 'Host relay (dev)' : 'Stop relay'),
+                  onPressed: _toggleRelay,
+                  child:
+                      Text(state.relay == null ? Zh.hostRelay : Zh.stopRelay),
                 ),
               ]),
               if (state.relay != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                      'Room ${state.relay!.roomCode}\n${state.relay!.address}'),
+                  child: Text('${Zh.roomShortCode}：${state.relay!.roomCode}\n'
+                      '${Zh.localRoomAddress}：${state.relay!.address}'),
                 ),
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                    'Development transport is ws://; do not use sensitive data on untrusted LANs.'),
+                child: Text(Zh.developmentTransportWarning),
               ),
+              Text(Zh.roomMembers,
+                  style: Theme.of(context).textTheme.titleMedium),
+              if (state.members.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(Zh.noRoomMembers),
+                ),
             ]),
           ),
         ),
@@ -109,7 +130,7 @@ final class _RoomPageState extends State<RoomPage> {
                             overflow: TextOverflow.ellipsis),
                         Text('${member.report.bpm} BPM',
                             style: Theme.of(context).textTheme.headlineMedium),
-                        Text(member.online ? 'online' : 'offline'),
+                        Text(member.online ? Zh.online : Zh.offline),
                         Text('seq ${member.report.sequence}'),
                       ],
                     ),

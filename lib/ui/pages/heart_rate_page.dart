@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../ble/ble_models.dart';
+import '../../core/l10n/strings_zh.dart';
 import '../app_state.dart';
 
 final class HeartRatePage extends StatefulWidget {
@@ -18,7 +19,7 @@ final class _HeartRatePageState extends State<HeartRatePage> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$error')));
+            .showSnackBar(SnackBar(content: Text(Zh.bleError(error))));
       }
     }
   }
@@ -40,31 +41,40 @@ final class _HeartRatePageState extends State<HeartRatePage> {
         Text('BPM',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.titleLarge),
+        if (sample == null)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(Zh.waitingHeartRate, textAlign: TextAlign.center),
+          ),
         const SizedBox(height: 8),
-        Text('Status: ${ble.phase.name} · Adapter: ${ble.adapterState}',
+        Text(
+            '${Zh.connectionStatusLabel}：${Zh.blePhase(ble.phase)} · '
+            '${Zh.adapterLabel}：${Zh.adapterState(ble.adapterState)}',
             textAlign: TextAlign.center),
         if (sample != null) ...[
-          Text('Contact: ${sample.sensorContact ?? 'not supported'}',
+          Text('${Zh.sensorContactLabel}：${Zh.contact(sample.sensorContact)}',
               textAlign: TextAlign.center),
-          Text('RR: ${sample.rrIntervalsMs.join(', ')} ms',
+          Text('${Zh.rrIntervalsLabel}：${sample.rrIntervalsMs.join(', ')} ms',
               textAlign: TextAlign.center),
         ],
         const SizedBox(height: 24),
         FilledButton.icon(
           onPressed: () => _run(state.heartRate.scan),
           icon: const Icon(Icons.bluetooth_searching),
-          label: const Text('Scan HRS devices'),
+          label: const Text(Zh.scanDevices),
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
           value: _selected,
           decoration: const InputDecoration(
-              labelText: 'Heart-rate strap', border: OutlineInputBorder()),
+              labelText: Zh.selectHeartRateStrap, border: OutlineInputBorder()),
           items: [
             for (final device in ble.devices)
               DropdownMenuItem(
                   value: device.id,
-                  child: Text('${device.displayName} (${device.rssi} dBm)')),
+                  child: Text(
+                      '${device.name.isEmpty ? Zh.unnamedDevice : device.name} '
+                      '(${device.rssi} dBm)')),
           ],
           onChanged: (value) => setState(() => _selected = value),
         ),
@@ -74,13 +84,15 @@ final class _HeartRatePageState extends State<HeartRatePage> {
               ? null
               : () => _run(() => state.heartRate.connect(_selected!)),
           icon: const Icon(Icons.link),
-          label: const Text('Connect'),
+          label: const Text(Zh.connectHeartRateStrap),
         ),
         TextButton(
             onPressed: () => _run(state.heartRate.disconnect),
-            child: const Text('Disconnect')),
+            child: const Text(Zh.disconnect)),
         if (ble.phase == BleConnectionPhase.error)
-          Text(ble.lastError ?? 'Unknown BLE error'),
+          Text(ble.lastError == null
+              ? Zh.bleErrorTitle
+              : Zh.bleError(ble.lastError!)),
       ],
     );
   }
