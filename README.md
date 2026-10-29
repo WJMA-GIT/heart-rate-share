@@ -116,13 +116,16 @@ logs may contain nicknames, shortened device identifiers and stack traces.
 
 BLE lifecycle evidence is grep-able by `code=`: `connect_start`,
 `hrs_subscribed`, `hrs_first_sample`, `link_connected`, `link_disconnected`,
-`gatt_disconnected`, `notify_error`, `notify_closed`, `hrs_empty_notification`,
-`scan_tail_ignored`, `reconnect_scheduled`, `reconnect_attempt`, `reconnect_ok`,
-`reconnect_exhausted`, `notify_unverified`, `fg_unavailable`. `[app]
-lifecycle=...` records foreground/background transitions. Background/native
-GATT messages (including Android 133-class errors) are captured under `[fbp]`
-when Debug is on. `connection phase=` is only written when the phase actually
-changes. See [`docs/ble-disconnect-v0.3.3.md`](docs/ble-disconnect-v0.3.3.md)
+`gatt_disconnected`, `notify_error`, `notify_closed`, `services_reset`,
+`notify_resubscribe`, `notify_resubscribed`, `notify_resubscribe_failed`,
+`notify_recovery_reconnect`, `hrs_empty_notification`, `scan_tail_ignored`,
+`scan_while_connected`, `reconnect_scheduled`, `reconnect_attempt`,
+`reconnect_ok`, `reconnect_exhausted`, `notify_unverified`, `fg_unavailable`.
+`[app] lifecycle=...` records foreground/background transitions.
+Background/native GATT messages (including Android 133-class errors) are
+captured under `[fbp]` when Debug is on. `connection phase=` is only written
+when the phase actually changes. See
+[`docs/ble-disconnect-v0.3.3.md`](docs/ble-disconnect-v0.3.3.md)
 for the disconnect root-cause analysis and the field-data checklist, and
 [`docs/ble-field-log-2026-10-29.md`](docs/ble-field-log-2026-10-29.md) for the
 field-log postmortem that found the stale scan-tail bug.

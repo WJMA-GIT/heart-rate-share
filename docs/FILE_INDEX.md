@@ -13,6 +13,7 @@
 - `lib/ble/heart_rate_service.dart` — stream orchestration, platform selection and drop-triggered reconnect supervision.
 - `lib/ble/reconnect_policy.dart` — pure backoff policy for auto-reconnect (capped below the relay offline window).
 - `lib/ble/scan_tail.dart` — decides what a finished scan may write back to the connection phase (never clobbers a live link).
+- `lib/ble/notify_recovery_policy.dart` — re-subscribe vs full-reconnect decision when notifications stop but the link looks alive.
 - `lib/ble/platform/hrs_channel.dart` — native Windows/iOS channel contract.
 - `lib/ble/platform/hrs_foreground.dart` — Android foreground-service bridge (keeps the process alive while the link is up).
 - `lib/room/protocol.dart` — versioned wire envelope, report and member models.

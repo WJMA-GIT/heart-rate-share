@@ -7,6 +7,7 @@ import '../core/logging/app_logger.dart';
 import 'ble_models.dart';
 import 'heart_rate_sample.dart';
 import 'heart_rate_source.dart';
+import 'notify_recovery_policy.dart';
 import 'scan_tail.dart';
 
 /// Android reference transport. flutter_blue_plus is intentionally pinned in
@@ -57,6 +58,17 @@ final class FlutterBluePlusSource implements HeartRateSource {
   /// 就能证明数据流是活的，不必依赖 debug 级别的逐包日志。
   bool _firstSampleLogged = false;
 
+  /// Android Services Changed（0x2A05）/ GATT 缓存失效后 CCCD 会丢，
+  /// 通知会**无声无息地停**，而链路还在。必须能重订阅。
+  StreamSubscription<void>? _servicesResetSubscription;
+
+  final _notifyRecovery = const NotifyRecoveryPolicy();
+  final _resubscribeTimes = <DateTime>[];
+
+  /// services_reset 与 notify_closed 可能同时触发；并发重订阅会留下孤儿监听
+  /// （同一份通知被计两次），所以串行化。
+  bool _resubscribing = false;
+
   /// 扫描轮次。扫描收尾（`Future.delayed(timeout)` 之后）如果这一轮已经被
   /// 新的扫描或连接流程接管，就绝不能再往 snapshot 上写 phase。
   ///
@@ -81,6 +93,15 @@ final class FlutterBluePlusSource implements HeartRateSource {
     Duration timeout = const Duration(seconds: 10),
   }) async {
     final epoch = ++_scanEpoch;
+    if (_connected?.isConnected ?? false) {
+      // 扫描与连接抢射频是掉线的经典诱因，先留证据再继续。
+      _log.warn(
+        'ble',
+        'scan started while link is up',
+        deviceId: _connected?.remoteId.str,
+        code: 'scan_while_connected',
+      );
+    }
     _adapterSubscription ??= FlutterBluePlus.adapterState.listen((state) {
       _emit(_snapshot.copyWith(adapterState: state.name));
     });
@@ -154,7 +175,11 @@ final class FlutterBluePlusSource implements HeartRateSource {
     if (device == null) {
       throw ArgumentError.value(deviceId, 'deviceId', 'Scan first');
     }
+    // 扫描与连接并发在部分 Android 协议栈上会互相干扰（扫描占空比高时
+    // 连接更容易被踢）。连接前先收掉扫描，别让两件事抢射频。
+    await FlutterBluePlus.stopScan();
     await disconnect();
+    _resubscribeTimes.clear();
     _connected = device;
     // 先挂监听再发起连接：connect() 期间或刚返回时的掉线事件才不会漏。
     _watchConnectionState(device);
@@ -190,53 +215,8 @@ final class FlutterBluePlusSource implements HeartRateSource {
         throw StateError('GATT not connected after connect()');
       }
       _emit(_snapshot.copyWith(phase: BleConnectionPhase.discovering));
-      stage = 'discover';
-      final services = await device.discoverServices();
-      BluetoothCharacteristic? measurement;
-      for (final service in services) {
-        if (service.uuid == _hrsService) {
-          for (final characteristic in service.characteristics) {
-            if (characteristic.uuid == _hrsMeasurement) {
-              measurement = characteristic;
-            }
-          }
-        }
-      }
-      if (measurement == null) throw StateError('HRS 0x2A37 not found');
       stage = 'subscribe';
-      await measurement.setNotifyValue(true);
-      if (!measurement.isNotifying) {
-        // CCCD 缓存有时不完整，不能据此判定订阅失败，只留痕。
-        _log.warn(
-          'ble',
-          '0x2A37 notify not reflected in CCCD cache',
-          deviceId: deviceId,
-          code: 'notify_unverified',
-        );
-      }
-      _notificationSubscription = measurement.lastValueStream.listen(
-        (bytes) => _onNotification(deviceId, bytes),
-        // 通知流自身的错误/关闭过去是静默的：不接住就完全看不到。
-        onError: (Object error, StackTrace stack) {
-          _log.error(
-            'hrs',
-            'notification stream failed',
-            deviceId,
-            error,
-            stack,
-          );
-          _onLinkDown(deviceId, 'notify_error');
-        },
-        onDone: () {
-          _log.warn(
-            'hrs',
-            'notification stream closed',
-            deviceId: deviceId,
-            code: 'notify_closed',
-          );
-          _onLinkDown(deviceId, 'notify_closed');
-        },
-      );
+      await _subscribeNotifications(device, deviceId);
       _emit(_snapshot.copyWith(phase: BleConnectionPhase.subscribed));
       _log.info(
         'ble',
@@ -250,12 +230,149 @@ final class FlutterBluePlusSource implements HeartRateSource {
     }
   }
 
+  /// discover 服务 + 打开 0x2A37 通知 + 挂监听。首次连接与"只重订阅"共用，
+  /// 保证两条路径行为一致（重订阅也必须重新 discover：Services Changed 之后
+  /// 旧的 characteristic 对象已经失效）。
+  Future<void> _subscribeNotifications(
+    BluetoothDevice device,
+    String deviceId,
+  ) async {
+    await _notificationSubscription?.cancel();
+    _notificationSubscription = null;
+    final services = await device.discoverServices();
+    BluetoothCharacteristic? measurement;
+    for (final service in services) {
+      if (service.uuid == _hrsService) {
+        for (final characteristic in service.characteristics) {
+          if (characteristic.uuid == _hrsMeasurement) {
+            measurement = characteristic;
+          }
+        }
+      }
+    }
+    if (measurement == null) throw StateError('HRS 0x2A37 not found');
+    await measurement.setNotifyValue(true);
+    if (!measurement.isNotifying) {
+      // CCCD 缓存有时不完整，不能据此判定订阅失败，只留痕。
+      _log.warn(
+        'ble',
+        '0x2A37 notify not reflected in CCCD cache',
+        deviceId: deviceId,
+        code: 'notify_unverified',
+      );
+    }
+    _notificationSubscription = measurement.lastValueStream.listen(
+      (bytes) => _onNotification(deviceId, bytes),
+      // 通知流自身的错误/关闭过去是静默的：不接住就完全看不到。
+      onError: (Object error, StackTrace stack) {
+        _log.error('hrs', 'notification stream failed', deviceId, error, stack);
+        unawaited(_recoverNotify(deviceId, 'notify_error'));
+      },
+      onDone: () {
+        _log.warn(
+          'hrs',
+          'notification stream closed',
+          deviceId: deviceId,
+          code: 'notify_closed',
+        );
+        unawaited(_recoverNotify(deviceId, 'notify_closed'));
+      },
+    );
+  }
+
+  /// 通知停了但链路可能还在：优先原地重订阅，超出重订阅预算才升级为整条重连。
+  Future<void> _recoverNotify(String deviceId, String reason) async {
+    if (_disposed || _resubscribing) {
+      if (_resubscribing) {
+        _log.debug(
+          'ble',
+          'resubscribe already in flight, ignoring reason=$reason',
+          deviceId: deviceId,
+          code: 'notify_resubscribe_busy',
+        );
+      }
+      return;
+    }
+    final device = _connected;
+    final now = DateTime.now();
+    _resubscribeTimes.removeWhere(
+      (at) => now.difference(at) > _notifyRecovery.window,
+    );
+    final action = _notifyRecovery.actionFor(
+      deviceConnected: device?.isConnected ?? false,
+      attemptsInWindow: _resubscribeTimes.length,
+    );
+    if (action == NotifyRecoveryAction.reconnect || device == null) {
+      _log.warn(
+        'ble',
+        'notify recovery escalated to full reconnect reason=$reason '
+            'attempts=${_resubscribeTimes.length}',
+        deviceId: deviceId,
+        code: 'notify_recovery_reconnect',
+      );
+      _onLinkDown(deviceId, reason);
+      return;
+    }
+    _resubscribeTimes.add(now);
+    _log.info(
+      'ble',
+      're-subscribing notifications reason=$reason '
+          'attempt=${_resubscribeTimes.length}/${_notifyRecovery.maxAttempts}',
+      deviceId: deviceId,
+      code: 'notify_resubscribe',
+    );
+    _resubscribing = true;
+    try {
+      await _subscribeNotifications(device, deviceId);
+      _emit(_snapshot.copyWith(phase: BleConnectionPhase.subscribed));
+      _log.info(
+        'ble',
+        'notifications re-subscribed reason=$reason',
+        deviceId: deviceId,
+        code: 'notify_resubscribed',
+      );
+    } catch (error, stack) {
+      _log.error(
+        'ble',
+        'notify resubscribe failed reason=$reason',
+        deviceId,
+        error,
+        stack,
+      );
+      _onLinkDown(deviceId, 'notify_resubscribe_failed');
+    } finally {
+      _resubscribing = false;
+    }
+  }
+
   void _watchConnectionState(BluetoothDevice device) {
     final deviceId = device.remoteId.str;
     unawaited(_connectionSubscription?.cancel());
+    unawaited(_servicesResetSubscription?.cancel());
     _linkUp = false;
     _lastLinkState = null;
     _firstSampleLogged = false;
+    // Services Changed（0x2A05）会让 CCCD 失效：通知从此静默，链路却还在。
+    _servicesResetSubscription = device.onServicesReset.listen(
+      (_) {
+        _log.warn(
+          'ble',
+          'services reset (CCCD likely invalidated)',
+          deviceId: deviceId,
+          code: 'services_reset',
+        );
+        unawaited(_recoverNotify(deviceId, 'services_reset'));
+      },
+      onError: (Object error, StackTrace stack) {
+        _log.error(
+          'ble',
+          'services reset stream failed',
+          deviceId,
+          error,
+          stack,
+        );
+      },
+    );
     _connectionSubscription = device.connectionState.listen(
       (state) {
         // 只记真实转变；订阅时吐出的初始值不算，否则每次连接开头都会多一行噪音。
@@ -305,6 +422,8 @@ final class FlutterBluePlusSource implements HeartRateSource {
     _linkUp = false;
     unawaited(_notificationSubscription?.cancel());
     _notificationSubscription = null;
+    unawaited(_servicesResetSubscription?.cancel());
+    _servicesResetSubscription = null;
     _log.warn('ble', 'link lost, phase=idle', deviceId: deviceId, code: code);
     _emit(_snapshot.copyWith(phase: BleConnectionPhase.idle));
   }
@@ -349,8 +468,11 @@ final class FlutterBluePlusSource implements HeartRateSource {
   Future<void> disconnect() async {
     // 让还在等 10 秒超时的扫描收尾失效，避免它稍后覆写 phase。
     _scanEpoch++;
+    _resubscribeTimes.clear();
     await _notificationSubscription?.cancel();
     _notificationSubscription = null;
+    await _servicesResetSubscription?.cancel();
+    _servicesResetSubscription = null;
     await _connectionSubscription?.cancel();
     _connectionSubscription = null;
     _linkUp = false;
