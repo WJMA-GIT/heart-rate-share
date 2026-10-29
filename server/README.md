@@ -38,6 +38,47 @@ server/
 
 ## 快速开始
 
+### 方式零：直接从 Docker Hub 运行（不用 clone、不用 build）
+
+镜像由 GitHub Actions 自动构建：构建后先起容器 curl `/healthz` 冒烟，通过才推送。
+
+```bash
+docker run -d --name heartrate-relay \
+  -p 8765:8765 \
+  -e PORT=8765 \
+  -e ROOM_LIMIT=20 \
+  -e LOG_LEVEL=info \
+  --restart unless-stopped \
+  mawjgit/heart-rate-share:latest
+```
+
+拉取的是 `mawjgit/heart-rate-share`，可用 tag：
+
+| tag | 含义 |
+|---|---|
+| `latest` | 默认分支最新构建（只由 `main` 推送产生） |
+| `sha-<短提交>` | 某个具体提交，便于回滚与对照 |
+| `v0.2.0` 这类 | 打 `v*` tag 时生成，对应客户端版本 |
+
+常用操作：
+
+```bash
+docker ps --filter name=heartrate-relay          # 是否在跑（镜像自带健康检查，STATUS 会显示 healthy）
+curl -s http://127.0.0.1:8765/healthz            # 应用层自检
+docker logs -f heartrate-relay                    # 看日志（JSON 行）
+docker inspect --format '{{.State.Health.Status}}' heartrate-relay
+docker rm -f heartrate-relay                      # 停掉并删除
+```
+
+改端口/上限就改 `-e` 与 `-p` 两侧（宿主机映射与容器内端口要保持一致）：
+
+```bash
+docker run -d --name heartrate-relay -p 9000:9000 -e PORT=9000 mawjgit/heart-rate-share:latest
+```
+
+> 镜像内已设 `HOST=0.0.0.0`，非 root（`node` 用户）运行，并内置 `HEALTHCHECK`。
+> 升级：`docker pull mawjgit/heart-rate-share:latest && docker rm -f heartrate-relay`，再用上面的 `docker run` 起回来即可。
+
 ### 方式一：docker compose（推荐）
 
 ```bash

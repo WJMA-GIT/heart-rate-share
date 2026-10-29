@@ -1,15 +1,21 @@
 # syntax=docker/dockerfile:1
 # 两段构建：deps 只装生产依赖，运行层不带 npm 缓存与构建工具。
-FROM node:20-alpine AS deps
+FROM node:20.19.2-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-FROM node:20-alpine
+FROM node:20.19.2-alpine
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8765
 WORKDIR /app
+
+# OCI 标签：Docker Hub 页面会据此关联源码仓库与许可
+LABEL org.opencontainers.image.title="heart-rate-share-relay" \
+      org.opencontainers.image.description="共享心率 v1 协议的 WebSocket 中继（Node 20 + ws，内存房间状态）" \
+      org.opencontainers.image.source="https://github.com/WJMA-GIT/heart-rate-share" \
+      org.opencontainers.image.licenses="UNLICENSED"
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
