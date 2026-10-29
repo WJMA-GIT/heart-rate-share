@@ -59,7 +59,12 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          # 必须用 17，不能用 21：AGP 8.1.0（Flutter 3.27.4 官方模板版本）在
+          # JDK 21 下做 JdkImageTransform 时 jlink 会失败，报
+          # "Failed to transform core-for-system-modules.jar"，
+          # 只在 release 变体编译插件 Java 时触发（debug 不会）。
+          # 升级到 AGP>=8.2.1 也可以，但会牵动 Gradle 版本，故优先对齐 JDK。
+          java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
