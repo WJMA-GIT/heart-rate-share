@@ -3,6 +3,11 @@
 Flutter single-repository skeleton for standard BLE HRS collection and a local
 WebSocket room relay. Application ID: `com.wjmagit.heartrateshare`.
 
+Toolchain: Flutter 3.47.8 / Dart 3.13.7, Gradle 9.3.1, AGP 9.1.0, Kotlin 2.4.0,
+Java 17, compile/target SDK 36, minSdk 24. See
+[`docs/upgrade-0.3.0.md`](docs/upgrade-0.3.0.md) for the full matrix and
+rollback steps.
+
 ## Implemented
 
 - HRS 0x180D / 0x2A37 scan-connect-notify path for Android using
