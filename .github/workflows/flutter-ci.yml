@@ -12,7 +12,8 @@ permissions:
 
 env:
   FLUTTER_VERSION: '3.27.4'
-  APP_VERSION: '0.1.0'
+  # 版本号不再写死：从 pubspec.yaml 的 `version:` 派生，
+  # 否则每次升版都会出现「Release 是 0.1.1、资产名却是 0.1.0」的漂移。
 
 jobs:
   # ---------------------------------------------------------------- 质量关
@@ -81,7 +82,16 @@ jobs:
       - run: bash tool/ci_prepare_android.sh
       - name: Build split-per-abi release APKs
         run: flutter build apk --release --split-per-abi
+      - name: Resolve app version from pubspec
+        id: ver
+        run: |
+          v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
+          [ -n "$v" ] || { echo "cannot parse version from pubspec.yaml"; exit 1; }
+          echo "resolved=$v" >> "$GITHUB_OUTPUT"
+          echo "app version: $v"
       - name: Rename with version + ABI
+        env:
+          APP_VERSION: ${{ steps.ver.outputs.resolved }}
         run: |
           mkdir -p out
           for f in build/app/outputs/flutter-apk/app-*-release.apk; do
@@ -111,11 +121,18 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter build windows --release
+      - name: Resolve app version from pubspec
+        id: ver
+        shell: bash
+        run: |
+          v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
+          [ -n "$v" ] || { echo "cannot parse version"; exit 1; }
+          echo "resolved=$v" >> "$GITHUB_OUTPUT"
       - name: Zip (免安装)
         shell: pwsh
         run: |
           Compress-Archive -Path build/windows/x64/runner/Release/* `
-            -DestinationPath "heartrate-${env:APP_VERSION}-windows-x64.zip" -Force
+            -DestinationPath "heartrate-${{ steps.ver.outputs.resolved }}-windows-x64.zip" -Force
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ github.sha }}

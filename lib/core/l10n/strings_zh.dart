@@ -38,6 +38,8 @@ abstract final class Zh {
   static const noRoomMembers = '暂无成员，等待其他设备加入';
   static const online = '在线';
   static const offline = '已离线';
+  static const sequenceLabel = '序号';
+  static const guestUser = '访客';
   static const localRoomAddress = '本地房间地址';
   static const developmentTransportWarning =
       '当前为 ws:// 开发模式，请勿在不可信的局域网中共享敏感数据。';

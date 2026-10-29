@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../ble/ble_models.dart';
 import '../ble/heart_rate_sample.dart';
 import '../ble/heart_rate_service.dart';
+import '../core/l10n/strings_zh.dart';
 import '../core/logging/app_logger.dart';
 import '../debug/debug_controller.dart';
 import '../room/discovery.dart';
@@ -17,7 +18,7 @@ final class AppState extends ChangeNotifier {
       : logger = logger ?? AppLogger.instance,
         heartRate = heartRate ?? HeartRateService(logger: logger) {
     debug = DebugController(this.logger);
-    room = RoomClient(displayName: 'Guest', logger: this.logger);
+    room = RoomClient(displayName: Zh.guestUser, logger: this.logger);
     discovery = UnimplementedRoomDiscovery(logger: this.logger);
     _subscriptions = [
       this.heartRate.samples.listen(_onSample),

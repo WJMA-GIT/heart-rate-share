@@ -131,7 +131,7 @@ final class _RoomPageState extends State<RoomPage> {
                         Text('${member.report.bpm} BPM',
                             style: Theme.of(context).textTheme.headlineMedium),
                         Text(member.online ? Zh.online : Zh.offline),
-                        Text('seq ${member.report.sequence}'),
+                        Text('${Zh.sequenceLabel} ${member.report.sequence}'),
                       ],
                     ),
                   ),
