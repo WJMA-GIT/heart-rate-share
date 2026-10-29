@@ -57,6 +57,15 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Free runner disk space
+        run: |
+          # Flutter 3.47.8 + Gradle 9.3.1 needs more headroom on the 14 GB runner.
+          # Keep JDK/Android SDK/NDK; remove unrelated preinstalled toolchains.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/lib/android/sdk/emulator \
+            /usr/local/lib/android/sdk/system-images
+          df -h /
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
