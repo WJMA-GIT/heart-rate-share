@@ -105,6 +105,9 @@ final class RoomClient {
   Object? lastFailure;
   bool _disposed = false;
 
+  /// 关闭是否由本端发起（区分"用户/我们主动关"与"被对端关掉"）。
+  bool _closingLocally = false;
+
   /// 缺省（未注入计数器）时退化为进程内自增，仅用于测试。
   int _localSequence = 0;
   RoomConnectionState _state = RoomConnectionState.disconnected;
@@ -223,10 +226,15 @@ final class RoomClient {
     _cancelTimers();
     _setState(RoomConnectionState.disconnected);
     unawaited(_foreground.release('room'));
+    // 关掉的原因必须写清楚：close code / reason 是判断"谁关的"的唯一证据。
+    // 1000/1001 正常关闭，4001+ 服务端自定义，1006 异常断开。
     _log.warn(
       'room',
-      'socket dropped reason=$reason userClosed=$_userClosed '
-          'lastInbound=${_lastInboundDescription()}',
+      'socket dropped reason=$reason '
+          'closeCode=${_channel?.closeCode ?? 'none'} '
+          "closeReason='${_channel?.closeReason ?? ''}' "
+          'initiator=${_closingLocally ? 'local' : 'remote'} '
+          'userClosed=$_userClosed lastInbound=${_lastInboundDescription()}',
       deviceId: memberId,
       code: 'ws_drop',
     );
@@ -332,9 +340,12 @@ final class RoomClient {
     await _subscription?.cancel();
     _subscription = null;
     try {
+      _closingLocally = true;
       await _channel?.sink.close(status.normalClosure);
     } catch (_) {
       // 已经死掉的 socket 关闭会抛，忽略即可。
+    } finally {
+      _closingLocally = false;
     }
     _channel = null;
   }
@@ -377,9 +388,21 @@ final class RoomClient {
 
   void _send(RoomMessageType type, Map<String, Object?> data) {
     // Never log envelope payloads: future join credentials belong here.
-    _channel?.sink.add(
-      jsonEncode(RoomEnvelope(type: type, data: data).toJson()),
-    );
+    try {
+      _channel?.sink.add(
+        jsonEncode(RoomEnvelope(type: type, data: data).toJson()),
+      );
+    } on Object catch (error) {
+      // sink 已经死掉时 add 会同步抛：这说明发送侧断了，必须留下证据
+      // （旧版这里什么都不记，日志上看起来就是"突然 disconnected"）。
+      _log.warn(
+        'room',
+        'send failed type=${type.name} error=${error.runtimeType}',
+        deviceId: memberId,
+        code: 'ws_send_failed',
+      );
+      _handleDrop('send_failed');
+    }
   }
 
   void _onMessage(Object? data) {
