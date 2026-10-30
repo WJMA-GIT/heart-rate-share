@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import '../ble/ble_models.dart';
 import '../ble/heart_rate_sample.dart';
@@ -198,6 +198,15 @@ final class AppState extends ChangeNotifier {
     } catch (error, stack) {
       // 存不下也不能挡住连接：下一次仍可用内存里的列表。
       logger.error('room', 'Save recent profiles failed', null, error, stack);
+    }
+  }
+
+  /// 前台/后台切换：切回前台时检查房间 socket 是否还活着（后台冻结期间
+  /// 可能已经死掉且没有任何回调），必要时立刻重连。
+  void onAppLifecycle(AppLifecycleState state) {
+    logger.info('app', 'lifecycle=${state.name}', code: 'app_lifecycle');
+    if (state == AppLifecycleState.resumed) {
+      unawaited(room.onAppResumed());
     }
   }
 

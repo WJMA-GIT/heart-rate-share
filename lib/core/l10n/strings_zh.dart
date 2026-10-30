@@ -103,6 +103,12 @@ abstract final class Zh {
           '请把下面整段诊断信息复制给管理员。',
   };
 
+  static const keepAliveTitle = '后台保持连接';
+  static const keepAliveBody =
+      '连接期间会显示一条常驻通知（前台服务），这样切到后台后心率与房间连接不会被系统冻结。'
+      '部分手机厂商的"省电策略/后台清理"仍会强制杀进程，需要手动把本应用加入白名单。';
+  static const openBatterySettings = '电池优化设置';
+
   static const roomNumber = '房间号';
   static const roomNumberHint = '输入房间号加入';
   static const roomNumberRequired = '请输入房间号后再加入。';

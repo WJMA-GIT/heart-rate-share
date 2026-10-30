@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:web_socket_channel/status.dart' as status;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../core/config/app_config.dart';
 import '../core/logging/app_logger.dart';
+import '../core/platform/foreground_lease.dart';
 import 'protocol.dart';
 import 'room_endpoint.dart';
 import 'room_identity.dart';
+import '../ble/reconnect_policy.dart';
 import 'room_transport.dart';
 import 'sequence_counter.dart';
 
@@ -24,11 +27,20 @@ final class RoomClient {
     SequenceCounter? sequence,
     RoomTls? tls,
     AppLogger? logger,
+    ForegroundLease? foreground,
+    ReconnectPolicy? reconnectPolicy,
+    @visibleForTesting Duration staleAfter = const Duration(seconds: 10),
+    @visibleForTesting
+    Future<RoomOpenResult> Function(Uri uri, RoomTls tls)? opener,
   }) => RoomClient._(
     displayName,
     memberId ?? RoomIdentity.memberId(),
     sequence,
     tls ?? RoomTls.none,
+    foreground ?? ForegroundLease.instance,
+    reconnectPolicy ?? const ReconnectPolicy(maxAttempts: 12),
+    staleAfter,
+    opener ?? (uri, tls) => openRoomChannelResolved(uri, tls: tls),
     logger ?? AppLogger.instance,
   );
 
@@ -37,6 +49,10 @@ final class RoomClient {
     this.memberId,
     this._sequence,
     this._tls,
+    this._foreground,
+    this._retryPolicy,
+    this._staleAfter,
+    this._opener,
     this._log,
   );
 
@@ -46,6 +62,10 @@ final class RoomClient {
   final AppLogger _log;
   final SequenceCounter? _sequence;
   final RoomTls _tls;
+  final ForegroundLease _foreground;
+  final ReconnectPolicy _retryPolicy;
+  final Duration _staleAfter;
+  final Future<RoomOpenResult> Function(Uri uri, RoomTls tls) _opener;
 
   /// 最近一次连接失败的可分辨原因（证书类错误与网络错误分开）。
   RoomErrorCode? lastErrorCode;
@@ -67,8 +87,23 @@ final class RoomClient {
   WebSocketChannel? _channel;
   Timer? _reportTimer;
   Timer? _heartbeatTimer;
+  Timer? _retryTimer;
   StreamSubscription<Object?>? _subscription;
   HeartRateReport? _pending;
+
+  /// 记住最后一次连接目标：掉线后自动重连、以及"从后台回来"时要用。
+  Uri? _targetUri;
+
+  /// 用户主动断开后不再自动重连。
+  bool _userClosed = true;
+
+  /// 最近一次收到任何服务端消息的时刻（判断 socket 是否已经僵死）。
+  DateTime? _lastInboundAt;
+
+  int _retryAttempt = 0;
+
+  Object? lastFailure;
+  bool _disposed = false;
 
   /// 缺省（未注入计数器）时退化为进程内自增，仅用于测试。
   int _localSequence = 0;
@@ -88,31 +123,42 @@ final class RoomClient {
     if (uri.scheme != 'ws' && uri.scheme != 'wss') {
       throw ArgumentError.value(uri, 'uri', 'Expected ws:// or wss://');
     }
-    await disconnect();
+    _userClosed = false;
+    _targetUri = uri;
+    _retryAttempt = 0;
+    _cancelRetry();
+    final ok = await _open(uri, isRetry: false);
+    if (!ok) {
+      // 手动连接失败：把错误抛给 UI，不在后台偷偷重试。
+      throw lastFailure ?? StateError('connect failed');
+    }
+  }
+
+  /// 建立（或重建）连接。返回是否成功；[isRetry] 时不抛异常。
+  Future<bool> _open(Uri uri, {required bool isRetry}) async {
+    await _closeSocket();
     _setState(RoomConnectionState.connecting);
-    lastErrorCode = null;
-    lastDiagnostics = null;
-    lastServerError = null;
+    if (!isRetry) {
+      lastErrorCode = null;
+      lastDiagnostics = null;
+      lastServerError = null;
+    }
     try {
-      // 自己解析 + 逐地址回退：AAAA-only 的家庭 NAS 也能连，
-      // 首选地址失败会立刻换下一个。
-      final opened = await openRoomChannelResolved(uri, tls: _tls);
+      final opened = await _opener(uri, _tls);
       lastDiagnostics = opened.diagnostics;
       final channel = opened.channel;
       await channel.ready;
       _channel = channel;
       _roomCode = uri.queryParameters['room'];
+      _lastInboundAt = DateTime.now();
       _send(RoomMessageType.hello, {
         'memberId': memberId,
         'displayName': _displayName,
       });
       _subscription = channel.stream.listen(
         _onMessage,
-        onDone: () {
-          _setState(RoomConnectionState.disconnected);
-        },
+        onDone: () => _handleDrop('stream_closed'),
         onError: (Object error, StackTrace stack) {
-          _setState(RoomConnectionState.error);
           _log.error(
             'room',
             'WebSocket receive failed',
@@ -120,6 +166,7 @@ final class RoomClient {
             error,
             stack,
           );
+          _handleDrop('stream_error');
         },
       );
       _reportTimer = Timer.periodic(AppConfig.reportInterval, (_) => _flush());
@@ -127,7 +174,18 @@ final class RoomClient {
         AppConfig.heartbeatInterval,
         (_) => _sendPing(),
       );
+      _retryAttempt = 0;
+      // 房间连接期间保持前台服务：没有它，切后台后进程被冻结，
+      // socket 不再收发（这就是"退后台就断"的根因）。
+      await _foreground.acquire('room');
       _setState(RoomConnectionState.connected);
+      _log.info(
+        'room',
+        'room connected lease=room holders=${_foreground.holders.join('+')}',
+        deviceId: memberId,
+        code: 'room_connected',
+      );
+      return true;
     } catch (error, stack) {
       _setState(RoomConnectionState.error);
       final code = error is RoomOpenException
@@ -135,6 +193,7 @@ final class RoomClient {
           : classifyRoomError(error);
       if (error is RoomOpenException) lastDiagnostics = error.diagnostics;
       lastErrorCode = code;
+      lastFailure = error;
       _log.error(
         'room',
         'WebSocket connect failed code=${code.name} '
@@ -143,8 +202,6 @@ final class RoomClient {
         error,
         stack,
       );
-      // 诊断块以前只出现在弹窗里，导出日志里完全没有 —— 真机排查时等于瞎。
-      // 这里把整段事实写进会话日志（多行，可按 key grep）。
       final diagnostics = lastDiagnostics;
       if (diagnostics != null) {
         _log.error(
@@ -154,8 +211,132 @@ final class RoomClient {
           'diagnostics',
         );
       }
-      rethrow;
+      return false;
     }
+  }
+
+  /// 意外掉线的统一处理：停定时器、释放前台租约、按退避重连。
+  void _handleDrop(String reason) {
+    if (_state == RoomConnectionState.disconnected && _retryTimer != null) {
+      return;
+    }
+    _cancelTimers();
+    _setState(RoomConnectionState.disconnected);
+    unawaited(_foreground.release('room'));
+    _log.warn(
+      'room',
+      'socket dropped reason=$reason userClosed=$_userClosed '
+          'lastInbound=${_lastInboundDescription()}',
+      deviceId: memberId,
+      code: 'ws_drop',
+    );
+    if (_userClosed) return;
+    _scheduleRetry(reason);
+  }
+
+  void _scheduleRetry(String reason) {
+    if (_userClosed || _targetUri == null || _retryTimer != null) return;
+    final delay = _retryPolicy.delayFor(_retryAttempt);
+    if (delay == null) {
+      _log.warn(
+        'room',
+        'reconnect exhausted attempts=$_retryAttempt',
+        deviceId: memberId,
+        code: 'ws_retry_exhausted',
+      );
+      return;
+    }
+    _retryAttempt += 1;
+    _log.warn(
+      'room',
+      'reconnect scheduled in ${delay.inMilliseconds}ms '
+          'attempt=$_retryAttempt/${_retryPolicy.maxAttempts} reason=$reason',
+      deviceId: memberId,
+      code: 'ws_retry_scheduled',
+    );
+    _retryTimer = Timer(delay, () {
+      _retryTimer = null;
+      unawaited(_attemptReconnect('scheduled'));
+    });
+  }
+
+  Future<void> _attemptReconnect(String trigger) async {
+    final uri = _targetUri;
+    if (_disposed || _userClosed || uri == null) return;
+    final ok = await _open(uri, isRetry: true);
+    if (ok) {
+      _log.info(
+        'room',
+        'reconnected trigger=$trigger attempts=$_retryAttempt',
+        deviceId: memberId,
+        code: 'ws_reconnect_ok',
+      );
+      return;
+    }
+    _log.warn(
+      'room',
+      'reconnect failed trigger=$trigger',
+      deviceId: memberId,
+      code: 'ws_reconnect_failed',
+    );
+    _scheduleRetry('retry_failed');
+  }
+
+  /// 从后台回到前台时调用：socket 可能已在冻结期间死掉（没有任何回调），
+  /// 所以这里主动做一次存活判断，必要时立刻重连 —— 不等退避。
+  Future<void> onAppResumed() async {
+    if (_disposed || _userClosed || _targetUri == null) return;
+    final last = _lastInboundAt;
+    final stale = last == null || DateTime.now().difference(last) > _staleAfter;
+    if (_state == RoomConnectionState.connected && !stale) {
+      _log.info(
+        'room',
+        'resume: socket alive lastInbound=${_lastInboundDescription()}',
+        deviceId: memberId,
+        code: 'ws_resume_ok',
+      );
+      return;
+    }
+    _log.warn(
+      'room',
+      'resume: socket stale state=${_state.name} '
+          'lastInbound=${_lastInboundDescription()} — reconnecting now',
+      deviceId: memberId,
+      code: 'ws_resume_reconnect',
+    );
+    _cancelRetry();
+    _retryAttempt = 0;
+    await _attemptReconnect('resume');
+  }
+
+  String _lastInboundDescription() {
+    final last = _lastInboundAt;
+    if (last == null) return 'never';
+    return '${DateTime.now().difference(last).inMilliseconds}ms ago';
+  }
+
+  void _cancelRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+  }
+
+  void _cancelTimers() {
+    _reportTimer?.cancel();
+    _reportTimer = null;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  Future<void> _closeSocket() async {
+    _cancelTimers();
+    await _subscription?.cancel();
+    _subscription = null;
+    try {
+      await _channel?.sink.close(status.normalClosure);
+    } catch (_) {
+      // 已经死掉的 socket 关闭会抛，忽略即可。
+    }
+    _channel = null;
   }
 
   /// 昵称随下一次心跳以可选字段上报。旧服务端忽略该字段，保持 v1 兼容。
@@ -165,8 +346,10 @@ final class RoomClient {
     if (_state == RoomConnectionState.connected) _sendPing();
   }
 
-  void _sendPing() =>
-      _send(RoomMessageType.ping, {'displayName': _displayName});
+  void _sendPing() {
+    _log.debug('room', 'ws_ping', deviceId: memberId, code: 'ws_ping');
+    _send(RoomMessageType.ping, {'displayName': _displayName});
+  }
 
   void report({
     required int bpm,
@@ -200,6 +383,7 @@ final class RoomClient {
   }
 
   void _onMessage(Object? data) {
+    _lastInboundAt = DateTime.now();
     try {
       final envelope = RoomEnvelope.fromJson(
         jsonDecode(data as String) as Map<String, Object?>,
@@ -216,6 +400,8 @@ final class RoomClient {
             envelope.data['member'] as Map<String, Object?>,
           );
           _byId[member.report.memberId] = member;
+        case RoomMessageType.pong:
+          _log.debug('room', 'ws_pong', deviceId: memberId, code: 'ws_pong');
         case RoomMessageType.error:
           lastServerError = '${envelope.data['code']}';
           _log.warn(
@@ -254,12 +440,12 @@ final class RoomClient {
   int _nextSequence() => _sequence?.next() ?? ++_localSequence;
 
   Future<void> disconnect() async {
-    _reportTimer?.cancel();
-    _heartbeatTimer?.cancel();
-    await _subscription?.cancel();
-    _subscription = null;
-    await _channel?.sink.close(status.normalClosure);
-    _channel = null;
+    _userClosed = true;
+    _targetUri = null;
+    _retryAttempt = 0;
+    _cancelRetry();
+    await _closeSocket();
+    await _foreground.release('room');
     _roomCode = null;
     if (_state != RoomConnectionState.disconnected) {
       _setState(RoomConnectionState.disconnected);
@@ -267,6 +453,7 @@ final class RoomClient {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     await disconnect();
     await _sequence?.flush();
     await _members.close();
