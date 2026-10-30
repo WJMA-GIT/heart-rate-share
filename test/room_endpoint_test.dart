@@ -219,12 +219,15 @@ void main() {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
       server.listen((request) {
-        request.response.statusCode = status;
-        if (location != null) {
+        final isLoginPage = request.uri.path == '/login';
+        request.response.statusCode = isLoginPage ? 200 : status;
+        if (!isLoginPage && location != null) {
           request.response.headers.set(HttpHeaders.locationHeader, location);
         }
         request.response.headers.contentType = ContentType.html;
-        request.response.write('<html>gateway</html>');
+        request.response.write(
+          isLoginPage ? '<html>please sign in</html>' : '<html>gateway</html>',
+        );
         request.response.close();
       });
       return server;
@@ -243,14 +246,14 @@ void main() {
     }
 
     test('302 到登录页 → redirectedToLogin（带 Location）', () async {
-      final server = await gateway(302, location: 'https://login.example/auth');
+      final server = await gateway(302, location: '/login');
       final error = await failureFor(
         Uri.parse('ws://127.0.0.1:${server.port}/ws?room=ABC123'),
       );
       expect(error.code, RoomErrorCode.redirectedToLogin);
       final text = error.diagnostics.toClipboardText();
       expect(text, contains('result=redirectedToLogin'));
-      expect(text, contains('http_location=https://login.example/auth'));
+      expect(text, contains('http_location=/login'));
       expect(text, contains('tcp_reached=yes'));
       expect(text, contains('error_type='));
       expect(text, isNot(contains('result=unclassified')));
@@ -308,6 +311,106 @@ void main() {
       );
       expect(text, isNot(contains('result=unclassified')));
       expect(text, contains('http_probe='));
+    });
+  });
+
+  group('重定向循环与"不得误判明文"（v0.5.5 修复）', () {
+    test('307 指向自己 → redirectLoop，且不是 plaintextOnTlsPort', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) {
+        request.response.statusCode = 307;
+        // 指向请求自身，形成循环
+        request.response.headers.set(
+          HttpHeaders.locationHeader,
+          request.uri.toString(),
+        );
+        request.response.close();
+      });
+
+      RoomOpenException? failure;
+      try {
+        await openRoomChannelResolved(
+          Uri.parse('ws://127.0.0.1:${server.port}/ws?room=1'),
+          perAddress: const Duration(seconds: 2),
+        );
+      } on RoomOpenException catch (error) {
+        failure = error;
+      }
+      expect(failure, isNotNull);
+      expect(failure!.code, RoomErrorCode.redirectLoop);
+      expect(failure.code, isNot(RoomErrorCode.plaintextOnTlsPort));
+
+      final text = failure.diagnostics.toClipboardText();
+      expect(text, contains('result=redirectLoop'));
+      expect(text, contains('http_redirect_chain='));
+      expect(text, contains('tls_ok='));
+      expect(text, contains('tls_evidence='));
+      expect(text, contains('root_error_type='));
+      // 链路必须明确指出"绕回同一地址"
+      final chainLine = text
+          .split('\n')
+          .firstWhere((line) => line.startsWith('http_redirect_chain='));
+      expect(chainLine, contains('307'));
+      expect(chainLine, contains('loop->'));
+    });
+
+    test('真机那份错误文本 → redirectLoop（不再落到明文端口）', () {
+      expect(
+        classifyWithProbe(
+          error: Exception(
+            'WebSocketChannelException: RedirectException: '
+            'Redirect loop detected',
+          ),
+          probe: const HttpProbe(
+            scheme: 'http',
+            status: 307,
+            location: 'https://heart.mawj.asia:10086/ws?room=1',
+          ),
+          attemptedTls: true,
+        ),
+        RoomErrorCode.redirectLoop,
+      );
+    });
+
+    test('TLS 已成功但升级被拒（200/400）→ 绝不判明文端口', () {
+      for (final status in [200, 400]) {
+        final code = classifyWithProbe(
+          error: Exception(
+            'WebSocketException: Connection to x was not upgraded to websocket, '
+            'HTTP status code: $status',
+          ),
+          probe: HttpProbe(scheme: 'https', status: status),
+          attemptedTls: true,
+        );
+        expect(
+          code,
+          isNot(RoomErrorCode.plaintextOnTlsPort),
+          reason: '$status',
+        );
+        expect(
+          code,
+          status == 400
+              ? RoomErrorCode.badRequest
+              : RoomErrorCode.handshakeRejected,
+        );
+      }
+    });
+
+    test('真正的明文端口仍判 plaintextOnTlsPort（能力保留）', () {
+      final code = classifyWithProbe(
+        error: const HandshakeException(
+          'Connection terminated during handshake',
+        ),
+        probe: const HttpProbe(
+          scheme: 'http',
+          status: 200,
+          errorType: 'HandshakeException',
+          errorMessage: 'Connection terminated during handshake',
+        ),
+        attemptedTls: true,
+      );
+      expect(code, RoomErrorCode.plaintextOnTlsPort);
     });
   });
 }

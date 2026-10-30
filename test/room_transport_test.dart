@@ -50,13 +50,14 @@ void main() {
         classifyRoomError(const SocketException('Connection reset by peer')),
         RoomErrorCode.tlsAborted,
       );
+      // HttpException = HTTP 层已经开始解析（TLS 成功），不属于 tlsAborted
       expect(
         classifyRoomError(
           const HttpException(
             'Connection closed before full header was received',
           ),
         ),
-        RoomErrorCode.tlsAborted,
+        RoomErrorCode.handshakeRejected,
       );
       expect(
         classifyRoomError(

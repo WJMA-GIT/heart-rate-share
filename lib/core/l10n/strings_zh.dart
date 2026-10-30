@@ -82,6 +82,10 @@ abstract final class Zh {
     RoomErrorCode.plaintextOnTlsPort =>
       '这个端口返回的是明文 HTTP，不是 TLS：请确认端口没填错，'
           '并让管理员确认反代在该端口启用了 https。',
+    RoomErrorCode.redirectLoop =>
+      '反代把请求重定向到了同一个地址，形成循环——通常是反向代理的 Target '
+          '填成了自身域名，或响应类型被配成了「重定向」。'
+          '请检查反代映射的目标地址是否为内网服务端口。',
     RoomErrorCode.redirectedToLogin =>
       '服务器把请求重定向了（HTTP 3xx），通常是反向代理要求先登录/鉴权。'
           '请让管理员确认 /ws 路径不需要网页登录，或为该路径放行。',
