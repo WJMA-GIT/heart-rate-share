@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/config/app_config.dart';
@@ -15,7 +16,14 @@ import 'ui/pages/settings_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await AppLogger.instance.initialize();
+  var appVersion = '';
+  try {
+    final info = await PackageInfo.fromPlatform();
+    appVersion = '${info.version}+${info.buildNumber}';
+  } catch (_) {
+    // 拿不到版本不该挡住启动；日志里会显示 unknown。
+  }
+  await AppLogger.instance.initialize(version: appVersion);
 
   UserProfileStore profileStore = InMemoryUserProfileStore();
   IdentityStore identityStore = InMemoryIdentityStore();
