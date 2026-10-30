@@ -132,20 +132,11 @@ abstract final class Zh {
   static const roomNumber = '房间号';
   static const roomNumberHint = '输入房间号加入';
   static const roomNumberRequired = '请输入房间号后再加入。';
-  static const roomNotJoined = '未加入房间';
   static const roomNumberTapToCopy = '点击房间号复制';
   static const copyRoomNumber = '复制房间号';
   static const roomCodeCopied = '房间号已复制';
-  static const serverAddress = '服务器地址';
-  static const serverAddressHint =
-      '域名或 IP，可带端口，例如 heart.example.com 或 192.168.1.10:8765';
-  static const copyServerAddress = '复制地址';
-  static const serverAddressCopied = '地址已复制';
-  static const serverAddressTapToCopy = '点击地址复制';
   static const joinRoom = '加入房间';
   static const leaveRoom = '退出房间';
-  static const hostRelay = '创建本地房间（开发模式）';
-  static const stopRelay = '关闭本地房间';
   static const roomMembers = '房间成员';
   static const connectFailedTitle = '连接失败';
   static const connectDiagnostics = '诊断信息（可复制给管理员）';
@@ -166,7 +157,6 @@ abstract final class Zh {
     _ => '',
   };
 
-  static const roomCodeRuleHint = '房间号：字母、数字、下划线、短横线，1–64 位';
   static const noRoomMembers = '暂无成员，等待其他设备加入';
   static const online = '在线';
   static const offline = '已离线';
