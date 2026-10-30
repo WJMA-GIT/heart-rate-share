@@ -481,3 +481,17 @@ if (cf != null) {
   僵死（无入站）时 resume 强制重连。
 
 真机无法自动化的部分见交付说明里的验证步骤与日志字段。
+
+
+---
+
+# 追加：WS 关闭原因可见化（0.5.10）
+
+真机日志只能看到 `Room connection disconnected`，看不出**谁关的**。0.5.10 起 `ws_drop` 会带上：
+
+- `closeCode=` / `closeReason=`（`WebSocketChannel.closeCode`）
+- `initiator=local|remote`（本端主动关 vs 被对端关）
+- `lastInbound=…ms ago`、`userClosed=`
+
+另外 `_send()` 失败不再静默：记 `ws_send_failed` 并触发掉线处理（旧版 sink 已死时 `add` 抛异常，
+日志上看起来就是"突然 disconnected"，没有任何原因）。

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:heartrate/ble/reconnect_policy.dart';
+import 'package:heartrate/core/logging/app_logger.dart';
 import 'package:heartrate/core/platform/foreground_lease.dart';
 import 'package:heartrate/room/relay_server.dart';
 import 'package:heartrate/room/room_address.dart';
@@ -216,5 +217,46 @@ void main() {
     ); // 超过 staleAfter
     await client.onAppResumed();
     await waitFor(() => served >= 2, reason: '僵死连接应被强制重连');
+  });
+
+  test('对端关闭时日志记下 closeCode 与 initiator=remote', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    WebSocket? peer;
+    server.listen((request) async {
+      peer = await WebSocketTransformer.upgrade(request);
+    });
+
+    final client = RoomClient(
+      displayName: 'T',
+      memberId: 'bg-test-6',
+      foreground: lease,
+      reconnectPolicy: const ReconnectPolicy(
+        maxAttempts: 1,
+        baseDelay: Duration(seconds: 30),
+        maxDelay: Duration(seconds: 30),
+      ),
+      opener: (uri, tls) => openRoomChannelResolved(uri, tls: tls),
+    );
+    addTearDown(client.dispose);
+
+    final before = AppLogger.instance.entries.length;
+    await client.connect(
+      Uri.parse('ws://127.0.0.1:${server.port}/ws?room=CLOSE'),
+    );
+    await peer!.close(4001, 'server bye');
+    await waitFor(
+      () => AppLogger.instance.entries
+          .skip(before)
+          .any((e) => e.errorCode == 'ws_drop'),
+      reason: '应记录 ws_drop',
+    );
+
+    final drop = AppLogger.instance.entries
+        .skip(before)
+        .firstWhere((e) => e.errorCode == 'ws_drop');
+    expect(drop.message, contains('closeCode=4001'));
+    expect(drop.message, contains('server bye'));
+    expect(drop.message, contains('initiator=remote'));
   });
 }
