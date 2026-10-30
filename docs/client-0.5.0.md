@@ -304,3 +304,43 @@ TLS；证书是 `*.mawj.asia` 通配、**不含根域**，用 `mawj.asia` 会直
 只要 TCP 通过就一定回探（不再只在 `handshakeRejected` 时回探），并且：
 https 回探在 TLS 层失败时，会用**明文 http** 再问同一个 host:port —— 拿到响应即可判定
 `plaintextOnTlsPort`。回探不跟随重定向，也不放宽任何证书校验。
+
+
+---
+
+# 追加：修正 plaintextOnTlsPort 误判 + 新增 redirectLoop（0.5.5）
+
+真机复现（v0.5.4）：
+
+```
+result=plaintextOnTlsPort          ← 误判
+error_message=WebSocketChannelException: RedirectException: Redirect loop detected
+http_probe=http status=307 Temporary Redirect
+http_location=https://heart.mawj.asia:10086/ws?room=1
+```
+
+能拿到 307 + Location，说明 TLS 早已握手成功；判"明文端口"是错的。
+
+## 两处修正
+
+1. **`plaintextOnTlsPort` 收窄**：只有"真实 wss 连接在 **TLS 层**失败"
+   （`HandshakeException` / `TlsException` / `WRONG_VERSION_NUMBER` / 非 TLS 数据）
+   且旁路明文探测有响应时才成立。只要收到过 HTTP 响应（`HttpException`、
+   `RedirectException`、`HTTP status code: N`），就**绝不允许**判成明文端口。
+2. **新增 `redirectLoop`**：异常文本含 `Redirect loop detected` / `RedirectException`，
+   或逐跳链路绕回同一 URL 时成立。提示直指反代 Target 填成了自身域名 / 响应类型
+   配成了"重定向"。
+
+## 诊断新增
+
+| 字段 | 说明 |
+|---|---|
+| `root_error_type` / `root_error_message` | 剥掉 `WebSocketChannelException` 外壳后的真正异常（实测：明文端口是 `HandshakeException`，重定向/TLS 成功是 `HttpException`/`RedirectException`） |
+| `tls_ok` / `tls_evidence` | TLS 是否成功的**独立判据**：证书 subject、https 回探状态，或"已解析出 HTTP 响应"；不再依赖明文旁路猜测 |
+| `http_redirect_chain` | 逐跳链路（`307 url -> loop-> url`），用于证明循环 |
+
+## 明文回探的定位（代码注释已写明）
+
+`probe.scheme == 'http'` 只表示"https 回探没成、明文探测有响应"，它是**旁路探测**，
+只能补充说明，**不得覆盖基于真实连接得到的结论**。v0.5.4 的 bug 就是把旁路结果
+当成了判定依据。

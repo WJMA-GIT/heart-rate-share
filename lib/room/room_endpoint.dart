@@ -57,6 +57,10 @@ final class RoomDiagnostics {
     this.errorMessage = '',
     this.probe,
     this.tcpReached = false,
+    this.tlsOk = false,
+    this.tlsEvidence = '',
+    this.rootErrorType = '',
+    this.rootErrorMessage = '',
   });
 
   final String scheme;
@@ -76,6 +80,16 @@ final class RoomDiagnostics {
   /// TCP 是否至少有一条连通（用来把"网络不通"和"TLS 之后失败"分开）。
   final bool tcpReached;
 
+  /// TLS 是否成功建立（独立判据，**不依赖明文旁路探测**）。
+  final bool tlsOk;
+
+  /// 判定 TLS 成功的依据，例如"收到合法 HTTP 状态行"或证书 subject。
+  final String tlsEvidence;
+
+  /// 剥掉 `WebSocketChannelException` 外壳后的真正异常类型与消息。
+  final String rootErrorType;
+  final String rootErrorMessage;
+
   /// IPv6 字面量要加方括号，否则拼出来的 URL 是错的。
   String get endpoint {
     final literal = host.contains(':') ? '[$host]' : host;
@@ -88,6 +102,8 @@ final class RoomDiagnostics {
       ..writeln('endpoint=$endpoint')
       ..writeln('result=${code.name}')
       ..writeln('tcp_reached=${tcpReached ? 'yes' : 'no'}')
+      ..writeln('tls_ok=${tlsOk ? 'yes' : 'no'}')
+      ..writeln('tls_evidence=$tlsEvidence')
       ..writeln(
         'resolved=${resolved.isEmpty ? '(none)' : resolved.join(', ')}',
       );
@@ -97,6 +113,12 @@ final class RoomDiagnostics {
     if (errorType.isNotEmpty || errorMessage.isNotEmpty) {
       buffer.writeln('error_type=${errorType.isEmpty ? '?' : errorType}');
       buffer.writeln('error_message=${flatText(errorMessage, limit: 400)}');
+    }
+    if (rootErrorType.isNotEmpty) {
+      buffer.writeln('root_error_type=$rootErrorType');
+      buffer.writeln(
+        'root_error_message=${flatText(rootErrorMessage, limit: 400)}',
+      );
     }
     final probeResult = probe;
     if (probeResult != null) {
@@ -276,7 +298,7 @@ Future<RoomOpenResult> openRoomChannelResolved(
   } on Object catch (error) {
     final tcpReached = attempts.any((attempt) => attempt.ok);
     // 只要 TCP 通过，就一定回探：升级失败后真正的拦截点几乎总是 HTTP 层
-    // （302 登录页 / 401 / 403 / 502 / 504），没有回探就只能给出「未知」。
+    // （302 登录页 / 401 / 403 / 502 / 504）。
     final probeResult = tcpReached
         ? await _probeHttp(uri, port, perAddress, triedTls: uri.scheme == 'wss')
         : null;
@@ -287,6 +309,33 @@ Future<RoomOpenResult> openRoomChannelResolved(
       probe: probeResult,
       attemptedTls: uri.scheme == 'wss',
     );
+
+    // TLS 是否成功：只看**真实连接**与 **https 回探**的事实，
+    // 明文回退探测（probe.scheme == 'http'）不参与这个判断。
+    final root = unwrapChannelError(error);
+    final rootText = '$root';
+    final httpsProbeAnswered =
+        probeResult != null &&
+        probeResult.scheme == 'https' &&
+        probeResult.status != null;
+    final httpParsed =
+        root is HttpException ||
+        rootText.contains('HTTP status code') ||
+        rootText.contains('was not upgraded') ||
+        rootText.contains('Redirect');
+    final tlsFailed = isTlsLayerError(root);
+    final tlsOk = !tlsFailed && (httpParsed || httpsProbeAnswered);
+    final tlsPrefix = uri.scheme == 'wss' ? 'tls handshake completed; ' : '';
+    final tlsEvidence = tlsOk
+        ? (httpsProbeAnswered
+              ? '${tlsPrefix}https probe answered status=${probeResult.status}'
+              : '${tlsPrefix}http response parsed; root cause '
+                    '${root.runtimeType}: ${flatText(rootText, limit: 120)}')
+        : (tlsFailed
+              ? 'tls-layer failure: ${root.runtimeType}: '
+                    '${flatText(rootText, limit: 120)}'
+              : 'no tls response observed');
+
     throw RoomOpenException(
       code,
       RoomDiagnostics(
@@ -298,8 +347,12 @@ Future<RoomOpenResult> openRoomChannelResolved(
         code: code,
         errorType: error.runtimeType.toString(),
         errorMessage: '$error',
+        rootErrorType: root.runtimeType.toString(),
+        rootErrorMessage: '$root',
         probe: probeResult,
         tcpReached: tcpReached,
+        tlsOk: tlsOk,
+        tlsEvidence: tlsEvidence,
       ),
     );
   } finally {
@@ -308,10 +361,109 @@ Future<RoomOpenResult> openRoomChannelResolved(
   }
 }
 
-/// 归类最终失败：**回探到的事实优先**，其次异常文本，最后才是兜底。
+/// 明文回退探测里保存了"真正的 https 探测为什么失败"（errorType/errorMessage）。
+/// 用它判断：是不是 TLS 层真的没成（决定能否判 `plaintextOnTlsPort`）。
+Object probeErrorOf(HttpProbe? probe) {
+  if (probe == null || probe.errorType.isEmpty) return const _NoError();
+  final text = probe.errorMessage;
+  if (probe.errorType.contains('Handshake')) {
+    return HandshakeException(text);
+  }
+  if (probe.errorType.contains('Tls')) return TlsException(text);
+  return Exception('${probe.errorType}: $text');
+}
+
+final class _NoError {
+  const _NoError();
+}
+
+/// 归类最终失败。
 ///
-/// 顺序很重要：真机上 "TCP 通、TLS/升级失败" 的绝大多数是反代返回了 3xx/401/403/
-/// 502/504，而这些在异常文本里是看不到的。
+/// 优先级（**别调回去**，两个真实 bug 都是这里踩出来的）：
+/// 1. 重定向循环 → `redirectLoop`；
+/// 2. 已经收到 HTTP 响应（`HttpException` / `RedirectException` / 非 101 响应）
+///    → TLS 一定成功，此时**绝不允许**判成"明文端口"，只能用回探状态码或
+///    `handshakeRejected`；
+/// 3. TLS 层失败（`HandshakeException` / `TlsException` / 非 TLS 数据）
+///    → 若旁路明文探测也有响应，才判 `plaintextOnTlsPort`；
+/// 4. 回探状态码（3xx / 401 / 403 / 502 / 504 …）；
+/// 5. 异常文本；
+/// 6. 兜底 `unclassified`。
+RoomErrorCode classifyWithProbe({
+  required Object error,
+  HttpProbe? probe,
+  bool attemptedTls = false,
+  bool pinMismatch = false,
+}) {
+  if (pinMismatch) return RoomErrorCode.certificatePinnedMismatch;
+  // 外层是 WebSocketChannelException，真正的原因在 inner。
+  final root = unwrapChannelError(error);
+  final outerText = '$error';
+  final rootText = '$root';
+
+  // 1. 重定向循环：异常文本或逐跳链路证明成环，独立成类。
+  final chain = probe?.chain ?? const <String>[];
+  final chainLoops =
+      chain.any((hop) => hop.startsWith('loop->')) ||
+      chain
+              .map((hop) => hop.contains(' ') ? hop.split(' ').last : hop)
+              .toSet()
+              .length <
+          chain.length;
+  if (rootText.contains('Redirect loop') ||
+      outerText.contains('Redirect loop') ||
+      rootText.contains('RedirectException') ||
+      outerText.contains('RedirectException') ||
+      chainLoops) {
+    return RoomErrorCode.redirectLoop;
+  }
+
+  // 2. HTTP 响应已到 → 说明拿到了状态行。**这时不能仅凭"明文探测也有响应"
+  //    就判明文端口**：网关对明文请求同样会回 3xx/200（v0.5.4 就是这么误判的）。
+  //
+  //    唯一例外：目标是 wss、而 **https 回探根本没完成 TLS**（probe 落到明文
+  //    回退，scheme=http）却拿到了 HTTP 状态行 —— 那这条响应只可能是明文回的。
+  if (sawHttpResponse(root) || sawHttpResponse(error)) {
+    final plaintextOnly =
+        attemptedTls &&
+        probe != null &&
+        probe.scheme == 'http' &&
+        probe.ok &&
+        isTlsLayerError(probeErrorOf(probe));
+    if (plaintextOnly) return RoomErrorCode.plaintextOnTlsPort;
+    return probe?.code ?? RoomErrorCode.handshakeRejected;
+  }
+
+  // 3. TLS 层失败：此时旁路明文探测才是有效佐证。
+  if (isTlsLayerError(root) || isTlsLayerError(error)) {
+    final plainFallback =
+        attemptedTls && probe != null && probe.scheme == 'http' && probe.ok;
+    if (plainFallback) return RoomErrorCode.plaintextOnTlsPort;
+    final base = classifyRoomError(root);
+    return base == RoomErrorCode.unclassified
+        ? RoomErrorCode.tlsHandshake
+        : base;
+  }
+
+  // 4. 回探到的状态码优先于异常文本（真机上异常里根本没有状态码）。
+  final fromProbe = probe?.code;
+  if (fromProbe != null) return fromProbe;
+
+  // 5. 异常文本
+  final base = classifyRoomError(root);
+  if (base != RoomErrorCode.unclassified) return base;
+
+  // 6. 明文端口的佐证：只在前五步都没有结论时使用。
+  //    **明文探测有响应只能说明"该端口也能说明文"**，不能反推真正的连接走的是
+  //    明文（网关对明文请求同样可能回 307/200）——所以它永远只是补充说明，
+  //    不得覆盖基于真实连接得到的结论。
+  if (attemptedTls && probe != null && probe.scheme == 'http' && probe.ok) {
+    return RoomErrorCode.plaintextOnTlsPort;
+  }
+  return RoomErrorCode.unclassified;
+}
+
+/// 归类最终失败：包装 [classifyWithProbe]，并补上"只有 IPv6 且不可达"的判断。
 RoomErrorCode _finalCode(
   Object error,
   List<RoomAttempt> attempts, {
@@ -319,16 +471,13 @@ RoomErrorCode _finalCode(
   HttpProbe? probe,
   bool attemptedTls = false,
 }) {
-  if (pinMismatch) return RoomErrorCode.certificatePinnedMismatch;
-  // wss 目标、TLS 失败，但同一端口的**明文** HTTP 有响应 → 这个端口不是 TLS。
-  if (attemptedTls && probe != null && probe.scheme == 'http' && probe.ok) {
-    return RoomErrorCode.plaintextOnTlsPort;
-  }
-  final fromProbe = probe?.code;
-  if (fromProbe != null) return fromProbe;
-
-  final base = classifyRoomError(error);
-  if (base != RoomErrorCode.unclassified) return base;
+  final code = classifyWithProbe(
+    error: error,
+    probe: probe,
+    attemptedTls: attemptedTls,
+    pinMismatch: pinMismatch,
+  );
+  if (code != RoomErrorCode.unclassified) return code;
 
   // 只有 IPv6 地址，且所有尝试都是"网络不可达/地址族不支持"→ 当前网络没有 IPv6。
   final onlyV6 =
@@ -341,7 +490,7 @@ RoomErrorCode _finalCode(
         text.contains('Cannot assign requested address');
   });
   if (onlyV6 && unreachable) return RoomErrorCode.ipv6Unreachable;
-  return base;
+  return code;
 }
 
 /// 升级失败后回探一次等价 HTTP（wss→https、ws→http），把"谁拦了"问清楚。
@@ -361,6 +510,13 @@ Future<HttpProbe> _probeHttp(
   final secure = uri.scheme == 'wss';
   final probeUri = uri.replace(scheme: secure ? 'https' : 'http');
   final first = await _probeOnce(probeUri, timeout);
+  if (first.status != null &&
+      first.status! >= 300 &&
+      first.status! < 400 &&
+      first.location.isNotEmpty) {
+    // 3xx：把逐跳链路走一遍，用来证明"跳到自身"的循环。
+    return first.withChain(await probeRedirectChain(probeUri, timeout));
+  }
   if (first.ok || !triedTls) return first;
 
   // https 回探失败：再确认一次这个端口是不是明文 HTTP。
@@ -382,6 +538,34 @@ Future<HttpProbe> _probeHttp(
     );
   }
   return first;
+}
+
+/// 手动逐跳跟随重定向（最多 [maxHops] 跳），只用于**说明**，不参与连接。
+Future<List<String>> probeRedirectChain(
+  Uri start,
+  Duration timeout, {
+  int maxHops = 5,
+}) async {
+  final hops = <String>[];
+  final visited = <String>{start.toString()};
+  var current = start;
+  for (var i = 0; i < maxHops; i++) {
+    final probe = await _probeOnce(current, timeout);
+    if (probe.status == null) {
+      hops.add('error ${probe.errorType} $current');
+      return hops;
+    }
+    hops.add('${probe.status} $current');
+    if (probe.location.isEmpty) return hops;
+    final next = current.resolve(probe.location);
+    if (!visited.add(next.toString())) {
+      hops.add('loop-> $next');
+      return hops;
+    }
+    current = next;
+  }
+  hops.add('...(超过 $maxHops 跳)');
+  return hops;
 }
 
 Future<HttpProbe> _probeOnce(Uri probe, Duration timeout) async {

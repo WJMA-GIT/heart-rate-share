@@ -53,6 +53,10 @@ enum RoomErrorCode {
   /// 升级被重定向（3xx）：反代"要求登录"最常见，Location 会指向登录页。
   redirectedToLogin,
 
+  /// 重定向到**同一个地址**，形成循环。通常是反代 Target 填成了自身域名，
+  /// 或响应类型被配成"重定向"。拿到 Location 与循环本身就是 TLS 成功的证据。
+  redirectLoop,
+
   /// 回探 HTTP 拿到 401：反代要求鉴权。
   unauthorized,
 
@@ -125,6 +129,49 @@ WebSocketChannel openRoomChannel(
   return IOWebSocketChannel.connect(uri, customClient: client);
 }
 
+/// 逐层剥开 `WebSocketChannelException` 包装，拿到真正的原因。
+///
+/// dart:io 的 WebSocket 客户端会把所有失败统一包成 `WebSocketChannelException`，
+/// 光看外层什么都分不出来。实测（真机 + 本地复现）的 inner 才是判据：
+///
+/// | 现场 | 外层 | inner |
+/// |---|---|---|
+/// | wss 打到明文端口 | `WebSocketChannelException` | `HandshakeException: Connection terminated during handshake` |
+/// | 302/307（跟随后被关） | `WebSocketChannelException` | `HttpException: Connection closed before full header…` |
+/// | 重定向成环 | `WebSocketChannelException` | `RedirectException: Redirect loop detected` |
+Object unwrapChannelError(Object error) {
+  var current = error;
+  for (var depth = 0; depth < 4; depth++) {
+    final inner = current is WebSocketChannelException ? current.inner : null;
+    if (inner == null || identical(inner, current)) break;
+    current = inner;
+  }
+  return current;
+}
+
+/// 是否**收到过 HTTP 响应**（= TLS 已经握手成功）。
+///
+/// `HttpException` 只会在 HTTP 层真正开始解析时抛出；`RedirectException` /
+/// `was not upgraded` 更是必须先有响应头。相反，单纯的 TLS 失败是
+/// `HandshakeException` / `TlsException`，绝不会是这两类。
+bool sawHttpResponse(Object error) {
+  if (error is HttpException) return true;
+  final text = '$error';
+  return text.contains('Redirect') ||
+      text.contains('was not upgraded') ||
+      text.contains('status code');
+}
+
+/// 是否是 TLS **层**的失败（此时才可能谈"这个端口不是 TLS"）。
+bool isTlsLayerError(Object error) {
+  if (error is HandshakeException || error is TlsException) return true;
+  final text = '$error';
+  return text.contains('WRONG_VERSION_NUMBER') ||
+      text.contains('first record does not look like a TLS handshake') ||
+      text.contains('SSL routines') ||
+      text.contains('no alternative certificate subject name');
+}
+
 /// 把底层异常归到 [RoomErrorCode]。纯函数，便于单测覆盖各分支。
 ///
 /// 注意顺序：证书 → 反代响应（由调用方用 HTTP 回探结果覆盖）→ 网络 →
@@ -133,6 +180,12 @@ RoomErrorCode classifyRoomError(Object error, {bool pinMismatch = false}) {
   if (pinMismatch) return RoomErrorCode.certificatePinnedMismatch;
   final text = '$error';
   final type = error.runtimeType.toString();
+
+  // 0. 重定向循环：有 RedirectException 就说明已经收到过 HTTP 响应（TLS 已成功）
+  if (text.contains('Redirect loop detected') ||
+      text.contains('RedirectException')) {
+    return RoomErrorCode.redirectLoop;
+  }
 
   // 1. 证书
   if (text.contains('Hostname mismatch') ||
@@ -174,7 +227,6 @@ RoomErrorCode classifyRoomError(Object error, {bool pinMismatch = false}) {
 
   // 3. 握手期被对端关闭/重置（TLS 层已开始，但没有正常 HandshakeException）
   if (text.contains('Connection reset by peer') ||
-      text.contains('Connection closed before full header was received') ||
       text.contains('Connection terminated during handshake') ||
       text.contains('Broken pipe') ||
       text.contains('ECONNRESET') ||
@@ -229,6 +281,7 @@ final class HttpProbe {
     this.certSubject = '',
     this.certIssuer = '',
     this.redirects = const [],
+    this.chain = const [],
     this.errorType = '',
     this.errorMessage = '',
   });
@@ -244,6 +297,9 @@ final class HttpProbe {
   final String certSubject;
   final String certIssuer;
   final List<String> redirects;
+
+  /// 逐跳记录（`307 https://a/ws -> 307 https://a/ws`），用于证明循环。
+  final List<String> chain;
   final String errorType;
   final String errorMessage;
 
@@ -266,6 +322,22 @@ final class HttpProbe {
     };
   }
 
+  HttpProbe withChain(List<String> hops) => HttpProbe(
+    scheme: scheme,
+    status: status,
+    reasonPhrase: reasonPhrase,
+    location: location,
+    contentType: contentType,
+    server: server,
+    bodyPrefix: bodyPrefix,
+    certSubject: certSubject,
+    certIssuer: certIssuer,
+    redirects: redirects,
+    chain: hops,
+    errorType: errorType,
+    errorMessage: errorMessage,
+  );
+
   List<String> describe() => [
     if (ok)
       'http_probe=$scheme status=$status ${reasonPhrase.isEmpty ? '' : reasonPhrase}'
@@ -273,6 +345,7 @@ final class HttpProbe {
       'http_probe=$scheme failed type=$errorType',
     if (location.isNotEmpty) 'http_location=$location',
     if (redirects.isNotEmpty) 'http_redirects=${redirects.join(' -> ')}',
+    if (chain.isNotEmpty) 'http_redirect_chain=${chain.join(' -> ')}',
     if (contentType.isNotEmpty) 'http_content_type=$contentType',
     if (server.isNotEmpty) 'http_server=$server',
     if (bodyPrefix.isNotEmpty) 'http_body=${flatText(bodyPrefix)}',
