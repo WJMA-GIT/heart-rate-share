@@ -130,7 +130,7 @@ jobs:
           if [ "${DRY_RUN}" = "true" ]; then
             echo "DRY_RUN=true → 只盘点，不删除。"
             { echo; echo "### 🧪 dry_run = true：未删除任何 tag"; echo; echo "要真删，重跑本工作流并把 \`dry_run\` 设为 false，\`confirm\` 填 \`DELETE-ALL-BUT-LATEST\`。"; } >> "$GITHUB_STEP_SUMMARY"
-            echo "--- 当前 tag 列表 ---"; cut -f1,2 tags.tsv
+            echo "--- 当前 tag 列表（tag \t digest \t size \t last_updated）---"; cat tags.tsv
             exit 0
           fi
           if [ "${CONFIRM}" != "DELETE-ALL-BUT-LATEST" ]; then
@@ -193,7 +193,7 @@ jobs:
             PAGE=$(curl -fsS "$URL"); echo "$PAGE" | jq -r '.results[] | [.name,(.digest // "-"),(.last_updated // "-")] | @tsv' >> after.tsv
             URL=$(echo "$PAGE" | jq -r '.next // empty')
           done
-          cut -f1,2 after.tsv
+          cat after.tsv
           {
             echo; echo "### 复核：剩余 $(wc -l < after.tsv) 个 tag（dry_run=${DRY_RUN}）"
             echo; echo "| tag | digest | 最后更新 |"; echo "|---|---|---|"
