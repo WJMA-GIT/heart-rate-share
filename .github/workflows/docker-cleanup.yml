@@ -1,0 +1,201 @@
+name: docker-cleanup
+
+# 一次性清理 Docker Hub 上 mawjgit/heart-rate-share 的多余 tag，只保留 latest。
+#
+# 安全设计：
+#   · 只有 workflow_dispatch（人工点）。**没有** schedule，也没有 push 触发。
+#   · dry_run 默认 true —— 默认行为只盘点+打印，不删任何东西。
+#   · 真删需要把 dry_run 设为 false 并输入确认短语 DELETE-ALL-BUT-LATEST。
+#   · 删除前先确认 latest 存在、且能在 registry 上拉到（200）；否则直接中止。
+#   · 凭据只用仓库 Secrets（DOCKERHUB_USERNAME / DOCKERHUB_TOKEN），全程 add-mask，不打印。
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只盘点不删除（true = 安全模式）"
+        type: boolean
+        default: true
+      confirm:
+        description: "真删时输入确认短语：DELETE-ALL-BUT-LATEST（dry_run=true 时忽略）"
+        required: false
+        default: ""
+      keep:
+        description: "除了 latest 之外还要保留的 tag（逗号分隔，留空=只留 latest）"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-cleanup
+  cancel-in-progress: false
+
+env:
+  REPO: mawjgit/heart-rate-share
+  HUB_API: https://hub.docker.com/v2/repositories
+  REGISTRY: https://registry-1.docker.io/v2
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 登录 Docker Hub
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_PASS: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DH_USER:-}" ] || [ -z "${DH_PASS:-}" ]; then
+            echo "::error::缺少 Secrets：需要 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN"
+            exit 1
+          fi
+          # 用 stdin 传密码，避免出现在进程参数里
+          BODY=$(jq -nc --arg u "$DH_USER" --arg p "$DH_PASS" '{username:$u,password:$p}')
+          TOKEN=$(printf '%s' "$BODY" | curl -fsS -X POST https://hub.docker.com/v2/users/login \
+            -H 'content-type: application/json' --data-binary @- | jq -r '.token // empty')
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Docker Hub 登录失败（凭据无效或网络不通），已中止，未删除任何东西"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "HUB_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "已登录 Docker Hub（用户：$DH_USER）"
+
+      - name: 盘点 tag（含 digest / 时间 / 大小 / 是否等于 latest）
+        run: |
+          set -euo pipefail
+          : > tags.tsv
+          URL="$HUB_API/$REPO/tags/?page_size=100&ordering=last_updated"
+          while [ -n "$URL" ] && [ "$URL" != "null" ]; do
+            PAGE=$(curl -fsS "$URL")
+            echo "$PAGE" | jq -r '.results[] | [.name, (.digest // "-"), (.full_size|tostring), (.last_updated // "-")] | @tsv' >> tags.tsv
+            URL=$(echo "$PAGE" | jq -r '.next // empty')
+          done
+          TOTAL=$(wc -l < tags.tsv)
+          LATEST_DIGEST=$(awk -F'\t' '$1=="latest"{print $2}' tags.tsv)
+          echo "tag 总数: $TOTAL"
+          if [ -z "$LATEST_DIGEST" ]; then
+            echo "::error::没有找到 latest tag —— 中止，不删除任何东西"
+            { echo "## ❌ 中止：仓库里没有 \`latest\`"; echo; echo "不执行任何删除。"; } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "LATEST_DIGEST=$LATEST_DIGEST" >> "$GITHUB_ENV"
+          echo "latest digest: $LATEST_DIGEST"
+          {
+            echo "## 盘点结果（共 ${TOTAL} 个 tag）"
+            echo
+            echo "| tag | digest | 大小(byte) | 最后更新 | 与 latest 同 digest |"
+            echo "|---|---|---|---|---|"
+            while IFS=$'\t' read -r name digest size updated; do
+              same="no"; [ "$digest" = "$LATEST_DIGEST" ] && same="**yes**"
+              echo "| \`$name\` | \`${digest:0:19}\` | $size | $updated | $same |"
+            done < tags.tsv
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 守卫 —— latest 必须在 registry 上可拉取
+        run: |
+          set -euo pipefail
+          RT=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${REPO}:pull" | jq -r '.token // empty')
+          if [ -z "$RT" ]; then
+            echo "::error::拿不到 registry token，无法验证 latest 可拉取 —— 中止"
+            echo "## ❌ 中止：无法验证 latest 可拉取" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "::add-mask::$RT"
+          ACCEPT='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' -I \
+            -H "Authorization: Bearer $RT" -H "Accept: $ACCEPT" \
+            "${REGISTRY}/${REPO}/manifests/latest" || true)
+          DIGEST=$(curl -sS -o /dev/null -D - -I \
+            -H "Authorization: Bearer $RT" -H "Accept: $ACCEPT" \
+            "${REGISTRY}/${REPO}/manifests/latest" 2>/dev/null | grep -i '^docker-content-digest:' | tr -d '\r' | awk '{print $2}' || true)
+          echo "registry GET manifests/latest → HTTP $CODE, digest=$DIGEST"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::latest 在 registry 上不可拉取（HTTP $CODE）—— 中止，不删除任何东西"
+            { echo "## ❌ 中止：latest 在 registry 上返回 HTTP $CODE"; echo; echo "没有删除任何 tag。"; } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          { echo; echo "✅ 守卫通过：\`latest\` 在 registry 上 HTTP 200，digest \`${DIGEST:-未知}\`"; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 删除（dry_run=false 时）
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          CONFIRM: ${{ inputs.confirm }}
+          KEEP_EXTRA: ${{ inputs.keep }}
+        run: |
+          set -uo pipefail
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "DRY_RUN=true → 只盘点，不删除。"
+            { echo; echo "### 🧪 dry_run = true：未删除任何 tag"; echo; echo "要真删，重跑本工作流并把 \`dry_run\` 设为 false，\`confirm\` 填 \`DELETE-ALL-BUT-LATEST\`。"; } >> "$GITHUB_STEP_SUMMARY"
+            echo "--- 当前 tag 列表 ---"; cut -f1,2 tags.tsv
+            exit 0
+          fi
+          if [ "${CONFIRM}" != "DELETE-ALL-BUT-LATEST" ]; then
+            echo "::error::确认短语不匹配（需要 DELETE-ALL-BUT-LATEST），已中止，未删除任何 tag"
+            echo "## ❌ 中止：确认短语不匹配，未删除任何 tag" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          KEEP="latest"
+          if [ -n "${KEEP_EXTRA:-}" ]; then
+            KEEP="latest $(echo "$KEEP_EXTRA" | tr ',' ' ')"
+          fi
+          echo "保留：$KEEP"
+          echo "| tag | DELETE 结果 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
+          failed=0; deleted=0; forbidden=0
+          while IFS=$'\t' read -r name _ _ _; do
+            case " $KEEP " in *" $name "*) echo "keep  $name"; continue;; esac
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: Bearer ${HUB_TOKEN}" "$HUB_API/$REPO/tags/$name/" || echo "000")
+            echo "DELETE $name → $code"
+            echo "| \`$name\` | $code |" >> "$GITHUB_STEP_SUMMARY"
+            case "$code" in
+              2*) deleted=$((deleted+1));;
+              403) forbidden=$((forbidden+1));;
+              *) failed=$((failed+1));;
+            esac
+          done < tags.tsv
+
+          {
+            echo; echo "### 结果：删除 ${deleted} 个，403 ${forbidden} 个，其它失败 ${failed} 个"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$forbidden" -gt 0 ]; then
+            {
+              echo; echo "## ⛔ 403 Forbidden：Secrets 里的 PAT 缺 **Delete** 作用域"
+              echo; echo "请换一个带 Delete 权限的 Docker Hub PAT，更新仓库 Secrets 的 \`DOCKERHUB_TOKEN\` 后重跑。"
+              echo "本工作流已停止，**不会重试**，也不会改用其它凭据。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::DELETE 返回 403：PAT 缺 Delete 作用域，请更新 Secrets 后重跑"
+            exit 1
+          fi
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::有 ${failed} 个 tag 删除失败，见 Summary"
+            exit 1
+          fi
+
+      - name: 复核 —— 删除后的 tag 列表
+        if: always()
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -uo pipefail
+          echo "--- 复核：当前 tag 列表 ---"
+          if [ -z "${HUB_TOKEN:-}" ]; then echo "(没有 token，跳过)" ; exit 0; fi
+          URL="$HUB_API/$REPO/tags/?page_size=100&ordering=last_updated"
+          : > after.tsv
+          while [ -n "$URL" ] && [ "$URL" != "null" ]; do
+            PAGE=$(curl -fsS "$URL"); echo "$PAGE" | jq -r '.results[] | [.name,(.digest // "-"),(.last_updated // "-")] | @tsv' >> after.tsv
+            URL=$(echo "$PAGE" | jq -r '.next // empty')
+          done
+          cut -f1,2 after.tsv
+          {
+            echo; echo "### 复核：剩余 $(wc -l < after.tsv) 个 tag（dry_run=${DRY_RUN}）"
+            echo; echo "| tag | digest | 最后更新 |"; echo "|---|---|---|"
+            while IFS=$'\t' read -r n d u; do echo "| \`$n\` | \`${d:0:19}\` | $u |"; done < after.tsv
+          } >> "$GITHUB_STEP_SUMMARY"
