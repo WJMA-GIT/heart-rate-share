@@ -109,7 +109,7 @@ void main() {
         port: 8765,
         resolved: [],
         attempts: [],
-        code: RoomErrorCode.unknown,
+        code: RoomErrorCode.unclassified,
       );
       expect(literal.endpoint, 'ws://[2001:db8::5]:8765');
     });
@@ -212,5 +212,102 @@ void main() {
       diagnostics.toClipboardText(),
       contains('endpoint=wss://heart.mawj.asia:10086'),
     );
+  });
+
+  group('反代拦截：TCP 通了但升级失败时，必须给出具体分类而不是 unclassified', () {
+    Future<HttpServer> gateway(int status, {String? location}) async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) {
+        request.response.statusCode = status;
+        if (location != null) {
+          request.response.headers.set(HttpHeaders.locationHeader, location);
+        }
+        request.response.headers.contentType = ContentType.html;
+        request.response.write('<html>gateway</html>');
+        request.response.close();
+      });
+      return server;
+    }
+
+    Future<RoomOpenException> failureFor(Uri uri) async {
+      try {
+        await openRoomChannelResolved(
+          uri,
+          perAddress: const Duration(seconds: 2),
+        );
+      } on RoomOpenException catch (error) {
+        return error;
+      }
+      fail('expected the upgrade to fail');
+    }
+
+    test('302 到登录页 → redirectedToLogin（带 Location）', () async {
+      final server = await gateway(302, location: 'https://login.example/auth');
+      final error = await failureFor(
+        Uri.parse('ws://127.0.0.1:${server.port}/ws?room=ABC123'),
+      );
+      expect(error.code, RoomErrorCode.redirectedToLogin);
+      final text = error.diagnostics.toClipboardText();
+      expect(text, contains('result=redirectedToLogin'));
+      expect(text, contains('http_location=https://login.example/auth'));
+      expect(text, contains('tcp_reached=yes'));
+      expect(text, contains('error_type='));
+      expect(text, isNot(contains('result=unclassified')));
+    });
+
+    test('401 反代鉴权 → unauthorized', () async {
+      final server = await gateway(401);
+      final error = await failureFor(
+        Uri.parse('ws://127.0.0.1:${server.port}/ws?room=ABC123'),
+      );
+      expect(error.code, RoomErrorCode.unauthorized);
+      expect(
+        error.diagnostics.toClipboardText(),
+        contains('http_probe=http status=401'),
+      );
+    });
+
+    test('502 反代上游不通 → badGateway', () async {
+      final server = await gateway(502);
+      final error = await failureFor(
+        Uri.parse('ws://127.0.0.1:${server.port}/ws?room=ABC123'),
+      );
+      expect(error.code, RoomErrorCode.badGateway);
+    });
+
+    test('504 反代等后端超时 → gatewayTimeout', () async {
+      final server = await gateway(504);
+      final error = await failureFor(
+        Uri.parse('ws://127.0.0.1:${server.port}/ws?room=ABC123'),
+      );
+      expect(error.code, RoomErrorCode.gatewayTimeout);
+    });
+
+    test('wss 打到明文端口 → plaintextOnTlsPort（自动明文回探）', () async {
+      // 这个端口只会说 HTTP：用 wss:// 连它，TLS 必然失败；
+      // 回探会用明文 http 再问一次，从而确认"端口不是 TLS"。
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) {
+        request.response.statusCode = 200;
+        request.response.write('plain http here');
+        request.response.close();
+      });
+      final error = await failureFor(
+        Uri.parse('wss://127.0.0.1:${server.port}/ws?room=ABC123'),
+      );
+      final text = error.diagnostics.toClipboardText();
+      expect(
+        error.code,
+        anyOf(
+          RoomErrorCode.plaintextOnTlsPort,
+          RoomErrorCode.tlsAborted,
+          RoomErrorCode.tlsHandshake,
+        ),
+      );
+      expect(text, isNot(contains('result=unclassified')));
+      expect(text, contains('http_probe='));
+    });
   });
 }

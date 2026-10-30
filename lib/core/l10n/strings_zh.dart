@@ -76,7 +76,25 @@ abstract final class Zh {
     RoomErrorCode.badRequest => '服务器返回 400：请求被拒绝，通常是房间号或参数格式不对。',
     RoomErrorCode.endpointNotFound =>
       '服务器返回 404：路径或房间号不对（路径应为 /ws，且带正确的 ?room=短码）。',
-    RoomErrorCode.unknown => '连接失败，请查看诊断日志。',
+    RoomErrorCode.tlsAborted =>
+      'TLS 握手期间连接被服务器关闭：多半是反向代理不认识这个域名（SNI）'
+          '或要求客户端证书。请让管理员核对反代的 SNI/证书配置。',
+    RoomErrorCode.plaintextOnTlsPort =>
+      '这个端口返回的是明文 HTTP，不是 TLS：请确认端口没填错，'
+          '并让管理员确认反代在该端口启用了 https。',
+    RoomErrorCode.redirectedToLogin =>
+      '服务器把请求重定向了（HTTP 3xx），通常是反向代理要求先登录/鉴权。'
+          '请让管理员确认 /ws 路径不需要网页登录，或为该路径放行。',
+    RoomErrorCode.unauthorized =>
+      '反向代理要求鉴权（HTTP 401）：TCP 通了但请求没带凭据。'
+          '请让管理员确认 /ws 是否需要登录或 token。',
+    RoomErrorCode.forbidden => '反向代理拒绝访问（HTTP 403）：多为来源/IP 限制或该路径未放行。',
+    RoomErrorCode.badGateway => '反向代理连不上后端（HTTP 502）：网关到 NAS 的上游不通，或服务没起。',
+    RoomErrorCode.gatewayTimeout => '反向代理等待后端超时（HTTP 504）：后端存在但没响应。',
+    RoomErrorCode.serviceUnavailable => '网关或后端暂时不可用（HTTP 503）。',
+    RoomErrorCode.unclassified =>
+      '连接在 TLS 或 WebSocket 升级阶段失败，且未能自动归类。'
+          '请把下面整段诊断信息复制给管理员。',
   };
 
   static const roomNumber = '房间号';
