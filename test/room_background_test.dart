@@ -259,4 +259,49 @@ void main() {
     expect(drop.message, contains('server bye'));
     expect(drop.message, contains('initiator=remote'));
   });
+
+  test('对端重启（1001/1012）时立即重连，不等退避', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    WebSocket? peer;
+    server.listen((request) async {
+      peer = await WebSocketTransformer.upgrade(request);
+    });
+    final alive = await startRelay('RESTART');
+    addTearDown(() => alive.relay.stop());
+
+    var served = 0;
+    final client = RoomClient(
+      displayName: 'T',
+      memberId: 'bg-test-7',
+      foreground: lease,
+      // 退避故意设得很长：能秒回就证明走的是"立即重连"分支
+      reconnectPolicy: const ReconnectPolicy(
+        maxAttempts: 5,
+        baseDelay: Duration(seconds: 30),
+        maxDelay: Duration(seconds: 30),
+      ),
+      opener: (uri, tls) {
+        served += 1;
+        return openRoomChannelResolved(served == 1 ? uri : alive.uri, tls: tls);
+      },
+    );
+    addTearDown(client.dispose);
+
+    await client.connect(
+      Uri.parse('ws://127.0.0.1:${server.port}/ws?room=RESTART'),
+    );
+    final watch = Stopwatch()..start();
+    await peer!.close(1001, 'going away'); // 服务端重启/下线
+    await waitFor(
+      () => served >= 2 && client.state == RoomConnectionState.connected,
+      reason: '1001 应立即重连',
+    );
+    watch.stop();
+    expect(
+      watch.elapsed,
+      lessThan(const Duration(seconds: 5)),
+      reason: '不该等 30 秒退避',
+    );
+  });
 }
