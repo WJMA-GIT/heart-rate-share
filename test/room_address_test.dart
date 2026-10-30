@@ -242,4 +242,113 @@ void main() {
       'wss://heart.mawj.asia:10086',
     );
   });
+
+  group('RoomAddress.fromParts（两段式输入）', () {
+    test('协议 + 地址 + 端口 → URI', () {
+      expect(
+        RoomAddress.fromParts(
+          scheme: 'ws',
+          host: '192.168.1.10',
+          port: '8765',
+          roomCode: 'ABC123',
+        ).toString(),
+        'ws://192.168.1.10:8765/ws?room=ABC123',
+      );
+      expect(
+        RoomAddress.fromParts(
+          scheme: 'WSS',
+          host: 'heart.example.com',
+          port: '10086',
+          roomCode: 'R1',
+        ).toString(),
+        'wss://heart.example.com:10086/ws?room=R1',
+      );
+    });
+
+    test('IPv6 字面量自动补方括号（带不带都行）', () {
+      for (final host in ['2001:db8::5', '[2001:db8::5]']) {
+        expect(
+          RoomAddress.fromParts(
+            scheme: 'ws',
+            host: host,
+            port: '8765',
+            roomCode: 'R1',
+          ).toString(),
+          'ws://[2001:db8::5]:8765/ws?room=R1',
+        );
+      }
+    });
+
+    test('非法协议被拒绝', () {
+      for (final scheme in ['http', 'ftp', '']) {
+        expect(
+          () => RoomAddress.fromParts(
+            scheme: scheme,
+            host: 'a.com',
+            port: '80',
+            roomCode: 'R1',
+          ),
+          throwsA(
+            isA<RoomAddressException>().having(
+              (e) => e.reason,
+              'reason',
+              RoomAddressError.unsupportedScheme,
+            ),
+          ),
+        );
+      }
+    });
+
+    test('非法端口被拒绝', () {
+      for (final port in ['0', '65536', '-1', 'abc', '']) {
+        expect(
+          () => RoomAddress.fromParts(
+            scheme: 'ws',
+            host: 'a.com',
+            port: port,
+            roomCode: 'R1',
+          ),
+          throwsA(
+            isA<RoomAddressException>().having(
+              (e) => e.reason,
+              'reason',
+              RoomAddressError.invalidPort,
+            ),
+          ),
+        );
+      }
+    });
+
+    test('空地址被拒绝', () {
+      expect(
+        () => RoomAddress.fromParts(
+          scheme: 'ws',
+          host: '   ',
+          port: '8765',
+          roomCode: 'R1',
+        ),
+        throwsA(
+          isA<RoomAddressException>().having(
+            (e) => e.reason,
+            'reason',
+            RoomAddressError.invalidHost,
+          ),
+        ),
+      );
+    });
+  });
+
+  group('RoomCode.generate', () {
+    test('长度 6、只用合法字符、多次不重复', () {
+      final generated = <String>{};
+      for (var i = 0; i < 200; i++) {
+        final code = RoomCode.generate();
+        expect(code, hasLength(6));
+        expect(RoomCode.isValid(code), isTrue, reason: code);
+        generated.add(code);
+      }
+      // 200 次生成至少要有多样性（不是为了测随机性，只是防止常量）
+      expect(generated.length, greaterThan(150));
+    });
+  });
 }

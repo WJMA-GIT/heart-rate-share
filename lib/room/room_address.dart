@@ -53,6 +53,32 @@ final class RoomAddress {
   static String bracket(String host) =>
       host.contains(':') && !host.startsWith('[') ? '[$host]' : host;
 
+  /// 两段式输入（scheme + 地址 + 端口）→ URI，复用 [parse] 的全部校验。
+  static Uri fromParts({
+    required String scheme,
+    required String host,
+    required String port,
+    String? roomCode,
+  }) {
+    final normalizedScheme = scheme.trim().toLowerCase();
+    if (normalizedScheme != 'ws' && normalizedScheme != 'wss') {
+      throw const RoomAddressException(RoomAddressError.unsupportedScheme);
+    }
+    final trimmedHost = host.trim().replaceAll(RegExp(r'^\[|\]$'), '');
+    if (trimmedHost.isEmpty) {
+      throw const RoomAddressException(RoomAddressError.invalidHost);
+    }
+    final portText = port.trim();
+    final parsedPort = int.tryParse(portText);
+    if (parsedPort == null || parsedPort < 1 || parsedPort > 65535) {
+      throw const RoomAddressException(RoomAddressError.invalidPort);
+    }
+    return parse(
+      '$normalizedScheme://${bracket(trimmedHost)}:$parsedPort',
+      roomCode: roomCode,
+    );
+  }
+
   static Uri parse(String input, {String? roomCode}) {
     var trimmed = input.trim();
     if (trimmed.isEmpty) {

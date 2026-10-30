@@ -495,3 +495,44 @@ if (cf != null) {
 
 另外 `_send()` 失败不再静默：记 `ws_send_failed` 并触发掉线处理（旧版 sink 已死时 `add` 抛异常，
 日志上看起来就是"突然 disconnected"，没有任何原因）。
+
+
+---
+
+# 追加：界面与流程改造（0.5.12）
+
+## 一、启动即申请权限
+
+- 平台侧：`MainActivity` 通道新增 `permissions` / `permissionState` / `appSettings`（沿用已有的 `/foreground` 通道，不引新依赖）。
+  按 SDK 分层：API 33+ 申请 `POST_NOTIFICATIONS`；API 31+ 申请 `BLUETOOTH_SCAN` + `BLUETOOTH_CONNECT`；更低版本用 `ACCESS_FINE_LOCATION` 兼容。
+- Dart 侧：`lib/core/platform/app_permissions.dart`（`request()` / `check()` / `openAppSettings()`）。
+- 引导：`lib/ui/widgets/permission_gate.dart` 在首帧后弹一次对话框，逐条说明"通知 = 后台保活可见性，蓝牙 = 心率采集"；
+  拒绝后弹降级说明 + 「去设置里开启」（`ACTION_APPLICATION_DETAILS_SETTINGS`）。
+  **只问一次**（"稍后"也算问过，`permission_prompted` 落 SharedPreferences），之后由设置页的权限卡片兜底。
+
+## 二、移除「官方服务器」
+
+- 对外文案统一改成 **云端房间 / 本地房间 / 自定义服务器**；`ConnectionMode.official` 等内部枚举不变（代码标识不影响用户）。
+- 设置页删除服务器地址卡片与"服务器地址/房间说明"两行；首页那一行改名「云端房间」。
+- 最近连接的详情弹窗**只在自定义服务器时回显地址**（那是用户自己填的）。
+- 地址的唯一用户可见出口 = 连接失败的**诊断弹窗/日志**（排障用，按要求保留）。
+- 配置层 `AppConfig.builtInOfficialServer` 与 `--dart-define=DEFAULT_SERVER` 完全保留。
+
+## 三、房间页三个动作
+
+- 主体只剩：**加入房间 / 创建云端房间 / 创建本地房间**（外加连接中的「退出房间」）。
+- 「加入房间」默认云端；`SegmentedButton` 选「自定义」后才出现 **协议(ws/wss) + 地址 + 端口** 三段输入，
+  由 `RoomAddress.fromParts()` 统一校验（非法协议/端口/空地址各有明确中文提示）。
+- 「创建云端房间」= `RoomCode.generate()` 生成 6 位短码后直接加入（服务端"加入即创建"，0.5.6 起成立）。
+- 删掉：连接方式说明、本机房间说明、明文 ws 警告、备用线路按钮、高级手动地址折叠区。
+
+## 四、房间号小卡片
+
+`lib/ui/widgets/room_code_card.dart`：卡片内是**无边框、居中、大字号**的可编辑字段（`InputDecoration.collapsed`），
+带清空与复制按钮；非法输入直接在卡片内显示红字，不弹对话框。校验仍用 `RoomCode.isValid`。
+
+## 测试
+
+`flutter test` **137 项全过**，新增 13 项：`RoomCode.generate`（长度/字符集/多样性）、
+`RoomAddress.fromParts`（协议/P 端口/空地址/IPv6 括号）、房间号卡片（非法红字、不弹窗、清空、复制禁用）、
+房间页（三个按钮、无「官方」字样、自定义服务器字段出现条件、空房间号提示、非法端口提示、创建云端房间生成合法短码）。
