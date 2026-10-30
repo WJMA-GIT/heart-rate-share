@@ -21,8 +21,15 @@ void main() {
         RoomErrorCode.certificatePinnedMismatch,
       );
       expect(
-        classifyRoomError(const HandshakeException('WRONG_VERSION_NUMBER')),
+        classifyRoomError(
+          const HandshakeException('SSLV3_ALERT_HANDSHAKE_FAILURE'),
+        ),
         RoomErrorCode.tlsHandshake,
+      );
+      // 明文端口常见的错误码：语义上属于"这个端口不是 TLS"
+      expect(
+        classifyRoomError(const HandshakeException('WRONG_VERSION_NUMBER')),
+        RoomErrorCode.plaintextOnTlsPort,
       );
     });
 
@@ -36,6 +43,57 @@ void main() {
         ),
         RoomErrorCode.certificateHostMismatch,
       );
+    });
+
+    test('握手期被对端关闭/重置单独成类（真机上最容易落到 unknown 的一类）', () {
+      expect(
+        classifyRoomError(const SocketException('Connection reset by peer')),
+        RoomErrorCode.tlsAborted,
+      );
+      expect(
+        classifyRoomError(
+          const HttpException(
+            'Connection closed before full header was received',
+          ),
+        ),
+        RoomErrorCode.tlsAborted,
+      );
+      expect(
+        classifyRoomError(
+          const HandshakeException('Connection terminated during handshake'),
+        ),
+        RoomErrorCode.tlsAborted,
+      );
+    });
+
+    test('明文响应（不是 TLS）单独成类', () {
+      expect(
+        classifyRoomError(
+          const SocketException('Illegal request: HTTP/1.1 400 Bad Request'),
+        ),
+        RoomErrorCode.plaintextOnTlsPort,
+      );
+      expect(
+        classifyRoomError(
+          const TlsException('first record does not look like a TLS handshake'),
+        ),
+        RoomErrorCode.plaintextOnTlsPort,
+      );
+    });
+
+    test('回探到的 HTTP 状态优先决定分类', () {
+      HttpProbe probe(int status) => HttpProbe(scheme: 'https', status: status);
+      expect(probe(302).code, RoomErrorCode.redirectedToLogin);
+      expect(probe(301).code, RoomErrorCode.redirectedToLogin);
+      expect(probe(401).code, RoomErrorCode.unauthorized);
+      expect(probe(403).code, RoomErrorCode.forbidden);
+      expect(probe(502).code, RoomErrorCode.badGateway);
+      expect(probe(503).code, RoomErrorCode.serviceUnavailable);
+      expect(probe(504).code, RoomErrorCode.gatewayTimeout);
+      expect(probe(400).code, RoomErrorCode.badRequest);
+      expect(probe(404).code, RoomErrorCode.endpointNotFound);
+      expect(probe(101).code, isNull);
+      expect(const HttpProbe(scheme: 'https', status: null).code, isNull);
     });
 
     test('网络类错误逐项可分辨', () {
@@ -67,7 +125,10 @@ void main() {
         ),
         RoomErrorCode.handshakeRejected,
       );
-      expect(classifyRoomError(StateError('whatever')), RoomErrorCode.unknown);
+      expect(
+        classifyRoomError(StateError('whatever')),
+        RoomErrorCode.unclassified,
+      );
     });
   });
 

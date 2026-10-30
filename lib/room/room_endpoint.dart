@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:web_socket_channel/io.dart';
@@ -14,6 +15,7 @@ final class RoomAttempt {
     required this.family,
     required this.elapsed,
     this.errorName,
+    this.errorType,
     this.errorCode,
   });
 
@@ -23,14 +25,19 @@ final class RoomAttempt {
   final String family;
   final Duration elapsed;
   final String? errorName;
+
+  /// 原始异常类型（`SocketException` / `HandshakeException` / …）。
+  final String? errorType;
   final RoomErrorCode? errorCode;
 
   bool get ok => errorName == null;
 
   String describe() => ok
       ? '$family $address ok ${elapsed.inMilliseconds}ms'
-      : '$family $address ${errorCode?.name ?? 'unknown'} '
-            '"${errorName ?? ''}" ${elapsed.inMilliseconds}ms';
+      : '$family $address ${errorCode?.name ?? 'unclassified'} '
+            'type=${errorType ?? '?'} '
+            '"${(errorName ?? '').replaceAll(RegExp(r'\s+'), ' ')}" '
+            '${elapsed.inMilliseconds}ms';
 }
 
 /// 一次连接尝试的完整现场：解析出了哪些地址、每个地址怎么失败的。
@@ -46,6 +53,10 @@ final class RoomDiagnostics {
     required this.resolved,
     required this.attempts,
     required this.code,
+    this.errorType = '',
+    this.errorMessage = '',
+    this.probe,
+    this.tcpReached = false,
   });
 
   final String scheme;
@@ -55,21 +66,43 @@ final class RoomDiagnostics {
   final List<RoomAttempt> attempts;
   final RoomErrorCode code;
 
+  /// 最终异常的原始类型与消息（不加工，方便直接贴给管理员）。
+  final String errorType;
+  final String errorMessage;
+
+  /// 升级失败后回探到的 HTTP 事实（状态码 / Location / 证书 / 明文回探）。
+  final HttpProbe? probe;
+
+  /// TCP 是否至少有一条连通（用来把"网络不通"和"TLS 之后失败"分开）。
+  final bool tcpReached;
+
   /// IPv6 字面量要加方括号，否则拼出来的 URL 是错的。
   String get endpoint {
     final literal = host.contains(':') ? '[$host]' : host;
     return '$scheme://$literal:$port';
   }
 
+  /// 可复制的诊断文本：**先给原始事实，再给分类**，避免只剩一个标签。
   String toClipboardText() {
     final buffer = StringBuffer()
       ..writeln('endpoint=$endpoint')
       ..writeln('result=${code.name}')
+      ..writeln('tcp_reached=${tcpReached ? 'yes' : 'no'}')
       ..writeln(
         'resolved=${resolved.isEmpty ? '(none)' : resolved.join(', ')}',
       );
     for (final attempt in attempts) {
       buffer.writeln('attempt=${attempt.describe()}');
+    }
+    if (errorType.isNotEmpty || errorMessage.isNotEmpty) {
+      buffer.writeln('error_type=${errorType.isEmpty ? '?' : errorType}');
+      buffer.writeln('error_message=${flatText(errorMessage, limit: 400)}');
+    }
+    final probeResult = probe;
+    if (probeResult != null) {
+      for (final line in probeResult.describe()) {
+        buffer.writeln(line);
+      }
     }
     return buffer.toString().trimRight();
   }
@@ -125,6 +158,7 @@ Future<T> connectFirstAvailable<T>({
           family: address.type.name,
           elapsed: watch.elapsed,
           errorName: '$error',
+          errorType: error.runtimeType.toString(),
           errorCode: classifyRoomError(error),
         ),
       );
@@ -236,18 +270,23 @@ Future<RoomOpenResult> openRoomChannelResolved(
         port: port,
         resolved: resolved,
         attempts: attempts,
-        code: RoomErrorCode.unknown,
+        code: RoomErrorCode.unclassified,
       ),
     );
   } on Object catch (error) {
-    var code = _finalCode(error, attempts, pinMismatch: pinMismatch);
-    // 升级失败时再回探一次 HTTP 状态码：路径/房间号拼错会拿到 400/404，
-    // 这两个原因必须能和"反向代理没配 upgrade"分开。
-    if (code == RoomErrorCode.handshakeRejected) {
-      final status = await _probeHttpStatus(uri, perAddress);
-      if (status == 400) code = RoomErrorCode.badRequest;
-      if (status == 404) code = RoomErrorCode.endpointNotFound;
-    }
+    final tcpReached = attempts.any((attempt) => attempt.ok);
+    // 只要 TCP 通过，就一定回探：升级失败后真正的拦截点几乎总是 HTTP 层
+    // （302 登录页 / 401 / 403 / 502 / 504），没有回探就只能给出「未知」。
+    final probeResult = tcpReached
+        ? await _probeHttp(uri, port, perAddress, triedTls: uri.scheme == 'wss')
+        : null;
+    final code = _finalCode(
+      error,
+      attempts,
+      pinMismatch: pinMismatch,
+      probe: probeResult,
+      attemptedTls: uri.scheme == 'wss',
+    );
     throw RoomOpenException(
       code,
       RoomDiagnostics(
@@ -257,6 +296,10 @@ Future<RoomOpenResult> openRoomChannelResolved(
         resolved: resolved,
         attempts: attempts,
         code: code,
+        errorType: error.runtimeType.toString(),
+        errorMessage: '$error',
+        probe: probeResult,
+        tcpReached: tcpReached,
       ),
     );
   } finally {
@@ -265,15 +308,28 @@ Future<RoomOpenResult> openRoomChannelResolved(
   }
 }
 
-/// 归类最终失败：先看"是不是网络根本没有 IPv6"，否则按异常文本分类。
+/// 归类最终失败：**回探到的事实优先**，其次异常文本，最后才是兜底。
+///
+/// 顺序很重要：真机上 "TCP 通、TLS/升级失败" 的绝大多数是反代返回了 3xx/401/403/
+/// 502/504，而这些在异常文本里是看不到的。
 RoomErrorCode _finalCode(
   Object error,
   List<RoomAttempt> attempts, {
   required bool pinMismatch,
+  HttpProbe? probe,
+  bool attemptedTls = false,
 }) {
   if (pinMismatch) return RoomErrorCode.certificatePinnedMismatch;
+  // wss 目标、TLS 失败，但同一端口的**明文** HTTP 有响应 → 这个端口不是 TLS。
+  if (attemptedTls && probe != null && probe.scheme == 'http' && probe.ok) {
+    return RoomErrorCode.plaintextOnTlsPort;
+  }
+  final fromProbe = probe?.code;
+  if (fromProbe != null) return fromProbe;
+
   final base = classifyRoomError(error);
-  if (base != RoomErrorCode.unknown) return base;
+  if (base != RoomErrorCode.unclassified) return base;
+
   // 只有 IPv6 地址，且所有尝试都是"网络不可达/地址族不支持"→ 当前网络没有 IPv6。
   final onlyV6 =
       attempts.isNotEmpty &&
@@ -288,20 +344,81 @@ RoomErrorCode _finalCode(
   return base;
 }
 
-/// 升级失败后回探一次普通 HTTP 状态码（4096 之类的代理错误也会走到这里）。
-/// 只用于把失败原因说清楚，不影响正常连接路径。
-Future<int?> _probeHttpStatus(Uri uri, Duration timeout) async {
-  // HttpClient 不认 ws/wss，回探要走等价的 http/https。
-  final probe = uri.replace(scheme: uri.scheme == 'wss' ? 'https' : 'http');
+/// 升级失败后回探一次等价 HTTP（wss→https、ws→http），把"谁拦了"问清楚。
+///
+/// 关键点：
+/// - `followRedirects = false`：302 必须被看见，而不是被悄悄跟随到登录页；
+/// - 抓 `certificate`：能拿到证书 subject/issuer 就说明 **TLS 握手已经成功**，
+///   这样"证书问题"和"反代/服务问题"可以分开；
+/// - wss 的 https 回探若在 TLS 层失败，再用**明文 http** 回探同一 host:port：
+///   能拿到响应就说明这个端口说的是明文 HTTP（`plaintextOnTlsPort`）。
+Future<HttpProbe> _probeHttp(
+  Uri uri,
+  int port,
+  Duration timeout, {
+  required bool triedTls,
+}) async {
+  final secure = uri.scheme == 'wss';
+  final probeUri = uri.replace(scheme: secure ? 'https' : 'http');
+  final first = await _probeOnce(probeUri, timeout);
+  if (first.ok || !triedTls) return first;
+
+  // https 回探失败：再确认一次这个端口是不是明文 HTTP。
+  final plain = await _probeOnce(uri.replace(scheme: 'http'), timeout);
+  if (plain.ok) {
+    return HttpProbe(
+      scheme: 'http',
+      status: plain.status,
+      reasonPhrase: plain.reasonPhrase,
+      location: plain.location,
+      contentType: plain.contentType,
+      server: plain.server,
+      bodyPrefix: plain.bodyPrefix,
+      redirects: plain.redirects,
+      errorType: first.errorType,
+      errorMessage:
+          'TLS probe failed (${first.errorType}: ${first.errorMessage}) '
+          'but plain HTTP on the same port answered ${plain.status}',
+    );
+  }
+  return first;
+}
+
+Future<HttpProbe> _probeOnce(Uri probe, Duration timeout) async {
   final client = HttpClient()..connectionTimeout = timeout;
   try {
     final request = await client.getUrl(probe).timeout(timeout);
+    request.followRedirects = false;
+    request.headers.set(HttpHeaders.connectionHeader, 'close');
     final response = await request.close().timeout(timeout);
-    final status = response.statusCode;
-    await response.drain<void>().timeout(timeout);
-    return status;
-  } on Object {
-    return null;
+    final body = await response
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .take(512)
+        .join()
+        .timeout(timeout);
+    final certificate = response.certificate;
+    return HttpProbe(
+      scheme: probe.scheme,
+      status: response.statusCode,
+      reasonPhrase: response.reasonPhrase,
+      location: response.headers.value(HttpHeaders.locationHeader) ?? '',
+      contentType: response.headers.contentType?.toString() ?? '',
+      server: response.headers.value(HttpHeaders.serverHeader) ?? '',
+      bodyPrefix: body,
+      certSubject: certificate?.subject ?? '',
+      certIssuer: certificate?.issuer ?? '',
+      redirects: [
+        for (final hop in response.redirects)
+          '${hop.statusCode} ${hop.location}',
+      ],
+    );
+  } on Object catch (error) {
+    return HttpProbe(
+      scheme: probe.scheme,
+      status: null,
+      errorType: error.runtimeType.toString(),
+      errorMessage: '$error',
+    );
   } finally {
     client.close(force: true);
   }

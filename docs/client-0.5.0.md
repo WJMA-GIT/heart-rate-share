@@ -261,3 +261,46 @@ TLS；证书是 `*.mawj.asia` 通配、**不含根域**，用 `mawj.asia` 会直
 `flutter build apk --release --split-per-abi --dart-define=DEFAULT_SERVER=wss://heart.mawj.asia:10086`
 
 （`SECONDARY_SERVER`、`CERT_SHA256` 未传，走默认：无备用线路 / 系统 CA 校验。）
+
+
+---
+
+# 追加：连接诊断能力（0.5.4）
+
+真机反馈：`wss://heart.mawj.asia:10086` 连不上，但诊断只给出 `result=unknown`，
+等于没告诉用户原因。本轮先修诊断本身。
+
+## 诊断字段（新增）
+
+`RoomDiagnostics.toClipboardText()` 现在按「原始事实 → 分类」输出：
+
+| 字段 | 含义 |
+|---|---|
+| `endpoint` / `result` | 端点与最终分类 |
+| `tcp_reached` | TCP 是否至少连通过一条（区分"网络不通"与"TLS 之后失败"） |
+| `resolved` / `attempt` | 解析到的地址与逐地址结果；每条带 `type=`（原始异常类型） |
+| `error_type` / `error_message` | 最终异常的**原始类型与完整 message** |
+| `http_probe` | 升级失败后回探等价 HTTP（wss→https、ws→http）的状态与原因短语 |
+| `http_location` / `http_redirects` | 3xx 的跳转目标（反代"要求登录"直接可见）；回探用 `followRedirects=false` |
+| `http_content_type` / `http_server` / `http_body` | 反代特征（nginx/1.24、`<html>login…`） |
+| `tls_cert_subject` / `tls_cert_issuer` | 回探拿到证书 = **TLS 握手已成功**，从而把证书问题和反代问题分开 |
+| `http_probe_error` | 回探本身失败时的类型与消息（含"TLS 失败但明文可用"的判定） |
+
+## 分类表（新增）
+
+| 现场 | 新分类 | 提示指向 |
+|---|---|---|
+| 升级被 3xx | `redirectedToLogin` | 反代要求登录/鉴权，`/ws` 需放行 |
+| 回探 401 / 403 | `unauthorized` / `forbidden` | 反代鉴权 / 来源限制 |
+| 回探 502 / 503 / 504 | `badGateway` / `serviceUnavailable` / `gatewayTimeout` | 反代到 NAS 的上游不通/超时 |
+| 握手期被关闭/重置（`Connection reset by peer`、`Connection closed before full header`、`Connection terminated during handshake`） | `tlsAborted` | 反代不认识该 SNI、或要求客户端证书 |
+| 端口返回明文（`WRONG_VERSION_NUMBER`、`HTTP/1.1`、`Illegal request`，或 wss 失败但明文回探有响应） | `plaintextOnTlsPort` | 端口/协议错配，反代未在该端口启用 https |
+| 以上都不匹配 | `unclassified` | 兜底，明确要求"把整段诊断发给管理员" |
+
+**`unknown` 已移除**；回探结果优先于异常文本分类，所以"TCP 通、升级失败"不再可能只剩一个标签。
+
+## 回探策略
+
+只要 TCP 通过就一定回探（不再只在 `handshakeRejected` 时回探），并且：
+https 回探在 TLS 层失败时，会用**明文 http** 再问同一个 host:port —— 拿到响应即可判定
+`plaintextOnTlsPort`。回探不跟随重定向，也不放宽任何证书校验。
