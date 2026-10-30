@@ -255,7 +255,38 @@ Future<RoomOpenResult> openRoomChannelResolved(
     );
   }
 
+  final isSecure = uri.scheme == 'wss';
   var pinMismatch = false;
+  // TCP 是否真的建起来过 —— 与"整条连接是否成功"分开记：wss 打明文端口时
+  // TCP 通、TLS 失败，这两个事实必须同时出现在诊断里。
+  var tcpEstablished = false;
+
+  /// 真正建一条到某个地址的连接。
+  ///
+  /// **这里必须自己完成 TLS**：dart:io 的 `HttpClient.connectionFactory`
+  /// 只用于"自己建 socket"，它**不会**再对返回的 socket 做 TLS（见 SDK
+  /// `_http/http_impl.dart` 中 `if (cf != null) connectionTask = cf(...)` 分支：
+  /// 只有走默认分支时才会 `SecureSocket.startConnect`）。
+  /// 所以 wss 目标必须返回 `SecureSocket`，否则上层会拿明文 socket 发 HTTP。
+  Future<Socket> connectAddress(InternetAddress address) async {
+    final raw = await Socket.connect(address, port, timeout: perAddress);
+    tcpEstablished = true;
+    if (!isSecure) return raw;
+    final secured = await SecureSocket.secure(
+      raw,
+      host: uri.host, // SNI + 证书校验都用原始域名，不用 IP
+      onBadCertificate: tls.hasPin
+          ? (certificate) {
+              if (tls.matchesCertificate(certificate.der)) return true;
+              pinMismatch = true;
+              onPinMismatch?.call();
+              return false;
+            }
+          : null, // 没钉指纹 → 交给系统 CA 严格校验
+    );
+    return secured;
+  }
+
   final client = HttpClient()
     ..connectionTimeout = perAddress
     ..idleTimeout = const Duration(seconds: 15)
@@ -273,8 +304,7 @@ Future<RoomOpenResult> openRoomChannelResolved(
             addresses: addresses,
             perAddress: perAddress,
             record: attempts.add,
-            connect: (address) =>
-                Socket.connect(address, port, timeout: perAddress),
+            connect: connectAddress,
           ),
           () {},
         ),
@@ -296,7 +326,7 @@ Future<RoomOpenResult> openRoomChannelResolved(
       ),
     );
   } on Object catch (error) {
-    final tcpReached = attempts.any((attempt) => attempt.ok);
+    final tcpReached = tcpEstablished || attempts.any((attempt) => attempt.ok);
     // 只要 TCP 通过，就一定回探：升级失败后真正的拦截点几乎总是 HTTP 层
     // （302 登录页 / 401 / 403 / 502 / 504）。
     final probeResult = tcpReached
@@ -418,27 +448,18 @@ RoomErrorCode classifyWithProbe({
     return RoomErrorCode.redirectLoop;
   }
 
-  // 2. HTTP 响应已到 → 说明拿到了状态行。**这时不能仅凭"明文探测也有响应"
-  //    就判明文端口**：网关对明文请求同样会回 3xx/200（v0.5.4 就是这么误判的）。
-  //
-  //    唯一例外：目标是 wss、而 **https 回探根本没完成 TLS**（probe 落到明文
-  //    回退，scheme=http）却拿到了 HTTP 状态行 —— 那这条响应只可能是明文回的。
+  // 2. HTTP 响应已到 → TLS 一定成功。此时**绝不允许**判"明文端口"：
+  //    能拿到状态行/跳转，说明证书握手与 HTTP 都跑通了。
   if (sawHttpResponse(root) || sawHttpResponse(error)) {
-    final plaintextOnly =
-        attemptedTls &&
-        probe != null &&
-        probe.scheme == 'http' &&
-        probe.ok &&
-        isTlsLayerError(probeErrorOf(probe));
-    if (plaintextOnly) return RoomErrorCode.plaintextOnTlsPort;
     return probe?.code ?? RoomErrorCode.handshakeRejected;
   }
 
-  // 3. TLS 层失败：此时旁路明文探测才是有效佐证。
+  // 3. **真实连接**在 TLS 层失败：此时任何 HTTP 应答都只能来自明文，
+  //    这才是"端口不是 TLS"的判据（判据来自真实连接，不是旁路探测本身）。
   if (isTlsLayerError(root) || isTlsLayerError(error)) {
-    final plainFallback =
-        attemptedTls && probe != null && probe.scheme == 'http' && probe.ok;
-    if (plainFallback) return RoomErrorCode.plaintextOnTlsPort;
+    if (attemptedTls && probe != null && probe.ok) {
+      return RoomErrorCode.plaintextOnTlsPort;
+    }
     final base = classifyRoomError(root);
     return base == RoomErrorCode.unclassified
         ? RoomErrorCode.tlsHandshake
@@ -453,13 +474,9 @@ RoomErrorCode classifyWithProbe({
   final base = classifyRoomError(root);
   if (base != RoomErrorCode.unclassified) return base;
 
-  // 6. 明文端口的佐证：只在前五步都没有结论时使用。
-  //    **明文探测有响应只能说明"该端口也能说明文"**，不能反推真正的连接走的是
-  //    明文（网关对明文请求同样可能回 307/200）——所以它永远只是补充说明，
-  //    不得覆盖基于真实连接得到的结论。
-  if (attemptedTls && probe != null && probe.scheme == 'http' && probe.ok) {
-    return RoomErrorCode.plaintextOnTlsPort;
-  }
+  // 6. 到这一步还没有结论：**不能**因为"旁路明文探测有响应"就判明文端口 ——
+  //    网关对明文请求同样可能回 307/200，那只是旁路说明，不构成判据
+  //    （v0.5.4 就是把它当成了判据）。交给兜底分类，由诊断信息说明现场。
   return RoomErrorCode.unclassified;
 }
 

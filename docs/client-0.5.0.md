@@ -360,3 +360,71 @@ http_location=https://heart.mawj.asia:10086/ws?room=1
   现在 `RoomClient.lastServerError` 会带出来，房间页直接显示中文提示 —— 房间满员不再是
   「连不上」这种无信息失败。
 - 客户端没有"房间不存在"这类提示，也不需要：加入不存在的房间会直接建成。
+
+
+---
+
+# 追加：wss 连接被降级成明文的根因修复（0.5.7）
+
+## 根因（一行代码）
+
+`lib/room/room_endpoint.dart` 里为 IPv6 逐地址回退写的 `connectionFactory`：
+
+```dart
+// 错误（0.5.1 – 0.5.6）
+..connectionFactory = (url, proxyHost, proxyPort) => Future.value(
+      ConnectionTask.fromSocket(
+        connectFirstAvailable<Socket>(..., connect: (address) =>
+            Socket.connect(address, port, timeout: perAddress)),  // ← 明文 socket
+        () {},
+      ),
+    );
+```
+
+dart:io 的约定是：**一旦提供 `connectionFactory`，HttpClient 不再替你做 TLS**。
+SDK `_http/http_impl.dart`：
+
+```dart
+if (cf != null) {
+  connectionTask = cf(uri, null, null);            // 用你给的 socket，原样
+} else {
+  connectionTask = (isSecure && proxy.isDirect
+      ? SecureSocket.startConnect(...)             // TLS 只在默认分支发生
+      : Socket.startConnect(host, port));
+}
+```
+
+于是 `wss://heart.mawj.asia:10086` 实际是把 **HTTP 明文请求**写进 10086 端口；
+反代（Go 网关）只对明文请求做 `307 https://…` 跳转，WebSocket 客户端跟着跳，
+最终 `RedirectException: Redirect loop detected`。服务端在 TLS 上永远不回 307 ——
+这正是"服务端完全正常、客户端却连不上"的原因。
+
+## 修复
+
+`connectAddress()`：先 `Socket.connect` 到选中的地址，**wss 时再用
+`SecureSocket.secure(raw, host: uri.host)` 完成 TLS**（SNI 与证书校验都用原始域名，
+不用 IP）；没有钉指纹时 `onBadCertificate: null`，交给系统 CA 严格校验。
+
+- **没有任何明文降级路径**：wss 只可能产出 `SecureSocket`；TLS 失败即失败。
+- `tcpEstablished` 与"连接成功"分开记录，所以 wss 打明文端口时诊断同时给出
+  `tcp_reached=yes` + `tls_ok=no`。
+
+## 真实 TLS 复现测试（`test/room_tls_transport_test.dart`）
+
+用自签证书（`test/fixtures/tls/`，CN=localhost，SAN 含 127.0.0.1）在本机起
+**只接受 TLS** 的 WebSocket 服务：
+
+1. `wss://127.0.0.1:<port>/ws` + 指纹钉扎 → 连上并收到 `welcome`（钉扎回调只在
+   TLS 握手时执行，证明真的做了握手）；
+2. 同一地址**不钉指纹** → 必须证书校验失败（明文 socket 不可能产生证书错误，
+   这是"确实走了 TLS"的反证）；
+3. 明文 `ws://` 打同一 TLS 端口 → 必须失败（证明该端口不接受明文）；
+4. `wss://` 打**明文** HTTP 端口 → `plaintextOnTlsPort`，且 `tls_ok=no`。
+
+## 诊断判定同步收紧
+
+- `plaintextOnTlsPort` **只**在"真实连接在 TLS 层失败 + 有过 HTTP 应答"时成立；
+  旁路明文探测拿到响应不再是判据（v0.5.4 的误判就出在这里）。
+- 已有合法 HTTP 响应（`HttpException` / `RedirectException` / `HTTP status code`）
+  时绝不判明文端口。
+- `redirectLoop` 提示明确指出："如果你本来就该走 TLS，看到这条说明连接被降级成了明文"。
