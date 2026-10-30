@@ -20,6 +20,9 @@ key.properties
 *.mobileprovision
 *.pem
 *.key
+# 例外：仅用于「wss 必须真的走 TLS」这条回归测试的自签证书（CN=localhost，
+# 本地回环测试专用，不用于任何环境）。见 test/fixtures/tls/README.md
+!test/fixtures/tls/*.pem
 .env
 .env.*
 !.env.example
