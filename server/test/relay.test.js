@@ -40,6 +40,7 @@ async function startServer(opts = {}) {
     roomLimit: opts.roomLimit ?? 20,
     offlineTimeoutMs: opts.offlineTimeoutMs ?? 5000,
     maxClients: opts.maxClients ?? 200,
+    idleTimeoutMs: opts.idleTimeoutMs ?? 60000,
     logLevel: 'error',
     clock: () => now,
   });
@@ -533,5 +534,149 @@ test('重装/清数据 = 新安装标识 = 新成员，旧成员 5 秒离线、2
 
   reinstalled.close();
   watcher.close();
+  await srv.close();
+});
+
+// ------------------------------------------------- 加入即创建 / 闲置 1 分钟回收
+
+test('首次连接自动创建房间，该客户端成为首个成员', async () => {
+  const srv = await startServer();
+  const c = connect(srv.port, 'BRAND1');
+  await c.opened;
+  hello(c, 'm-new', '张三');
+  await waitFor(() => c.of('welcome').length === 1, 2000, 'welcome');
+  report(c, 'm-new', '张三', 70, 1);
+  await waitFor(() => c.of('memberDelta').length === 1, 2000, 'delta');
+
+  const room = srv.relay.rooms.get('BRAND1');
+  assert.ok(room, '房间应被创建');
+  assert.equal(room.members.size, 1);
+  assert.equal(room.members.get('m-new').report.bpm, 70);
+  c.close();
+  await srv.close();
+});
+
+test('第二个客户端加入同一房间：不新建、共享成员表', async () => {
+  const srv = await startServer();
+  const a = connect(srv.port, 'SHARED');
+  await a.opened;
+  hello(a, 'm-a', '张三');
+  await waitFor(() => a.of('welcome').length === 1);
+  report(a, 'm-a', '张三', 70, 1);
+  await waitFor(() => a.of('memberDelta').length === 1);
+
+  const b = connect(srv.port, 'SHARED');
+  await b.opened;
+  hello(b, 'm-b', '李四');
+  await waitFor(() => b.of('welcome').length === 1);
+  report(b, 'm-b', '李四', 88, 1);
+  await waitFor(() => a.of('memberDelta').length === 2, 2000, 'b 的 delta 到 a');
+
+  const room = srv.relay.rooms.get('SHARED');
+  assert.equal(room.members.size, 2);
+  assert.equal(srv.relay.rooms.size, 1, '不应产生第二个房间对象');
+  a.close();
+  b.close();
+  await srv.close();
+});
+
+test('空置未到 1 分钟回来：沿用原房间，成员与序号都不重置', async () => {
+  const srv = await startServer({ idleTimeoutMs: 60000 });
+  const a = connect(srv.port, 'KEEP');
+  await a.opened;
+  hello(a, 'm-keep', '张三');
+  await waitFor(() => a.of('welcome').length === 1);
+  report(a, 'm-keep', '张三', 70, 5);
+  await waitFor(() => a.of('memberDelta').length === 1);
+  a.close();
+  await new Promise((r) => setTimeout(r, 50));
+
+  srv.advance(30000); // 30 秒，还没到 1 分钟
+  srv.tick();
+  assert.ok(srv.relay.rooms.get('KEEP'), '未到 1 分钟不应回收');
+  assert.equal(srv.relay.rooms.get('KEEP').members.size, 1);
+
+  const back = connect(srv.port, 'KEEP');
+  await back.opened;
+  hello(back, 'm-keep', '张三');
+  await waitFor(() => back.of('welcome').length === 1);
+  const room = srv.relay.rooms.get('KEEP');
+  assert.equal(room.members.get('m-keep').report.sequence, 5, '序号原样保留');
+  assert.equal(room.members.get('m-keep').report.bpm, 70);
+  back.close();
+  await srv.close();
+});
+
+test('空置超过 1 分钟：房间被回收，重连是新房间', async () => {
+  const srv = await startServer({ idleTimeoutMs: 60000 });
+  const a = connect(srv.port, 'GONE');
+  await a.opened;
+  hello(a, 'm-gone', '张三');
+  await waitFor(() => a.of('welcome').length === 1);
+  report(a, 'm-gone', '张三', 70, 1);
+  await waitFor(() => a.of('memberDelta').length === 1);
+  a.close();
+  await new Promise((r) => setTimeout(r, 50));
+
+  srv.advance(60000);
+  srv.tick();
+  assert.equal(srv.relay.rooms.get('GONE'), undefined, '房间应被回收');
+
+  const again = connect(srv.port, 'GONE');
+  await again.opened;
+  hello(again, 'm-gone', '张三');
+  await waitFor(() => again.of('welcome').length === 1);
+  const room = srv.relay.rooms.get('GONE');
+  assert.equal(room.members.size, 0, '新房间没有旧成员');
+  assert.equal(room.idleSince, null, '有人连上就不是空闲状态');
+  again.close();
+  await srv.close();
+});
+
+test('1 分钟回收不影响 5 秒离线判定（房间仍有人时）', async () => {
+  const srv = await startServer({ offlineTimeoutMs: 5000, idleTimeoutMs: 60000 });
+  const watcher = connect(srv.port, 'OFFLINE');
+  const member = connect(srv.port, 'OFFLINE');
+  await Promise.all([watcher.opened, member.opened]);
+  hello(watcher, 'mw', '观察者');
+  hello(member, 'mm', '张三');
+  await waitFor(() => watcher.of('welcome').length === 1 && member.of('welcome').length === 1);
+  report(member, 'mm', '张三', 70, 1);
+  await waitFor(() => watcher.of('memberDelta').length === 1);
+
+  member.close(); // 观察者还连着，房间不算无人
+  await new Promise((r) => setTimeout(r, 50));
+  srv.advance(6000);
+  srv.tick();
+
+  assert.ok(srv.relay.rooms.get('OFFLINE'), '有人连着不该回收');
+  const state = srv.relay.rooms.get('OFFLINE').members.get('mm');
+  assert.equal(state.online, false, '5 秒离线判定照常生效');
+  assert.equal(srv.relay.rooms.get('OFFLINE').members.size, 1, '2 分钟内不移除成员');
+  watcher.close();
+  await srv.close();
+});
+
+test('20 人上限仍然生效（第 21 人收到 ROOM_FULL）', async () => {
+  const srv = await startServer({ roomLimit: 3 });
+  const clients = [];
+  for (let i = 0; i < 3; i++) {
+    const c = connect(srv.port, 'LIMIT');
+    clients.push(c);
+    await c.opened;
+    hello(c, `m${i}`, `人${i}`);
+    await waitFor(() => c.of('welcome').length === 1);
+    report(c, `m${i}`, `人${i}`, 60 + i, 1);
+    await waitFor(() => c.of('memberDelta').length >= 1);
+  }
+  const extra = connect(srv.port, 'LIMIT');
+  await extra.opened;
+  hello(extra, 'm-extra', '多余的');
+  await waitFor(() => extra.of('welcome').length === 1);
+  report(extra, 'm-extra', '多余的', 90, 1);
+  await waitFor(() => extra.of('error').length >= 1, 2000, 'ROOM_FULL');
+  assert.equal(extra.last('error').code, 'ROOM_FULL');
+  for (const c of clients) c.close();
+  extra.close();
   await srv.close();
 });

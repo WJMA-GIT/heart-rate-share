@@ -18,6 +18,9 @@ const DEFAULT_OFFLINE_TIMEOUT_MS = 5000;
 const DEFAULT_MAX_CLIENTS = 200;
 // 协议固定值：2 分钟无有效上报即移除成员，不做成可配项，避免与客户端预期漂移。
 const REMOVE_TIMEOUT_MS = 120000;
+// 房间**无人**（零 WebSocket 连接）持续这么久就回收。1 分钟窗口内有人回来则
+// 沿用原房间（成员、序号一概不动）。
+const DEFAULT_IDLE_ROOM_TIMEOUT_MS = 60000;
 const SNAPSHOT_INTERVAL_MS = 1000;
 const MAX_DISPLAY_NAME = 32;
 const MAX_ROOM_CODE_LEN = 64;
@@ -64,6 +67,12 @@ class Room {
     this.members = new Map();
     /** @type {Map<string, import('ws').WebSocket>} */
     this.sockets = new Map();
+    /**
+     * 房间里**一条连接都没有**的起始时刻（毫秒）。有连接时为 null。
+     * 只有它超过 idleTimeoutMs 才会回收房间，见 RelayServer.tick()。
+     * @type {number | null}
+     */
+    this.idleSince = null;
   }
 
   get isEmpty() {
@@ -147,6 +156,7 @@ class RelayServer {
   constructor(opts = {}) {
     this.roomLimit = opts.roomLimit ?? DEFAULT_ROOM_LIMIT;
     this.offlineTimeoutMs = opts.offlineTimeoutMs ?? DEFAULT_OFFLINE_TIMEOUT_MS;
+    this.idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_ROOM_TIMEOUT_MS;
     this.maxClients = opts.maxClients ?? DEFAULT_MAX_CLIENTS;
     this.log = opts.logLevel ? createLogger(opts.logLevel) : createLogger('info');
     this.clock = opts.clock ?? (() => Date.now());
@@ -160,12 +170,21 @@ class RelayServer {
     this.httpServer = null;
   }
 
+  /**
+   * 取房间；**不存在就创建**（加入即创建）。已有房间被重新加入时只取消空闲
+   * 计时，成员表、序号、在线状态一概不动。
+   */
   room(code) {
     let room = this.rooms.get(code);
     if (!room) {
       room = new Room(code, this.roomLimit);
       this.rooms.set(code, room);
-      this.log.info('room_created', { room: code });
+      this.log.info('room_created', { room: code, reason: 'first_join' });
+      return room;
+    }
+    if (room.idleSince !== null) {
+      this.log.debug('room_reused', { room: code, idleMs: this.clock() - room.idleSince });
+      room.idleSince = null;
     }
     return room;
   }
@@ -219,9 +238,10 @@ class RelayServer {
       if (memberId && room.sockets.get(memberId) === socket) {
         room.sockets.delete(memberId);
       }
-      if (room.isEmpty) {
-        this.rooms.delete(room.code);
-        this.log.info('room_dropped', { room: room.code });
+      // 不再"空了立刻删"：先记下无连接的起始时刻，交给 tick() 按 1 分钟窗口
+      // 回收。这样短暂断线回来仍能沿用原房间（成员/序号不重置）。
+      if (room.sockets.size === 0 && room.idleSince === null) {
+        room.idleSince = this.clock();
       }
       this.log.debug('client_closed', { room: room.code, member: shortId(memberId || '') });
     };
@@ -362,6 +382,16 @@ class RelayServer {
       }
       if (room.sockets.size > 0) {
         this.broadcast(room, 'snapshot', { members: room.snapshotMembers(now) });
+        continue;
+      }
+      // 无人（零连接）超过 idleTimeoutMs → 回收房间对象与成员表。
+      if (room.idleSince !== null && now - room.idleSince >= this.idleTimeoutMs) {
+        this.rooms.delete(room.code);
+        this.log.info('room_idle_dropped', {
+          room: room.code,
+          idleMs: now - room.idleSince,
+          members: room.members.size,
+        });
       }
     }
   }
@@ -396,6 +426,7 @@ module.exports = {
   DEFAULT_OFFLINE_TIMEOUT_MS,
   DEFAULT_MAX_CLIENTS,
   REMOVE_TIMEOUT_MS,
+  DEFAULT_IDLE_ROOM_TIMEOUT_MS,
   SNAPSHOT_INTERVAL_MS,
   MAX_DISPLAY_NAME,
   MAX_ROOM_CODE_LEN,
