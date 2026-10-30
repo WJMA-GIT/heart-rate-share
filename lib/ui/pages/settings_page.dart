@@ -3,6 +3,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/l10n/strings_zh.dart';
+import '../../ble/platform/hrs_foreground.dart';
 import '../../debug/debug_panel.dart';
 import '../app_state.dart';
 
@@ -67,6 +68,24 @@ final class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// 后台保活说明 + 电池优化入口（只打开系统设置页，不静默申请权限）。
+  Widget _keepAliveTile(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: ListTile(
+        leading: const Icon(Icons.battery_saver_outlined),
+        title: const Text(Zh.keepAliveTitle),
+        subtitle: const Text(Zh.keepAliveBody),
+        isThreeLine: true,
+        trailing: TextButton(
+          onPressed: () => HrsForeground.openBatterySettings(),
+          child: const Text(Zh.openBatterySettings),
+        ),
+      ),
+    );
+  }
+
   /// 官方服务器地址只在这里露出（主界面只显示「官方服务器」）。
   Widget _serverTile(BuildContext context) {
     final pinned = widget.state.pinnedCertificate;
@@ -97,6 +116,7 @@ final class _SettingsPageState extends State<SettingsPage> {
             padding: const EdgeInsets.all(16),
             children: [
               _serverTile(context),
+              _keepAliveTile(context),
               const Divider(height: 24),
               TextField(
                 controller: _nicknameController,

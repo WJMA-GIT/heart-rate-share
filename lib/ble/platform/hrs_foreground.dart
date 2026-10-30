@@ -22,6 +22,10 @@ final class HrsForeground {
 
   static Future<bool> stop() => _invoke('stop');
 
+  /// 打开系统「电池优化」设置页（不申请、不静默修改任何权限）。
+  /// 国产 ROM 的"后台清理"不在这个页面里，需要用户自己在厂商设置里加白名单。
+  static Future<bool> openBatterySettings() => _invoke('batterySettings');
+
   static Future<bool> _invoke(String method) async {
     if (!_supported) return false;
     try {

@@ -131,6 +131,7 @@ final class _HeartRateAppState extends State<HeartRateApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     AppLogger.instance.info('app', 'lifecycle=${state.name}');
+    widget.state.onAppLifecycle(state);
   }
 
   void _changed() {

@@ -428,3 +428,56 @@ if (cf != null) {
 - 已有合法 HTTP 响应（`HttpException` / `RedirectException` / `HTTP status code`）
   时绝不判明文端口。
 - `redirectLoop` 提示明确指出："如果你本来就该走 TLS，看到这条说明连接被降级成了明文"。
+
+
+---
+
+# 追加：后台保持房间连接（0.5.9）
+
+## 分层定位
+
+| 层 | 结论 | 依据 |
+|---|---|---|
+| 进程 / 前台服务 | **根因** | `BleKeepAliveService` 只在 **BLE 已订阅**时启动（`heart_rate_service` 的 `_startForeground`），房间连接从来没有前台服务；切后台后进程进入 cached/frozen，socket 不再收发 |
+| Socket 心跳 | 已有 | `RoomClient` 每 3s 发应用层 `ping`（`AppConfig.heartbeatInterval`），能防反代/运营商空闲回收；但进程被冻结时**定时器根本不跑** |
+| 掉线回调 | 不可靠 | 冻结期间 socket 死掉通常**不会**触发 `onDone`，回到前台也没有任何事件 → 旧的"掉线才重连"永远不会执行 |
+| 自动重连 | 原先只覆盖 BLE | 房间侧此前没有重连监督器（只有 BLE 有） |
+
+结论：**断在系统层（进程被冻结），不是 WebSocket 协议层**。心跳本来就够密，缺的是"进程别被冻"。
+
+## 修复
+
+1. **前台服务改成引用计数**（`lib/core/platform/foreground_lease.dart`）
+   `acquire('ble')` / `acquire('room')`，最后一个释放才停服务。房间连接建立即持有租约，
+   掉线/主动断开即释放；BLE 断开不会把房间的保活一起关掉（有单测）。
+2. **房间侧补自动重连**（`room_client.dart`）
+   意外 `onDone`/`onError` → 按 `ReconnectPolicy`（0.5/1/1.5/2s 封顶、12 次）重连；
+   用户主动断开不重连。
+3. **回到前台立即验活**（`onAppResumed`）
+   切回前台时检查"最近一次入站消息"距今多久；超过 10s（≈ 漏 3 次心跳）就**立刻重连**，
+   不等退避。这就是"冻结恢复后快速接回"。
+4. **日志补足**（`app` / `room` 模块）
+   `lifecycle=resumed|paused`、`fg_started|fg_kept|fg_stopped`（含 holders）、
+   `ws_drop`（含 lastInbound 与 userClosed）、`ws_retry_scheduled`、`ws_reconnect_ok`、
+   `ws_resume_ok|ws_resume_reconnect`、`ws_ping`/`ws_pong`（debug 级）。
+
+## Android 侧机制与取舍
+
+- **targetSdk 36**：后台进程会被冻结（App Freezer）、Doze 会掐网络。前台服务是唯一稳定的解法。
+- **FGS 类型**：仍用 `connectedDevice`（本应用的主用途是 BLE 设备连接，`BLUETOOTH_CONNECT`
+  已声明，满足该类型的准入条件）。没有改用 `dataSync`，因为 Android 14+ 对它有明确上限
+  （Android 15 起累计 6 小时/24 小时会被强制停止），拿它跑常驻长连接属于误用，反而更不稳。
+  `specialUse` 需要 Play 上架时单独申报理由，本应用目前是侧载分发，暂不使用。
+- **代价**：连接期间常驻一条通知；前台服务本身会让耗电略增（BLE + 心跳本来就有的开销之上）。
+- **国产 ROM**：小米/华为/OPPO 的"后台清理"不在 Android 标准 Doze 里，前台服务也可能被杀。
+  设置页给了「电池优化设置」入口（只打开系统设置页，**不申请** `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`，
+  也不静默改任何权限），用户可自行加白名单。
+
+## 验证
+
+`flutter test` **122 项全过**，新增 10 项：
+- 前台租约：首个持有者启动、最后释放才停、BLE 释放不影响房间、重复申请幂等、并发只启一次、启动被拒时状态正确；
+- 房间：连接期间持有租约并在断开时释放、BLE 断开不影响、服务端掐断后自动重连、健康时不重连、
+  僵死（无入站）时 resume 强制重连。
+
+真机无法自动化的部分见交付说明里的验证步骤与日志字段。

@@ -9,7 +9,7 @@ import 'ble_models.dart';
 import 'flutter_blue_plus_source.dart';
 import 'heart_rate_sample.dart';
 import 'heart_rate_source.dart';
-import 'platform/hrs_foreground.dart';
+import '../core/platform/foreground_lease.dart';
 import 'reconnect_policy.dart';
 
 /// 采集层门面：负责平台选择、流编排，以及**断连后的自动重连监督**。
@@ -22,7 +22,9 @@ final class HeartRateService {
     HeartRateSource? source,
     AppLogger? logger,
     ReconnectPolicy? reconnectPolicy,
+    ForegroundLease? foreground,
   }) : _source = source ?? _defaultSource(),
+       _foreground = foreground ?? ForegroundLease.instance,
        _log = logger ?? AppLogger.instance,
        _policy = reconnectPolicy ?? const ReconnectPolicy() {
     _sampleSubscription = _source.samples.listen(_onSample);
@@ -32,6 +34,7 @@ final class HeartRateService {
   final HeartRateSource _source;
   final AppLogger _log;
   final ReconnectPolicy _policy;
+  final ForegroundLease _foreground;
   final _samples = StreamController<HeartRateSample>.broadcast();
   final _snapshots = StreamController<BleSnapshot>.broadcast();
   late final StreamSubscription<HeartRateSample> _sampleSubscription;
@@ -58,7 +61,7 @@ final class HeartRateService {
 
   Timer? _retryTimer;
   int _failures = 0;
-  bool _foregroundActive = false;
+
   bool _disposed = false;
 
   /// 一次扫描正在进行。扫描收尾写的 `idle` 不是掉线。
@@ -260,27 +263,10 @@ final class HeartRateService {
   }
 
   /// Android 前台服务：只在链路可用期间开着，避免息屏/后台被系统回收。
-  Future<void> _startForeground() async {
-    if (_foregroundActive) return;
-    _foregroundActive = await HrsForeground.start();
-    _log.info(
-      'ble',
-      'foreground service start=$_foregroundActive',
-      deviceId: _snapshot.connectedDeviceId,
-      code: _foregroundActive ? null : 'fg_unavailable',
-    );
-  }
+  /// BLE 只是前台服务的持有者之一（另一个是房间连接），见 ForegroundLease。
+  Future<void> _startForeground() => _foreground.acquire('ble');
 
-  Future<void> _stopForeground() async {
-    if (!_foregroundActive) return;
-    _foregroundActive = false;
-    final stopped = await HrsForeground.stop();
-    _log.info(
-      'ble',
-      'foreground service stop=$stopped',
-      code: stopped ? null : 'fg_unavailable',
-    );
-  }
+  Future<void> _stopForeground() => _foreground.release('ble');
 
   Future<void> _guard(Future<void> Function() action) async {
     try {
