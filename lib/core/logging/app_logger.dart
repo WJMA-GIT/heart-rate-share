@@ -72,7 +72,10 @@ final class AppLogger {
   String get sessionId => _sessionId;
   String? get filePath => _file?.path;
 
-  Future<void> initialize() async {
+  /// [version] 是 `versionName+versionBuild`（由 `package_info_plus` 提供）。
+  /// 之前这里只打 applicationId，导致导出日志里**看不出装的是哪一版** ——
+  /// 排查真机问题时这是第一条要确认的信息。
+  Future<void> initialize({String version = ''}) async {
     if (_initialized || kIsWeb) return;
     _initialized = true;
     final Directory root;
@@ -95,7 +98,9 @@ final class AppLogger {
     );
     info(
       'app',
-      'logger initialized version=${AppConfig.applicationId} session=$_sessionId',
+      'logger initialized app=${AppConfig.applicationId} '
+          'version=${version.isEmpty ? 'unknown' : version} '
+          'session=$_sessionId',
     );
   }
 

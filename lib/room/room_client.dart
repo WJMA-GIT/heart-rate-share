@@ -143,6 +143,17 @@ final class RoomClient {
         error,
         stack,
       );
+      // 诊断块以前只出现在弹窗里，导出日志里完全没有 —— 真机排查时等于瞎。
+      // 这里把整段事实写进会话日志（多行，可按 key grep）。
+      final diagnostics = lastDiagnostics;
+      if (diagnostics != null) {
+        _log.error(
+          'room',
+          'connect diagnostics\n${diagnostics.toClipboardText()}',
+          memberId,
+          'diagnostics',
+        );
+      }
       rethrow;
     }
   }
