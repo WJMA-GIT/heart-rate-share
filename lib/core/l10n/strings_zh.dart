@@ -31,18 +31,24 @@ abstract final class Zh {
   static const bleReconnectFailed = '多次自动重连仍未成功，请确认心率带已佩戴且电量正常后重新连接。';
 
   // ---- 连接方式 / 最近连接 ----
-  static const officialServer = '官方服务器';
-  static const officialServerConnect = '连接';
-  static const officialServerSwitch = '切换';
-  static const roomModeChoose = '选择连接方式后才能进入房间';
-  static const connectOfficialServer = '连接官方服务器';
-  static const createLocalRoom = '在本机创建房间';
-  static const localRoomHint = '本机房间只在这台手机上，其他设备需要用同一局域网地址加入';
+  static const cloudRoom = '云端房间';
+  static const localRoom = '本地房间';
+  static const createCloudRoom = '创建云端房间';
+  static const createLocalRoom = '创建本地房间';
+  static const connectRoom = '连接';
+  static const switchRoom = '切换';
+  static const targetCloud = '云端';
+  static const targetCustom = '自定义';
+  static const schemeLabel = '协议';
+  static const hostLabel = '地址';
+  static const portLabel = '端口';
+  static const customServerHint = '填写自建服务器后，点「加入房间」连接';
+  static const roomCodeInvalid = '只能使用字母、数字、下划线、短横线，1–64 位';
+  static const clearRoomCode = '清空';
+  static const roomCodeEmpty = '请先输入或创建一个房间号';
   static const recentConnections = '最近连接';
   static const recentEmpty = '还没有连接记录';
   static const forgetProfile = '删除这条记录';
-  static const manualAddressSection = '高级：手动填写地址';
-  static const serverEndpointLabel = '服务器地址';
   static const secureConnection = '加密连接（wss）';
   static const plainConnection = '明文连接（ws，仅限本机/局域网）';
   static const certPinned = '已钉住证书指纹';
@@ -103,6 +109,20 @@ abstract final class Zh {
           '请把下面整段诊断信息复制给管理员。',
   };
 
+  static const permissionTitle = '还差两个权限';
+  static const permissionNotifications =
+      '通知：连接期间显示一条常驻通知（前台服务）。'
+      '拒绝的话，切到后台后系统可能把连接冻结，心率会停止上传。';
+  static const permissionBluetooth =
+      '蓝牙：扫描并连接心率带。'
+      '拒绝的话无法采集心率，其他功能仍可查看。';
+  static const permissionGrant = '去授权';
+  static const permissionLater = '稍后';
+  static const permissionDeniedTitle = '权限不完整';
+  static const permissionDeniedNotifications = '通知权限未开：后台保活能力受影响，切后台可能断连。';
+  static const permissionDeniedBluetooth = '蓝牙权限未开：无法扫描心率带。';
+  static const openAppSettings = '去设置里开启';
+
   static const keepAliveTitle = '后台保持连接';
   static const keepAliveBody =
       '连接期间会显示一条常驻通知（前台服务），这样切到后台后心率与房间连接不会被系统冻结。'
@@ -147,15 +167,11 @@ abstract final class Zh {
   };
 
   static const roomCodeRuleHint = '房间号：字母、数字、下划线、短横线，1–64 位';
-  static const useSecondaryServer = '使用备用线路';
-  static const officialServerSecondary = '备用线路';
   static const noRoomMembers = '暂无成员，等待其他设备加入';
   static const online = '在线';
   static const offline = '已离线';
   static const sequenceLabel = '序号';
   static const guestUser = '访客';
-  static const guestNicknameHint = '当前昵称为「访客」，可到「设置」修改。';
-  static const developmentTransportWarning = '使用 ws:// 时数据为明文，公网连接请使用 wss://。';
 
   static const nicknameLabel = '我的昵称';
   static const nicknameHint = '输入 1–16 个字符，支持中文';
@@ -252,8 +268,7 @@ abstract final class Zh {
       RoomAddressError.invalidHost => '服务器地址中的域名或 IP 不正确，请检查后重试。',
       RoomAddressError.invalidPort => '端口必须是 1–65535 之间的数字，请检查后重试。',
       RoomAddressError.invalidRoomCode => '房间号只能使用字母、数字、下划线和短横线，长度 1–64。',
-      RoomAddressError.insecureScheme =>
-        '官方服务器必须使用 wss://（443 端口）。地址若没有写协议，请确认已带 wss://。',
+      RoomAddressError.insecureScheme => '该服务器要求加密连接（wss://），请把协议改成 wss。',
       null => '无法加入房间，请检查网络、房间号和服务器地址后重试。',
     };
   }

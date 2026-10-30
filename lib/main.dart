@@ -13,6 +13,7 @@ import 'ui/app_state.dart';
 import 'ui/pages/heart_rate_page.dart';
 import 'ui/pages/room_page.dart';
 import 'ui/pages/settings_page.dart';
+import 'ui/widgets/permission_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -119,6 +120,7 @@ final class HeartRateApp extends StatefulWidget {
 final class _HeartRateAppState extends State<HeartRateApp>
     with WidgetsBindingObserver {
   int _index = 0;
+  final _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -126,6 +128,10 @@ final class _HeartRateAppState extends State<HeartRateApp>
     widget.state.addListener(_changed);
     // 断连复现时要能一眼看出当时是前台、息屏还是切了后台。
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _navigatorKey.currentContext;
+      if (context != null) ensureStartupPermissions(context);
+    });
   }
 
   @override
@@ -158,6 +164,7 @@ final class _HeartRateAppState extends State<HeartRateApp>
       SettingsPage(state: widget.state),
     ];
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: AppConfig.displayName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorSchemeSeed: Colors.redAccent, useMaterial3: true),

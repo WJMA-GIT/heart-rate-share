@@ -4,6 +4,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../../core/config/app_config.dart';
 import '../../core/l10n/strings_zh.dart';
 import '../../ble/platform/hrs_foreground.dart';
+import '../../core/platform/app_permissions.dart';
 import '../../debug/debug_panel.dart';
 import '../app_state.dart';
 
@@ -86,22 +87,36 @@ final class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// 官方服务器地址只在这里露出（主界面只显示「官方服务器」）。
-  Widget _serverTile(BuildContext context) {
-    final pinned = widget.state.pinnedCertificate;
-    return Card(
-      elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: ListTile(
-        leading: const Icon(Icons.cloud_outlined),
-        title: const Text(Zh.officialServer),
-        subtitle: Text(
-          '${Zh.serverEndpointLabel}：${AppConfig.effectiveOfficialServer}\n'
-          '${AppConfig.officialServerSecure ? Zh.secureConnection : Zh.plainConnection} · '
-          '${pinned ? Zh.certPinned : Zh.certSystemCa}',
-        ),
-        isThreeLine: true,
-      ),
+  /// 权限状态 + 「去设置」入口：拒绝后唯一的补救路径，不再弹窗骚扰。
+  Widget _permissionsTile(BuildContext context) {
+    return FutureBuilder<PermissionState>(
+      future: AppPermissions.check(),
+      builder: (context, snapshot) {
+        final state = snapshot.data;
+        if (state == null || state.allGranted) {
+          return const SizedBox.shrink();
+        }
+        return Card(
+          elevation: 0,
+          color: Theme.of(context).colorScheme.errorContainer,
+          child: ListTile(
+            leading: const Icon(Icons.lock_outline),
+            title: const Text(Zh.permissionDeniedTitle),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!state.notifications)
+                  const Text(Zh.permissionDeniedNotifications),
+                if (!state.bluetooth) const Text(Zh.permissionDeniedBluetooth),
+              ],
+            ),
+            trailing: TextButton(
+              onPressed: AppPermissions.openAppSettings,
+              child: const Text(Zh.openAppSettings),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -115,7 +130,7 @@ final class _SettingsPageState extends State<SettingsPage> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              _serverTile(context),
+              _permissionsTile(context),
               _keepAliveTile(context),
               const Divider(height: 24),
               TextField(
@@ -162,10 +177,6 @@ final class _SettingsPageState extends State<SettingsPage> {
                     }
                   }
                 },
-              ),
-              const ListTile(
-                title: Text(Zh.serverAddress),
-                subtitle: Text(Zh.roomAddressHelp),
               ),
               ListTile(
                 title: const Text(Zh.aboutVersion),

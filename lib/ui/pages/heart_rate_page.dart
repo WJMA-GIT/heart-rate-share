@@ -16,7 +16,7 @@ final class HeartRatePage extends StatefulWidget {
   });
   final AppState state;
 
-  /// 「官方服务器」那一行在未连接/需要选房间时切到房间页。
+  /// 「云端房间」那一行在未连接/需要选房间时切到房间页。
   final VoidCallback onSwitchRoom;
   @override
   State<HeartRatePage> createState() => _HeartRatePageState();
@@ -79,7 +79,7 @@ final class _HeartRatePageState extends State<HeartRatePage> {
     }
   }
 
-  /// 主界面只露「官方服务器」这一行，地址本身不出现（地址在设置页）。
+  /// 主界面只露「云端房间」这一行，地址不在任何界面出现。
   Future<void> _officialAction() async {
     final state = widget.state;
     if (state.room.state == RoomConnectionState.connected) {
@@ -115,7 +115,7 @@ final class _HeartRatePageState extends State<HeartRatePage> {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
         _bpmHero(context, sample?.bpm, connected),
-        _officialServerRow(context, roomConnected),
+        _cloudRoomRow(context, roomConnected),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -225,20 +225,18 @@ final class _HeartRatePageState extends State<HeartRatePage> {
     );
   }
 
-  Widget _officialServerRow(BuildContext context, bool roomConnected) {
+  Widget _cloudRoomRow(BuildContext context, bool roomConnected) {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: ListTile(
         leading: const Icon(Icons.cloud_outlined),
-        title: const Text(Zh.officialServer),
+        title: const Text(Zh.cloudRoom),
         subtitle: Text(
           roomConnected ? Zh.roomState(RoomConnectionState.connected) : '',
         ),
         trailing: FilledButton.tonal(
           onPressed: _officialAction,
-          child: Text(
-            roomConnected ? Zh.officialServerSwitch : Zh.officialServerConnect,
-          ),
+          child: Text(roomConnected ? Zh.switchRoom : Zh.connectRoom),
         ),
       ),
     );

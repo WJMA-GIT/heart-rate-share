@@ -1,3 +1,5 @@
+import 'dart:math';
+
 /// 房间短码规则：`^[A-Za-z0-9_-]{1,64}$`。
 ///
 /// 与服务端一致（`server/src/relay.js` 的 `MAX_ROOM_CODE_LEN=64`，只接受这个
@@ -13,6 +15,16 @@ abstract final class RoomCode {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return false;
     return _pattern.hasMatch(trimmed);
+  }
+
+  /// 生成 6 位随机短码（去掉易混淆的 0/O/1/I）。
+  static String generate([Random? random]) {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    final rng = random ?? Random.secure();
+    return List.generate(
+      6,
+      (_) => alphabet[rng.nextInt(alphabet.length)],
+    ).join();
   }
 
   /// 合法则返回去空白后的值，否则 null。
