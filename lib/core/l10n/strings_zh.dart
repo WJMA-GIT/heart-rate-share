@@ -127,6 +127,17 @@ abstract final class Zh {
   static const customServer = '自定义服务器';
   static const profileDetails = '连接详情';
   static const seeDiagnostics = '诊断';
+  static const roomFull = '房间已满（上限 20 人）。请稍后再试或换一个房间号。';
+  static const serverFull = '服务器连接数已满，请稍后再试。';
+  static const badMessage = '服务器拒绝了这次请求，请确认房间号是否正确。';
+
+  static String relayError(String? code) => switch (code) {
+    'ROOM_FULL' => roomFull,
+    'SERVER_FULL' => serverFull,
+    'BAD_MESSAGE' => badMessage,
+    _ => '',
+  };
+
   static const roomCodeRuleHint = '房间号：字母、数字、下划线、短横线，1–64 位';
   static const useSecondaryServer = '使用备用线路';
   static const officialServerSecondary = '备用线路';

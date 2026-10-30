@@ -343,6 +343,16 @@ final class _RoomPageState extends State<RoomPage> {
                   padding: EdgeInsets.only(top: 4),
                   child: Text(Zh.roomModeChoose),
                 ),
+              if (Zh.relayError(state.room.lastServerError).isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    Zh.relayError(state.room.lastServerError),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 12),
               TextField(
                 controller: _roomCode,

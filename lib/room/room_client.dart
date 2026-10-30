@@ -55,6 +55,10 @@ final class RoomClient {
 
   /// 最近一次失败的可复制诊断（解析到的地址、逐地址结果、最终归类）。
   RoomDiagnostics? lastDiagnostics;
+
+  /// 服务端最近一次 `error` 消息的 code（`ROOM_FULL` / `SERVER_FULL` / `BAD_MESSAGE`）。
+  /// 过去只写日志，界面上看不到 —— 房间满员时用户会以为"连不上"。
+  String? lastServerError;
   String? _roomCode;
   String? get roomCode => _roomCode;
   final _members = StreamController<List<MemberState>>.broadcast();
@@ -88,6 +92,7 @@ final class RoomClient {
     _setState(RoomConnectionState.connecting);
     lastErrorCode = null;
     lastDiagnostics = null;
+    lastServerError = null;
     try {
       // 自己解析 + 逐地址回退：AAAA-only 的家庭 NAS 也能连，
       // 首选地址失败会立刻换下一个。
@@ -201,6 +206,7 @@ final class RoomClient {
           );
           _byId[member.report.memberId] = member;
         case RoomMessageType.error:
+          lastServerError = '${envelope.data['code']}';
           _log.warn(
             'room',
             'Relay error=${envelope.data['code']}',

@@ -344,3 +344,19 @@ http_location=https://heart.mawj.asia:10086/ws?room=1
 `probe.scheme == 'http'` 只表示"https 回探没成、明文探测有响应"，它是**旁路探测**，
 只能补充说明，**不得覆盖基于真实连接得到的结论**。v0.5.4 的 bug 就是把旁路结果
 当成了判定依据。
+
+
+---
+
+# 追加：房间加入即创建 + 服务端错误可见（0.5.6）
+
+服务端行为核实结论：**`?room=<码>` 本来就是"首次出现即创建"**（`relay.handleConnection`
+→ `this.room(code)`，不存在就 `new Room(...)`），代码里没有"房间不存在 → 拒绝"的分支。
+本轮实际改的是回收策略与错误可见性：
+
+- 服务端：房间不再"空了立刻删"，改为**零连接持续 1 分钟**才回收（`IDLE_ROOM_TIMEOUT_MS`），
+  1 分钟内回来沿用原房间；文档见 `docs/protocol.md` 的「房间生命周期」。
+- 客户端：服务端 `error` 消息（`ROOM_FULL` / `SERVER_FULL` / `BAD_MESSAGE`）过去只写日志，
+  现在 `RoomClient.lastServerError` 会带出来，房间页直接显示中文提示 —— 房间满员不再是
+  「连不上」这种无信息失败。
+- 客户端没有"房间不存在"这类提示，也不需要：加入不存在的房间会直接建成。

@@ -14,6 +14,7 @@ const {
   DEFAULT_ROOM_LIMIT,
   DEFAULT_OFFLINE_TIMEOUT_MS,
   DEFAULT_MAX_CLIENTS,
+  DEFAULT_IDLE_ROOM_TIMEOUT_MS,
   PROTOCOL_VERSION,
   MAX_ROOM_CODE_LEN,
 } = require('./relay');
@@ -37,6 +38,12 @@ const PORT = intFromEnv('PORT', 8765, { min: 0 });
 const ROOM_LIMIT = intFromEnv('ROOM_LIMIT', DEFAULT_ROOM_LIMIT, { min: 1 });
 const OFFLINE_TIMEOUT_MS = intFromEnv('OFFLINE_TIMEOUT_MS', DEFAULT_OFFLINE_TIMEOUT_MS, { min: 100 });
 const MAX_CLIENTS = intFromEnv('MAX_CLIENTS', DEFAULT_MAX_CLIENTS, { min: 1 });
+// 房间无人（零连接）多久回收；1 分钟内回来沿用原房间。
+const IDLE_ROOM_TIMEOUT_MS = intFromEnv(
+  'IDLE_ROOM_TIMEOUT_MS',
+  DEFAULT_IDLE_ROOM_TIMEOUT_MS,
+  { min: 100 },
+);
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 
 const log = createLogger(LOG_LEVEL);
@@ -44,6 +51,7 @@ const relay = new RelayServer({
   roomLimit: ROOM_LIMIT,
   offlineTimeoutMs: OFFLINE_TIMEOUT_MS,
   maxClients: MAX_CLIENTS,
+  idleTimeoutMs: IDLE_ROOM_TIMEOUT_MS,
   logLevel: LOG_LEVEL,
 });
 
@@ -73,6 +81,7 @@ const httpServer = http.createServer((req, res) => {
         roomLimit: ROOM_LIMIT,
         offlineTimeoutMs: OFFLINE_TIMEOUT_MS,
         maxClients: MAX_CLIENTS,
+        idleRoomTimeoutMs: IDLE_ROOM_TIMEOUT_MS,
       },
     });
     return;
