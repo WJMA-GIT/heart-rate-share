@@ -361,3 +361,33 @@ String flatText(String value, {int limit = 200}) {
   final flat = value.replaceAll(RegExp(r'\s+'), ' ').trim();
   return flat.length <= limit ? flat : '${flat.substring(0, limit)}…';
 }
+
+/// 协议层 ping 间隔（与 room_endpoint 建连时一致）。
+const roomPingInterval = Duration(seconds: 20);
+
+/// 掉线的"是谁关的"分类。dart:io 在 pingInterval 收不到 pong 时会自己
+/// `_close(goingAway)`，也就是 **1001、没有 reason** —— 与对端 1001 几乎一样，
+/// 只能靠"多久没收到任何数据"来区分：真对端关闭时数据通常刚还在流。
+enum RoomDropCause {
+  /// 我们对端正常/异常关闭。
+  peer,
+
+  /// 本端主动关（用户退出、切换连接）。
+  local,
+
+  /// 协议 ping 超时，dart:io 主动关掉这条假连接。
+  pingTimeout,
+}
+
+RoomDropCause classifyDrop({
+  required bool closingLocally,
+  int? closeCode,
+  required Duration sinceLastInbound,
+  Duration pingInterval = roomPingInterval,
+}) {
+  if (closingLocally) return RoomDropCause.local;
+  if (closeCode == 1001 && sinceLastInbound >= pingInterval) {
+    return RoomDropCause.pingTimeout;
+  }
+  return RoomDropCause.peer;
+}

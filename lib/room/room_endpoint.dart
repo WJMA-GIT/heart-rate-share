@@ -201,6 +201,9 @@ Future<List<InternetAddress>> resolveHost(String host) async {
   return InternetAddress.lookup(host);
 }
 
+/// 协议层 ping 间隔。只用于房间长连接；HTTP 回探是普通请求，不受影响。
+const _pingInterval = Duration(seconds: 20);
+
 /// 打开一条房间连接：**自己解析、逐地址尝试、保留原主机名做 TLS 校验**。
 ///
 /// 关键点：`HttpClient.connectionFactory` 允许我们自己建 socket，而请求 URI
@@ -312,7 +315,14 @@ Future<RoomOpenResult> openRoomChannelResolved(
     };
 
   try {
-    final channel = IOWebSocketChannel.connect(uri, customClient: client);
+    final channel = IOWebSocketChannel.connect(
+      uri,
+      customClient: client,
+      // 协议层 ping：识别"链路已经死了但没有 FIN/RST"的假连接。
+      // 与 App 层 3s ping、relay 30s pong 超时错开：20s 才发一次协议 ping，
+      // 收不到 pong 时 dart:io 会自己关连接（1001），由 RoomClient 按正常退避重连。
+      pingInterval: _pingInterval,
+    );
     await channel.ready;
     return RoomOpenResult(
       channel: channel,

@@ -536,3 +536,49 @@ if (cf != null) {
 `flutter test` **137 项全过**，新增 13 项：`RoomCode.generate`（长度/字符集/多样性）、
 `RoomAddress.fromParts`（协议/P 端口/空地址/IPv6 括号）、房间号卡片（非法红字、不弹窗、清空、复制禁用）、
 房间页（三个按钮、无「官方」字样、自定义服务器字段出现条件、空房间号提示、非法端口提示、创建云端房间生成合法短码）。
+
+
+---
+
+# 追加：协议层 ping（0.5.13）
+
+`lib/room/room_endpoint.dart` 建连处加一行：`IOWebSocketChannel.connect(..., pingInterval: 20s)`。
+
+## 为什么是 20 秒
+
+| 机制 | 间隔 | 作用 |
+|---|---|---|
+| App 层 `ping`（`RoomClient`） | 3 s | 让反代/运营商看到上行流量；服务端回 `pong` |
+| **协议层 ping（新增）** | **20 s** | 识别"没有 FIN/RST 的假连接"（链路静默死亡） |
+| relay `pong` 超时 | 30 s | 服务端主动 `terminate` 半死连接 |
+
+20 s 落在两者之间：比 App 心跳稀疏（不额外唤醒），又比 relay 的 30 s 早——真死掉的链路由我们发现，而不是等对端踢。
+
+## 副作用处理
+
+dart:io 在 `pingInterval` 内收不到 pong 会 `_close(WebSocketStatus.goingAway)`，即**1001、无 reason**，与对端 1001 几乎无法区分。因此新增纯函数 `classifyDrop()`：
+
+- `closingLocally` → `local`；
+- `closeCode == 1001 && sinceLastInbound >= 20s` → `pingTimeout`（链路已静默死的典型形态）；
+- 其余 → `peer`。
+
+`pingTimeout` 不会被记成错误（单独 `ws_ping_timeout` 的 warn），**也不会走 1001 的"立即重连"分支**（那条是给对端重启用的），而是回落正常退避（0.5→2s 封顶、12 次），因此不会形成无限快速重连。
+
+## 日志
+
+`ws_drop` 现含 `cause=peer|local|pingTimeout` + `closeCode` + `closeReason` + `initiator`。示例（真实测试输出）：
+
+```
+WARN [room] device=…g-test-2 code=ws_drop socket dropped reason=stream_closed cause=peer closeCode=1001 closeReason='going away' initiator=remote userClosed=false lastInbound=15ms ago
+```
+
+链路静默死亡时：
+
+```
+WARN [room] code=ws_ping_timeout ping timeout — local close of a dead link closeCode=1001 sinceLastInbound=20150ms pingInterval=20s
+WARN [room] code=ws_drop socket dropped reason=stream_closed cause=pingTimeout closeCode=1001 closeReason='' initiator=local userClosed=false lastInbound=20150ms ago
+```
+
+## 范围
+
+`pingInterval` 只加在房间长连接（`IOWebSocketChannel.connect`）上；HTTP 回探（`_probeOnce`）是普通 `HttpClient` 请求，不受影响。

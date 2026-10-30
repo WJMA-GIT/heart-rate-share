@@ -232,11 +232,37 @@ final class RoomClient {
     _setState(RoomConnectionState.disconnected);
     unawaited(_foreground.release('room'));
     // 关掉的原因必须写清楚：close code / reason 是判断"谁关的"的唯一证据。
-    // 1000/1001 正常关闭，4001+ 服务端自定义，1006 异常断开。
+    // 1000/1001 正常关闭，4001+ 服务端自定义，1006 异常断开（裸 FIN/RST 也是 1006）。
+    final closeCode = _channel?.closeCode;
+    final last = _lastInboundAt;
+    final sinceLastInbound = last == null
+        ? const Duration(days: 1)
+        : DateTime.now().difference(last);
+    // 只有"流正常结束"这一种才可能是 ping 超时自己关的；
+    // stream_error / send_failed 已经带有明确原因，不参与这套判断。
+    final cause = reason == 'stream_closed'
+        ? classifyDrop(
+            closingLocally: _closingLocally,
+            closeCode: closeCode,
+            sinceLastInbound: sinceLastInbound,
+          )
+        : RoomDropCause.peer;
+    if (cause == RoomDropCause.pingTimeout) {
+      // 这不是错误：链路已经静默死掉，dart:io 替我们把假连接关了。
+      // 单独一条 code，便于统计"是不是链路质量问题"，也避免被当成对端关闭。
+      _log.warn(
+        'room',
+        'ping timeout — local close of a dead link '
+            'closeCode=$closeCode sinceLastInbound=${sinceLastInbound.inMilliseconds}ms '
+            'pingInterval=${roomPingInterval.inSeconds}s',
+        deviceId: memberId,
+        code: 'ws_ping_timeout',
+      );
+    }
     _log.warn(
       'room',
-      'socket dropped reason=$reason '
-          'closeCode=${_channel?.closeCode ?? 'none'} '
+      'socket dropped reason=$reason cause=${cause.name} '
+          'closeCode=${closeCode ?? 'none'} '
           "closeReason='${_channel?.closeReason ?? ''}' "
           'initiator=${_closingLocally ? 'local' : 'remote'} '
           'userClosed=$_userClosed lastInbound=${_lastInboundDescription()}',
@@ -244,7 +270,12 @@ final class RoomClient {
       code: 'ws_drop',
     );
     if (_userClosed) return;
-    _scheduleRetry(reason, closeCode: _channel?.closeCode);
+    // ping 超时是"我们关的"，不能走 1001 的"对端重启立即重连"分支；
+    // 按正常退避重连（0.5→2s 封顶、12 次）。
+    _scheduleRetry(
+      reason,
+      closeCode: cause == RoomDropCause.pingTimeout ? null : closeCode,
+    );
   }
 
   void _scheduleRetry(String reason, {int? closeCode}) {
