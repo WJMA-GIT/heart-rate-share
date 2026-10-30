@@ -108,6 +108,10 @@ final class RoomClient {
   /// 关闭是否由本端发起（区分"用户/我们主动关"与"被对端关掉"）。
   bool _closingLocally = false;
 
+  /// 对端重启类的"立即重连"连续次数（成功后清零）。
+  int _immediateRetries = 0;
+  static const _maxImmediateRetries = 3;
+
   /// 缺省（未注入计数器）时退化为进程内自增，仅用于测试。
   int _localSequence = 0;
   RoomConnectionState _state = RoomConnectionState.disconnected;
@@ -178,6 +182,7 @@ final class RoomClient {
         (_) => _sendPing(),
       );
       _retryAttempt = 0;
+      _immediateRetries = 0;
       // 房间连接期间保持前台服务：没有它，切后台后进程被冻结，
       // socket 不再收发（这就是"退后台就断"的根因）。
       await _foreground.acquire('room');
@@ -239,12 +244,39 @@ final class RoomClient {
       code: 'ws_drop',
     );
     if (_userClosed) return;
-    _scheduleRetry(reason);
+    _scheduleRetry(reason, closeCode: _channel?.closeCode);
   }
 
-  void _scheduleRetry(String reason) {
+  void _scheduleRetry(String reason, {int? closeCode}) {
     if (_userClosed || _targetUri == null || _retryTimer != null) return;
-    final delay = _retryPolicy.delayFor(_retryAttempt);
+
+    // 对端"要重启/正在走开"（1001 going away、1012 service restart）不是网络故障：
+    // 立刻重连一次，别让用户干等退避。成功一次就把计数清零；连续失败超过
+    // [_maxImmediateRetries] 次后回落到正常退避，避免对端反复重启时打爆它。
+    if ((closeCode == 1001 || closeCode == 1012) &&
+        _immediateRetries < _maxImmediateRetries) {
+      _immediateRetries += 1;
+      _log.warn(
+        'room',
+        'peer restarting closeCode=$closeCode — reconnecting immediately '
+            '($_immediateRetries/$_maxImmediateRetries)',
+        deviceId: memberId,
+        code: 'ws_retry_immediate',
+      );
+      _retryTimer = Timer(Duration.zero, () {
+        _retryTimer = null;
+        unawaited(_attemptReconnect('peer_restart'));
+      });
+      return;
+    }
+
+    var delay = _retryPolicy.delayFor(_retryAttempt);
+    // 1013 = 服务端/房间已满：立刻重连只会更糟，至少等 2 秒。
+    if (delay != null &&
+        closeCode == 1013 &&
+        delay < const Duration(seconds: 2)) {
+      delay = const Duration(seconds: 2);
+    }
     if (delay == null) {
       _log.warn(
         'room',
