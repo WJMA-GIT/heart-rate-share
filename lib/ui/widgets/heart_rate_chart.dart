@@ -190,8 +190,9 @@ HeartRateRange dynamicRangeFor(
   );
   if (previous == null) return target;
   if (target.span > previous.span) return target; // 变宽：立刻扩，绝不裁切
-  if (target.span < previous.span * (1 - HeartRateRange.shrinkHysteresis))
+  if (target.span < previous.span * (1 - HeartRateRange.shrinkHysteresis)) {
     return target;
+  }
   return previous; // 变化不明显：保持，避免上下跳
 }
 

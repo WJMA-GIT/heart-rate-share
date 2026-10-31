@@ -1,4 +1,5 @@
 import 'dart:ffi';
+import 'dart:io' show exit;
 import 'dart:io' show Platform;
 
 /// 无边框窗口的拖动：直接调 Win32（`ReleaseCapture()` + `SendMessage(WM_NCLBUTTONDOWN,
@@ -58,3 +59,12 @@ void _postCommand(int command) {
 
 void minimizeWindow() => _postCommand(0xF020); // SC_MINIMIZE
 void closeWindow() => _postCommand(0xF060); // SC_CLOSE
+
+/// 真退出（结束进程），不是最小化。
+void quitApp() {
+  try {
+    exit(0);
+  } catch (_) {
+    closeWindow();
+  }
+}

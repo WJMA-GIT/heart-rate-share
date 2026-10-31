@@ -1,12 +1,17 @@
 import 'dart:io' show Platform;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/l10n/strings_zh.dart';
 import '../../core/platform/startup_log.dart';
 import '../../theme/app_theme.dart';
 import '../../room/protocol.dart';
 import '../widgets/heart_rate_chart.dart';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'win_controller.dart';
 import 'win_drag.dart';
 
@@ -31,6 +36,29 @@ final class _WinAppState extends State<WinApp> {
   bool _autoConnectTried = false;
   bool _safeMode = false;
   _Section _section = _Section.connect;
+  double _scale = 1.0;
+
+  /// 缩放持久化键（0.8–1.6，步进 0.1）。
+  static const _scaleKey = 'win.scale';
+
+  Future<void> _loadScale() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final value = prefs.getDouble(_scaleKey);
+      if (value != null && mounted) {
+        setState(() => _scale = value.clamp(0.8, 1.6));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _bumpScale(double delta) async {
+    final next = (_scale + delta).clamp(0.8, 1.6);
+    setState(() => _scale = double.parse(next.toStringAsFixed(1)));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_scaleKey, _scale);
+    } catch (_) {}
+  }
 
   WinController get _controller => _controllerOrNull!;
 
@@ -44,6 +72,7 @@ final class _WinAppState extends State<WinApp> {
       _owns = widget.controller == null;
       _controllerOrNull = controller;
       controller.addListener(_onChange);
+      _loadScale();
       if (!_safeMode) controller.startDiscovery();
       StartupLog.info('win: ready');
     } catch (error, stack) {
@@ -78,11 +107,28 @@ final class _WinAppState extends State<WinApp> {
 
   @override
   Widget build(BuildContext context) {
+    final connected =
+        _fatal == null && _controllerOrNull != null && _controller.connected;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: WinTheme.data(),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context)
+            .copyWith(textScaler: TextScaler.linear(_scale)),
+        child: child ?? const SizedBox.shrink(),
+      ),
       home: _fatal != null
           ? _FatalView(error: '$_fatal')
+          // 连上就只留心率行（游戏内挂机不能有干扰）；断开自动回完整界面。
+          : connected
+          ? _CompactView(
+              controller: _controller,
+              scale: _scale,
+              onDisconnect: () async {
+                await _controller.disconnectAll();
+                if (mounted) setState(() {});
+              },
+            )
           : Scaffold(
               backgroundColor: WinColors.bg,
               body: Column(
@@ -90,6 +136,9 @@ final class _WinAppState extends State<WinApp> {
                   _TopBar(
                     controller: _controller,
                     safeMode: _safeMode,
+                    scale: _scale,
+                    onZoomIn: () => _bumpScale(0.1),
+                    onZoomOut: () => _bumpScale(-0.1),
                     onToggleSection: (section) =>
                         setState(() => _section = section),
                     section: _section,
@@ -191,12 +240,18 @@ final class _TopBar extends StatelessWidget {
     required this.safeMode,
     required this.section,
     required this.onToggleSection,
+    required this.scale,
+    required this.onZoomIn,
+    required this.onZoomOut,
   });
 
   final WinController controller;
   final bool safeMode;
   final _Section section;
   final ValueChanged<_Section> onToggleSection;
+  final double scale;
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
 
   @override
   Widget build(BuildContext context) {
@@ -249,17 +304,41 @@ final class _TopBar extends StatelessWidget {
               onPressed: () => onToggleSection(_Section.settings),
               icon: const Icon(Icons.tune, color: WinColors.textDim),
             ),
-            IconButton(
-              tooltip: controller.backgroundTransparent
-                  ? '当前：背景透明（点一下变深色底）'
-                  : '当前：深色底（点一下变透明）',
-              iconSize: 16,
-              onPressed: controller.toggleBackground,
-              icon: Icon(
-                controller.backgroundTransparent
-                    ? Icons.opacity
-                    : Icons.brightness_2_outlined,
-                color: WinColors.textDim,
+            // 缩放：0.8–1.6 步进 0.1，持久化；Ctrl+滚轮也能调。
+            Listener(
+              onPointerSignal: (event) {
+                if (event is PointerScrollEvent &&
+                    HardwareKeyboard.instance.isControlPressed) {
+                  if (event.scrollDelta.dy < 0) {
+                    onZoomIn();
+                  } else {
+                    onZoomOut();
+                  }
+                }
+              },
+              child: Row(
+                children: [
+                  _WinButton(
+                    icon: Icons.remove,
+                    tooltip: '缩小界面（Ctrl+滚轮）',
+                    onTap: onZoomOut,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      '${(scale * 100).round()}%',
+                      style: winText(
+                        AppTextSize.caption,
+                        color: WinColors.textDim,
+                      ),
+                    ),
+                  ),
+                  _WinButton(
+                    icon: Icons.add,
+                    tooltip: '放大界面（Ctrl+滚轮）',
+                    onTap: onZoomIn,
+                  ),
+                ],
               ),
             ),
             const SizedBox(width: 4),
@@ -420,6 +499,136 @@ final class _NavRail extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 连接成功后的全透明精简态：只有「名称 | 心率大字 | 迷你折线 | 断开」。
+/// 背景用颜色键色（原生 LWA_COLORKEY 抠掉），内容不透明；整块可拖动。
+final class _CompactView extends StatelessWidget {
+  const _CompactView({
+    required this.controller,
+    required this.scale,
+    required this.onDisconnect,
+  });
+
+  final WinController controller;
+  final double scale;
+  final Future<void> Function() onDisconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    if (controller.transport == WinTransport.ble) {
+      rows.add(
+        _CompactRow(
+          name: '蓝牙心率带',
+          bpm: controller.ownBpm,
+          series: controller.ownSeries,
+          scale: scale,
+          online: true,
+        ),
+      );
+    }
+    for (final member in controller.members) {
+      rows.add(
+        _CompactRow(
+          name: member.report.displayName,
+          bpm: member.online ? member.report.bpm : null,
+          series: controller.seriesFor(member.report.memberId),
+          scale: scale,
+          online: member.online,
+        ),
+      );
+    }
+    if (rows.length > 8) rows.removeRange(8, rows.length); // 8 人上限，不无限长高
+    return GestureDetector(
+      onPanStart: (_) => startWindowDrag(),
+      behavior: HitTestBehavior.translucent,
+      child: ColoredBox(
+        // 与原生颜色键一致：这一色被抠成全透明，内容照常不透明。
+        color: const Color(0xFF010203),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: 8 * scale,
+            vertical: 6 * scale,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final row in rows) row,
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: OutlinedButton.icon(
+                  onPressed: onDisconnect,
+                  icon: const Icon(Icons.link_off, size: 12),
+                  label: Text('断开', style: winText(AppTextSize.caption)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 三列固定宽：名称 96×scale / 心率 48×scale 右对齐 / 折线 72×scale。名字再长也不挤动数值。
+final class _CompactRow extends StatelessWidget {
+  const _CompactRow({
+    required this.name,
+    required this.bpm,
+    required this.series,
+    required this.scale,
+    required this.online,
+  });
+
+  final String name;
+  final int? bpm;
+  final HeartRateSeries series;
+  final double scale;
+  final bool online;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 22 * scale,
+    child: Row(
+      children: [
+        SizedBox(
+          width: 96 * scale,
+          child: Tooltip(
+            message: name,
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: winText(
+                AppTextSize.caption,
+                color: online ? Colors.white : WinColors.textDim,
+              ),
+            ),
+          ),
+        ),
+        SizedBox(
+          width: 48 * scale,
+          child: Text(
+            online ? (bpm?.toString() ?? '--') : '--',
+            textAlign: TextAlign.right,
+            style: winText(
+              AppTextSize.body * (1 + (scale - 1) * 0.2),
+              color: online ? WinColors.accent : WinColors.textDim,
+              weight: FontWeight.bold,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        SizedBox(
+          width: 72 * scale,
+          height: 18 * scale,
+          child: CustomPaint(painter: WinSparklinePainter(series)),
+        ),
+      ],
+    ),
+  );
 }
 
 // ---------------------------------------------------------------- 连接页
