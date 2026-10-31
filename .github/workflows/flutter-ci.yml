@@ -241,11 +241,14 @@ jobs:
               try {
                 Invoke-WebRequest $u -OutFile '7zextra.7z' -UseBasicParsing -ErrorAction Stop
                 & $sevenZip x '7zextra.7z' -o'7zextra' -y | Out-Null
-                $found = Get-ChildItem '7zextra' -Recurse -Filter '7zS.sfx' -ErrorAction SilentlyContinue |
-                  Select-Object -First 1
-                if (-not $found) {
-                  Write-Host "extra package has no 7zS.sfx"
+                # 官方 extra 包里安装器版叫 7zS2.sfx（新版）/ 7zSD.sfx / 7zS.sfx，版本间会变，
+                # 按优先级都认：7zS2 是当前推荐的 installer SFX（会自动执行 RunProgram）。
+                foreach ($cand in @('7zS2.sfx', '7zS.sfx', '7zSD.sfx')) {
+                  $found = Get-ChildItem '7zextra' -Recurse -Filter $cand -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                  if ($found) { break }
                 }
+                if (-not $found) { Write-Host 'extra package has no installer sfx' }
                 if ($found) { $sfx = $found.FullName; Write-Host "sfx from $u"; break }
               } catch { Write-Host "skip $u : $($_.Exception.Message)" }
             }
