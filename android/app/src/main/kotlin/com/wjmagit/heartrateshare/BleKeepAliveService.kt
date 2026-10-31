@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Point
 import android.graphics.Typeface
@@ -45,8 +46,8 @@ class BleKeepAliveService : Service() {
     private var overlayView: View? = null
     private var overlayRows: LinearLayout? = null
     private var overlayScroll: ScrollView? = null
-    private var dynamicNameWidth = 0
-    private var dynamicBpmWidth = 0
+    private var dynamicNameWidth = 0f
+    private var dynamicBpmWidth = 0f
     private var overlayBackground: GradientDrawable? = null
     private var windowManager: WindowManager? = null
     private var prefs: SharedPreferences? = null
@@ -251,7 +252,7 @@ class BleKeepAliveService : Service() {
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 // 定宽（= 房间内最长名宽）+ 省略号：短名字留白，心率位置不跳。
-                width = dynamicNameWidth
+                width = dynamicNameWidth.toInt()
                 outline()
             },
         )
@@ -267,7 +268,7 @@ class BleKeepAliveService : Service() {
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.END
                 // 定宽 + 右对齐：心率位数变化时右侧折线不会左右抖。
-                width = dynamicBpmWidth
+                width = dynamicBpmWidth.toInt()
                 outline()
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
