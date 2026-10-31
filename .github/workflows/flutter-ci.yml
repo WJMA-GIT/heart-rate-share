@@ -211,27 +211,37 @@ jobs:
           Copy-Item docs/win-run.txt "$stage/README.txt" -Force
 
           $sevenZip = @(
-            'C:\Program Files\7-Zip\7z.exe',
-            'C:\Program Files (x86)\7-Zip\7z.exe'
+            'C:\\Program Files\\7-Zip\\7z.exe',
+            'C:\\Program Files (x86)\\7-Zip\\7z.exe'
           ) | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $sevenZip) { throw '7z.exe not found on runner' }
-          $sfx = Join-Path (Split-Path $sevenZip) '7zS.sfx'
-          if (-not (Test-Path $sfx)) {
-            # 官方 extra 包里有 SFX 模块；版本号会变，按候选列表逐个试
-            $urls = @(
-              'https://www.7-zip.org/a/7z2409-extra.7z',
-              'https://www.7-zip.org/a/7z2408-extra.7z',
-              'https://www.7-zip.org/a/7z2500-extra.7z',
-              'https://www.7-zip.org/a/7z2501-extra.7z'
-            )
+
+          # 找 SFX 模块：先看 7-Zip 安装目录，再从官方 extra 包取（版本会变，用页面发现+固定回退）
+          $sfx = $null
+          foreach ($name in @('7zS.sfx', '7z.sfx')) {
+            $candidate = Join-Path (Split-Path $sevenZip) $name
+            if (Test-Path $candidate) { $sfx = $candidate; Write-Host "sfx local: $candidate"; break }
+          }
+          if (-not $sfx) {
+            $urls = @()
+            try {
+              $html = (Invoke-WebRequest 'https://www.7-zip.org/download.html' -UseBasicParsing).Content
+              $urls += ([regex]::Matches($html, 'a/7z[0-9]+-extra\.7z') |
+                ForEach-Object { 'https://www.7-zip.org/' + $_.Value } | Select-Object -Unique)
+            } catch { Write-Host 'download.html unreachable' }
+            $urls += 'https://www.7-zip.org/a/7z2301-extra.7z'
             foreach ($u in $urls) {
               try {
                 Invoke-WebRequest $u -OutFile '7zextra.7z' -UseBasicParsing -ErrorAction Stop
                 & $sevenZip x '7zextra.7z' -o'7zextra' -y | Out-Null
                 $found = Get-ChildItem '7zextra' -Recurse -Filter '7zS.sfx' -ErrorAction SilentlyContinue |
                   Select-Object -First 1
+                if (-not $found) {
+                  $found = Get-ChildItem '7zextra' -Recurse -Filter '7z.sfx' -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                }
                 if ($found) { $sfx = $found.FullName; Write-Host "sfx from $u"; break }
-              } catch { Write-Host "skip $u" }
+              } catch { Write-Host "skip $u : $($_.Exception.Message)" }
             }
           }
           if (-not (Test-Path $sfx)) { throw '7zS.sfx not available（没有退回 zip，按约定停下）' }
