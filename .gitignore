@@ -1,0 +1,42 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+*.iml
+.idea/
+.vscode/
+.DS_Store
+
+# Signing and credentials -- never commit these.
+*.jks
+*.keystore
+key.properties
+*.p12
+*.p8
+*.mobileprovision
+*.pem
+*.key
+# 例外：仅用于「wss 必须真的走 TLS」这条回归测试的自签证书（CN=localhost，
+# 本地回环测试专用，不用于任何环境）。见 test/fixtures/tls/README.md
+!test/fixtures/tls/*.pem
+.env
+.env.*
+!.env.example
+
+# Local diagnostic output.
+logs/
+*.log
+
+# Flutter/Android 生成物：机器相关路径，绝不能入库（会让 CI 指向本地 SDK）
+android/local.properties
+**/GeneratedPluginRegistrant.java
+android/.gradle/
+
+# 服务端（server/）依赖，不入库
+node_modules/
+npm-debug.log*
+.env

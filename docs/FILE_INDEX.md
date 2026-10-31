@@ -1,0 +1,51 @@
+# File index
+
+- `pubspec.yaml` — pinned Flutter/Dart dependencies and app version.
+- `analysis_options.yaml` — standard Flutter lints, no SDK execution performed.
+- `.gitignore` — build output and signing/credential exclusions.
+- `lib/main.dart` — app startup and three-tab navigation.
+- `lib/core/config/app_config.dart` — centralized package/protocol/timing constants.
+- `lib/core/logging/app_logger.dart` — levels, sanitization, per-session files, export/share.
+- `lib/core/profile/install_identity.dart` — persisted install identity, reserved report sequence, and the single storage used for recent connection profiles.
+- `lib/core/profile/connection_profile.dart` — connection profile model (official/remote) and the recent-connection list logic; `local` mode was removed with local room hosting.
+- `lib/ble/ble_models.dart` — adapter/device/connection snapshot models.
+- `lib/ble/heart_rate_sample.dart` — HRS 0x2A37 flags/BPM/contact/RR parser.
+- `lib/ble/heart_rate_source.dart` — platform-neutral source interface and unsupported stub.
+- `lib/ble/flutter_blue_plus_source.dart` — Android scan/connect/notify implementation.
+- `lib/ble/heart_rate_service.dart` — stream orchestration, platform selection and drop-triggered reconnect supervision.
+- `lib/ble/reconnect_policy.dart` — pure backoff policy for auto-reconnect (capped below the relay offline window).
+- `lib/ble/scan_tail.dart` — decides what a finished scan may write back to the connection phase (never clobbers a live link).
+- `lib/ble/notify_recovery_policy.dart` — re-subscribe vs full-reconnect decision when notifications stop but the link looks alive.
+- `lib/ble/platform/hrs_channel.dart` — native Windows/iOS channel contract.
+- `lib/ble/platform/hrs_foreground.dart` — Android foreground-service bridge (keeps the process alive while the link is up).
+- `lib/room/protocol.dart` — versioned wire envelope, report and member models.
+- `lib/room/room_client.dart` — 1 Hz latest-sample upload and room-state receive; memberId and sequence are injected from persistent storage.
+- `lib/room/sequence_counter.dart` — cross-launch monotonic report sequence (block-reserved, self-healing).
+- `lib/room/room_transport.dart` — ws/wss channel opening (system CA by default, CERT_SHA256 pinning) and error classification.
+- `lib/room/room_endpoint.dart` — IPv6-aware resolver, per-address failover with a short budget, and copyable connect diagnostics.
+- `lib/room/room_address.dart` — manual WebSocket address parser.
+- `lib/room/room_identity.dart` — secure random member identifiers (room codes come from `room_code.dart`).
+- `lib/room/discovery.dart` — mDNS boundary and explicit unimplemented adapter.
+- `lib/ui/app_state.dart` — shared application composition and stream lifecycle.
+- `lib/ui/widgets.dart` — raw-byte display helper.
+- `lib/ui/widgets/heart_rate_chart.dart` — real-sample rolling chart (60 s window, ≤120 points, gaps on interruption, idle when empty).
+- `lib/ui/widgets/room_code_card.dart` — read-only own room code with separate copy/paste entries.
+- `lib/ui/widgets/join_room_dialog.dart` — join-target dialog (paste or pick a recent connection, own code rejected).
+- `lib/ui/version_tap.dart` — five-tap version gate that replaces the explicit debug toggle.
+- `lib/core/platform/room_overlay.dart` — Android floating-window bridge (opacity floor, member list payload).
+- `lib/ui/widgets/connect_failure.dart` — connect failure dialog with copyable diagnostics.
+- `lib/ui/pages/heart_rate_page.dart` — large BPM (blank when stale) and HRS device connection UI.
+- `lib/ui/pages/room_page.dart` — create/join actions, target selection, recent connections and member grid.
+- `lib/ui/pages/settings_page.dart` — overlay (switch + opacity), nickname, version gate and log export.
+- `lib/debug/debug_controller.dart` — opt-in diagnostic state.
+- `lib/debug/debug_panel.dart` — BLE/room/raw-byte/error diagnostic panel.
+- `native/windows/HrsPlugin.cpp` — documented C++/WinRT native TODO stub.
+- `native/ios/HrsPlugin.swift` — documented Swift/CoreBluetooth native TODO stub.
+- `android/**` — minimal Android Gradle/manifest shell; no signing credentials.
+- `android/app/src/main/kotlin/com/wjmagit/heartrateshare/BleKeepAliveService.kt` — connectedDevice foreground service so the OS does not reclaim the GATT link.
+- `docs/protocol.md` — protocol version, fields, timing and security limitations.
+- `docs/identity.md` — member identity options, chosen install-id approach, reinstall/new-phone semantics.
+- `docs/ble-field-log-2026-10-29.md` — field log postmortem: the "disconnect" was a stale scan-tail writing `idle` over a live link.
+- `test/**` — parser, store, address, sanitizer, reconnect-policy and reconnect-supervisor tests.
+- `tool/ci_prepare_android.sh` — CI-only missing Android scaffold/resource merge.
+- `.github/workflows/flutter-ci.yml` — analyze/test/debug-APK artifact workflow.

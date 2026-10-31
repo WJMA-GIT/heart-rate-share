@@ -1,0 +1,215 @@
+name: docker-publish
+
+# 发布纪律（2026-10-31 起）：**只有明确说"发布"时才推送镜像**。
+# 所以这里不再挂在 push 上 —— 往 main 攒改动不会自动覆盖 `latest`。
+# 发版时手动触发：`gh workflow run docker-publish.yml -f release=<版本或说明>`
+"on":
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "本次发布说明（只用于 job summary，可留空）"
+        required: false
+        default: ""
+
+permissions:
+  contents: read   # 只构建推送镜像，不需要写仓库
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: mawjgit/heart-rate-share
+
+# 镜像仓库**只保留 `latest` 一个 tag**：每次构建覆盖它，不再按 commit/版本号打 tag。
+# 历史上堆出来的 sha-* / v* 已用 docker-cleanup.yml 清理，清单见
+# generated/relay/report-logs-latest.md。要回滚就按 digest 回滚（README 有写法）。
+
+jobs:
+  build-smoke-push:
+    # 只在 main 与手动触发时构建并推 latest：`v*` tag 也会命中本 workflow，
+    # 让它推 latest 会把"最新镜像"绑到某个 tag 上（tag 指旧提交时就是回退）。
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag (latest only)
+        id: tags
+        run: |
+          set -euo pipefail
+          echo "list=$IMAGE:latest" >> "$GITHUB_OUTPUT"
+          echo "primary=$IMAGE:latest" >> "$GITHUB_OUTPUT"
+          echo "tagging only: $IMAGE:latest"
+
+      # 服务端单测先跑：保活/日志这类"静默坏掉"的问题，构建通过是看不出来的。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Server tests
+        working-directory: server
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
+
+      # 版本真源是 server/package.json；commit/buildTime 由这里注入镜像环境变量，
+      # 这样启动日志、/healthz、`--version` 三处说的是同一件事。
+      - name: Resolve build metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA::7} build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # 先只构建并载入本地 docker，不推送 —— 冒烟不通过就绝不推
+      - name: Build image (load locally, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          load: true
+          push: false
+          tags: ${{ steps.tags.outputs.list }}
+          build-args: |
+            GIT_COMMIT=${{ steps.meta.outputs.commit }}
+            BUILD_TIME=${{ steps.meta.outputs.build_time }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 冒烟不只测 /healthz：还要证明"日志真的落到挂载目录、能轮转、只读时能降级"。
+      # 这几条在容器里跑，本地无 docker 的机器复现不了。
+      - name: Smoke test — healthz / 文件日志 / 轮转 / 只读降级
+        run: |
+          set -euo pipefail
+          img="${{ steps.tags.outputs.primary }}"
+          logs=/tmp/relay-logs
+          rm -rf "$logs" && mkdir -p "$logs"
+          # 容器内是 uid 1000 的 node 用户；CI 的 runner 是另一个 uid，直接挂会写不进去。
+          chmod 777 "$logs"
+
+          docker run -d --name relay-smoke -p 18765:8765 \
+            -e PORT=8765 -e LOG_DIR=/app/logs -e LOG_LEVEL=info \
+            -e LOG_MAX_BYTES=8192 -e LOG_MAX_FILES=3 -e TZ=Asia/Shanghai \
+            -v "$logs:/app/logs" "$img"
+
+          for _ in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:18765/healthz -o /tmp/healthz.json; then break; fi
+            sleep 1
+          done
+          echo "--- /healthz ---"; cat /tmp/healthz.json; echo
+          node -e "const d=require('/tmp/healthz.json'); if(d.status!=='ok'){console.error('healthz not ok');process.exit(1)}; console.log('healthz ok, protocol='+d.protocol+' rooms='+d.rooms)"
+
+          # 版本三处对齐：package.json(--version) == /healthz == 首条日志
+          pkgv=$(docker run --rm --entrypoint node "$img" src/index.js --version)
+          hv=$(node -e "console.log(require('/tmp/healthz.json').version)")
+          echo "package.json --version=$pkgv  healthz=$hv"
+          [ "$pkgv" = "$hv" ] || { echo "::error::--version 与 /healthz 版本不一致"; exit 1; }
+          docker exec relay-smoke sh -c 'head -n 1 /app/logs/relay.log' > /tmp/first-line.json
+          cat /tmp/first-line.json
+          grep -q '"msg":"relay_started"' /tmp/first-line.json
+          grep -q "\"version\":\"$pkgv\"" /tmp/first-line.json
+          grep -q '"commit":"' /tmp/first-line.json
+          grep -q '"buildTime":"' /tmp/first-line.json
+          grep -qv '"commit":"unknown"' /tmp/first-line.json || { echo "::error::commit 没注入"; exit 1; }
+          echo "版本/commit/buildTime 校验 OK"
+
+          # 在容器里跑 ws 客户端：hello + 上报 + 主动断开（4001），
+          # 目标是让 client_closed 带上 close code / 无入站时长。
+          # 连 40 次是为了把小阈值(8KB)撑爆，验证轮转。
+          docker exec -i relay-smoke node - <<'JS'
+          const WebSocket = require('ws');
+          const port = process.env.PORT || 8765;
+          const one = (i) =>
+            new Promise((resolve) => {
+              const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=SMOKE${i % 3}`);
+              ws.on('open', () => {
+                const memberId = `smoke-member-${String(i).padStart(4, '0')}`;
+                ws.send(JSON.stringify({ v: 1, type: 'hello', memberId, displayName: `smoke${i}` }));
+                ws.send(JSON.stringify({
+                  v: 1, type: 'heartRate', memberId, displayName: `smoke${i}`,
+                  bpm: 60 + (i % 30), rrMs: [], sensorContact: true, sequence: 1,
+                  measuredAt: new Date().toISOString(),
+                }));
+                setTimeout(() => ws.close(4001, 'smoke bye'), 120);
+              });
+              ws.on('close', resolve);
+              ws.on('error', resolve);
+            });
+          (async () => {
+            for (let i = 0; i < 40; i += 1) await one(i);
+            console.log('ws clients done');
+          })();
+          JS
+          sleep 1
+
+          echo "--- 宿主机挂载目录 ---"; ls -l "$logs"
+          echo "--- 容器日志（末 5 行，排查用）---"; docker logs relay-smoke 2>&1 | tail -5 || true
+          echo "--- relay.log 末 5 行（脱敏：member 已截断）---"; tail -n 5 "$logs/relay.log"
+          # 断言要看**全部**日志（含已轮转的历史文件）：最后几行可能在 relay.log.1 里。
+          grep -q '"msg":"client_closed"' "$logs"/relay.log*
+          grep -q '"closeCode":4001' "$logs"/relay.log*
+          grep -q '"lastInboundMs"' "$logs"/relay.log*
+          grep -q '"initiator":"peer"' "$logs"/relay.log*
+          test -s "$logs/relay.log.1" || { echo "::error::没有轮转出 relay.log.1"; exit 1; }
+          test ! -e "$logs/relay.log.4" || { echo "::error::保留份数超过 LOG_MAX_FILES=3"; exit 1; }
+          echo "轮转 OK：$(ls "$logs" | tr '\n' ' ')"
+
+          # 重启后必须**追加**而不是清空
+          before=$(stat -c%s "$logs/relay.log")
+          first_line=$(head -n 1 "$logs/relay.log")
+          docker restart relay-smoke >/dev/null
+          for _ in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:18765/healthz -o /dev/null; then break; fi
+            sleep 1
+          done
+          after=$(stat -c%s "$logs/relay.log")
+          echo "重启前后 relay.log: $before -> $after 字节"
+          test "$after" -gt "$before"
+          head -n 1 "$logs/relay.log" | grep -qF "$first_line"
+          echo "追加 OK"
+
+          docker rm -f relay-smoke
+
+          # 只读目录：必须降级为只写 stdout，进程照常收发
+          mkdir -p /tmp/relay-ro && sudo chmod 555 /tmp/relay-ro
+          docker run -d --name relay-ro -p 18766:8766 \
+            -e PORT=8766 -e LOG_DIR=/app/logs \
+            -v /tmp/relay-ro:/app/logs:ro "$img"
+          for _ in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:18766/healthz -o /tmp/healthz-ro.json; then break; fi
+            sleep 1
+          done
+          node -e "const d=require('/tmp/healthz-ro.json'); if(d.status!=='ok'){console.error('healthz not ok (ro)');process.exit(1)}; console.log('只读目录下 healthz 仍 ok')"
+          docker logs relay-ro 2>&1 | grep -q 'log_file_disabled' \
+            || { echo "::error::只读目录没有降级告警"; docker logs relay-ro; exit 1; }
+          echo "只读降级 OK"
+          docker rm -f relay-ro
+
+      # 冒烟通过后才登录并推送
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push latest
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.tags.outputs.primary }}"
+          # 记录 digest：删完历史 tag 后，报告里用它证明"latest 就是这次构建"。
+          docker inspect --format '{{index .RepoDigests 0}}' "${{ steps.tags.outputs.primary }}" || true
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "### Docker 镜像（只推 latest）"
+            echo '```'
+            echo "${{ steps.tags.outputs.list }}"
+            echo '```'
+            docker image ls "$IMAGE" --format '{{.Repository}}:{{.Tag}}  {{.ID}}  {{.Size}}' || true
+          } >> "$GITHUB_STEP_SUMMARY"

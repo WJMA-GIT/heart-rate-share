@@ -1,0 +1,19 @@
+{
+  "name": "heart-rate-share-relay",
+  "version": "1.0.1",
+  "private": true,
+  "description": "共享心率 v1 协议中继服务：单实例、内存房间状态、无数据库",
+  "license": "UNLICENSED",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/",
+    "smoke": "node test/smoke.js"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}

@@ -1,0 +1,30 @@
+name: heartrate
+description: Local-network heart-rate sharing MVP.
+publish_to: none
+version: 1.0.1+1000101
+
+environment:
+  sdk: ">=3.13.0 <4.0.0"
+  flutter: ">=3.47.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_blue_plus: 2.3.14
+  web_socket_channel: 3.0.3
+  path_provider: 2.1.6
+  share_plus: 13.3.1
+  package_info_plus: 10.2.2
+  nsd: 5.0.1
+  shared_preferences: 2.5.6
+  characters: 1.4.1
+  # 已作为间接依赖存在（3.0.8）：只用于 wss 证书指纹钉扎的 SHA-256，不新增传递依赖。
+  crypto: 3.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 6.0.0
+
+flutter:
+  uses-material-design: true
