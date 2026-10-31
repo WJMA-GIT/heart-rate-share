@@ -172,9 +172,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
   std::wstring wideVersion;
   {
     const int n = ::MultiByteToWideChar(CP_UTF8, 0, version, -1, nullptr, 0);
-    if (n > 0) {
-      wideVersion.resize(n - 1);
-      ::MultiByteToWideChar(CP_UTF8, 0, version, -1, wideVersion.data(), n);
+    if (n > 1) {
+      wideVersion.resize(static_cast<size_t>(n));
+      ::MultiByteToWideChar(CP_UTF8, 0, version, -1, &wideVersion[0], n);
+      wideVersion.resize(static_cast<size_t>(n - 1));  // 去掉结尾 NUL
     }
   }
   if (wideVersion.empty()) wideVersion = L"unknown";
