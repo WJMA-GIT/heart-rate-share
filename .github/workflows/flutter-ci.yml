@@ -229,7 +229,7 @@ jobs:
           $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
           if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found at $vcvars" }
           Remove-Item loader.exe -Force -ErrorAction SilentlyContinue
-          cmd /c "call `"$vcvars`" >nul && cl /nologo /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE windows\loader\loader.cpp /Fe:loader.exe /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup"
+          cmd /c "call `"$vcvars`" >nul && cl /nologo /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE windows\loader\loader.cpp /Fe:loader.exe /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup user32.lib"
           if (-not (Test-Path 'loader.exe')) { throw 'loader.exe not produced' }
           Write-Host "loader.exe built: $((Get-Item loader.exe).Length) bytes"
 
