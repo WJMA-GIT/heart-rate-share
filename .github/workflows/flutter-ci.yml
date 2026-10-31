@@ -201,6 +201,84 @@ jobs:
           v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
           [ -n "$v" ] || { echo "cannot parse version"; exit 1; }
           echo "resolved=$v" >> "$GITHUB_OUTPUT"
+      # 单文件 exe：7-Zip SFX（自解压）。双击 → 解到 %LOCALAPPDATA%\heartrate\app\<ver> → 启动。
+      # 不是安装包：不写注册表、不要管理员、不弹 UAC；卸载 = 删那个目录。
+      - name: Build single-file exe (7z SFX)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = '${{ steps.ver.outputs.resolved }}'
+          $stage = 'build/win-stage'
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item 'build/windows/x64/runner/Release/*' $stage -Recurse -Force
+          Copy-Item docs/win-run.txt "$stage/README.txt" -Force
+
+          $sevenZip = @(
+            'C:\\Program Files\\7-Zip\\7z.exe',
+            'C:\\Program Files (x86)\\7-Zip\\7z.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $sevenZip) { throw '7z.exe not found on runner' }
+
+          # 找 SFX 模块：先看 7-Zip 安装目录，再从官方 extra 包取（版本会变，用页面发现+固定回退）
+          $sfx = $null
+          foreach ($name in @('7zS.sfx', '7z.sfx')) {
+            $candidate = Join-Path (Split-Path $sevenZip) $name
+            if (Test-Path $candidate) { $sfx = $candidate; Write-Host "sfx local: $candidate"; break }
+          }
+          if (-not $sfx) {
+            $urls = @()
+            try {
+              $html = (Invoke-WebRequest 'https://www.7-zip.org/download.html' -UseBasicParsing).Content
+              $urls += ([regex]::Matches($html, 'a/7z[0-9]+-extra\.7z') |
+                ForEach-Object { 'https://www.7-zip.org/' + $_.Value } | Select-Object -Unique)
+            } catch { Write-Host 'download.html unreachable' }
+            $urls += 'https://www.7-zip.org/a/7z2301-extra.7z'
+            foreach ($u in $urls) {
+              try {
+                Invoke-WebRequest $u -OutFile '7zextra.7z' -UseBasicParsing -ErrorAction Stop
+                & $sevenZip x '7zextra.7z' -o'7zextra' -y | Out-Null
+                $found = Get-ChildItem '7zextra' -Recurse -Filter '7zS.sfx' -ErrorAction SilentlyContinue |
+                  Select-Object -First 1
+                if (-not $found) {
+                  $found = Get-ChildItem '7zextra' -Recurse -Filter '7z.sfx' -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                }
+                if ($found) { $sfx = $found.FullName; Write-Host "sfx from $u"; break }
+              } catch { Write-Host "skip $u : $($_.Exception.Message)" }
+            }
+          }
+          if (-not (Test-Path $sfx)) { throw '7zS.sfx not available（没有退回 zip，按约定停下）' }
+
+          # 只保留必需键，少一个未知键就少一个在别人机器上弹配置错误的风险
+          $config = ";!@Install@!UTF-8!`r`nTitle=`"共享心率 $ver`"`r`nRunProgram=`"heartrate.exe`"`r`nGUIMode=`"2`"`r`nInstallPath=`"%LOCALAPPDATA%\heartrate\app\$ver`"`r`nOverwriteMode=`"2`"`r`n;!@InstallEnd@!`r`n"
+          Set-Content -Path 'sfx-config.txt' -Value $config -Encoding UTF8
+
+          # 关键：在 stage 目录里打包，条目才是**根级**；否则会解出 build/win-stage/ 一层，
+          # RunProgram 找不到 heartrate.exe（1.0.4 就是这个毛病）
+          $payload = Join-Path (Get-Location).Path 'payload.7z'
+          Push-Location $stage
+          & $sevenZip a -t7z $payload '*' -mx=9 | Out-Null
+          Pop-Location
+          if (-not (Test-Path $payload)) { throw 'payload.7z not produced' }
+
+          $out = "heartrate-$ver-windows-x64.exe"
+          # SFX 模块 + 配置 + 载荷 = 一个可双击的 exe
+          cmd /c "copy /b `"$sfx`" + `"sfx-config.txt`" + `"payload.7z`" `"$out`"" | Out-Null
+          if (-not (Test-Path $out)) { throw 'SFX exe not produced' }
+          Get-Item $out | Select-Object Name, Length
+          # 基本自检：MZ 头 + 内含 7z 签名 + 不是 zip
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $out))
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'not a PE file' }
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          if (-not $text.Contains('7z')) { throw 'payload missing' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ github.sha }}
+          path: heartrate-*-windows-x64.exe
+          if-no-files-found: error
+          retention-days: 14
+
       # 启动冒烟门禁：这次真的跑**单文件 exe**（中文+空格路径），三种模式各跑一遍。
       - name: Startup smoke (single-file exe, Chinese path, 3 modes)
         shell: pwsh
@@ -280,83 +358,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # 单文件 exe：7-Zip SFX（自解压）。双击 → 解到 %LOCALAPPDATA%\heartrate\app\<ver> → 启动。
-      # 不是安装包：不写注册表、不要管理员、不弹 UAC；卸载 = 删那个目录。
-      - name: Build single-file exe (7z SFX)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ver = '${{ steps.ver.outputs.resolved }}'
-          $stage = 'build/win-stage'
-          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item 'build/windows/x64/runner/Release/*' $stage -Recurse -Force
-          Copy-Item docs/win-run.txt "$stage/README.txt" -Force
-
-          $sevenZip = @(
-            'C:\\Program Files\\7-Zip\\7z.exe',
-            'C:\\Program Files (x86)\\7-Zip\\7z.exe'
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $sevenZip) { throw '7z.exe not found on runner' }
-
-          # 找 SFX 模块：先看 7-Zip 安装目录，再从官方 extra 包取（版本会变，用页面发现+固定回退）
-          $sfx = $null
-          foreach ($name in @('7zS.sfx', '7z.sfx')) {
-            $candidate = Join-Path (Split-Path $sevenZip) $name
-            if (Test-Path $candidate) { $sfx = $candidate; Write-Host "sfx local: $candidate"; break }
-          }
-          if (-not $sfx) {
-            $urls = @()
-            try {
-              $html = (Invoke-WebRequest 'https://www.7-zip.org/download.html' -UseBasicParsing).Content
-              $urls += ([regex]::Matches($html, 'a/7z[0-9]+-extra\.7z') |
-                ForEach-Object { 'https://www.7-zip.org/' + $_.Value } | Select-Object -Unique)
-            } catch { Write-Host 'download.html unreachable' }
-            $urls += 'https://www.7-zip.org/a/7z2301-extra.7z'
-            foreach ($u in $urls) {
-              try {
-                Invoke-WebRequest $u -OutFile '7zextra.7z' -UseBasicParsing -ErrorAction Stop
-                & $sevenZip x '7zextra.7z' -o'7zextra' -y | Out-Null
-                $found = Get-ChildItem '7zextra' -Recurse -Filter '7zS.sfx' -ErrorAction SilentlyContinue |
-                  Select-Object -First 1
-                if (-not $found) {
-                  $found = Get-ChildItem '7zextra' -Recurse -Filter '7z.sfx' -ErrorAction SilentlyContinue |
-                    Select-Object -First 1
-                }
-                if ($found) { $sfx = $found.FullName; Write-Host "sfx from $u"; break }
-              } catch { Write-Host "skip $u : $($_.Exception.Message)" }
-            }
-          }
-          if (-not (Test-Path $sfx)) { throw '7zS.sfx not available（没有退回 zip，按约定停下）' }
-
-          # 只保留必需键，少一个未知键就少一个在别人机器上弹配置错误的风险
-          $config = ";!@Install@!UTF-8!`r`nTitle=`"共享心率 $ver`"`r`nRunProgram=`"heartrate.exe`"`r`nGUIMode=`"2`"`r`nInstallPath=`"%LOCALAPPDATA%\heartrate\app\$ver`"`r`nOverwriteMode=`"2`"`r`n;!@InstallEnd@!`r`n"
-          Set-Content -Path 'sfx-config.txt' -Value $config -Encoding UTF8
-
-          # 关键：在 stage 目录里打包，条目才是**根级**；否则会解出 build/win-stage/ 一层，
-          # RunProgram 找不到 heartrate.exe（1.0.4 就是这个毛病）
-          $payload = Join-Path (Get-Location).Path 'payload.7z'
-          Push-Location $stage
-          & $sevenZip a -t7z $payload '*' -mx=9 | Out-Null
-          Pop-Location
-          if (-not (Test-Path $payload)) { throw 'payload.7z not produced' }
-
-          $out = "heartrate-$ver-windows-x64.exe"
-          # SFX 模块 + 配置 + 载荷 = 一个可双击的 exe
-          cmd /c "copy /b `"$sfx`" + `"sfx-config.txt`" + `"payload.7z`" `"$out`"" | Out-Null
-          if (-not (Test-Path $out)) { throw 'SFX exe not produced' }
-          Get-Item $out | Select-Object Name, Length
-          # 基本自检：MZ 头 + 内含 7z 签名 + 不是 zip
-          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $out))
-          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'not a PE file' }
-          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
-          if (-not $text.Contains('7z')) { throw 'payload missing' }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-${{ github.sha }}
-          path: heartrate-*-windows-x64.exe
-          if-no-files-found: error
-          retention-days: 14
 
   # ----------------------------------------------------------------- iOS 编译
   # 无 Apple 开发者账号时只能证明「编得过」，产物是未签名 .app，装不上真机，
