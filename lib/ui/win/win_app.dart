@@ -1,11 +1,11 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../../core/platform/startup_log.dart';
 import '../widgets/heart_rate_chart.dart';
 import 'win_controller.dart';
+import 'win_drag.dart';
 
 /// Windows 悬浮窗：无边框 + 置顶 + 背景可全透明（原生分层窗口的颜色键实现）。
 ///
@@ -53,7 +53,6 @@ final class _WinAppState extends State<WinApp> {
       StartupLog.info('win: FATAL during init: $error');
       StartupLog.info('$stack');
     }
-    _applyWindow();
   }
 
   void _onChange() {
@@ -73,17 +72,6 @@ final class _WinAppState extends State<WinApp> {
     _controller.connectPeer(peer).then((ok) {
       if (ok && mounted) setState(() => _showPanel = false);
     });
-  }
-
-  Future<void> _applyWindow() async {
-    try {
-      await windowManager.setAsFrameless();
-      await windowManager.setAlwaysOnTop(true);
-      await windowManager.setSkipTaskbar(true);
-      await windowManager.setMinimumSize(const Size(220, 90));
-    } catch (_) {
-      // 非 Windows 或插件不可用时忽略
-    }
   }
 
   @override
@@ -155,7 +143,7 @@ final class _WinAppState extends State<WinApp> {
 
   Widget _header() {
     return GestureDetector(
-      onPanStart: (_) => windowManager.startDragging(),
+      onPanStart: (_) => startWindowDrag(),
       child: Container(
         color: _controller.backgroundTransparent
             ? const Color(0xFF010203)
@@ -514,9 +502,8 @@ final class _WinSparkline extends CustomPainter {
 /// Windows 入口。
 Future<void> runWinApp() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    await windowManager.ensureInitialized();
-  } catch (_) {}
   StartupLog.stage('win: runApp');
+  // 无边框/置顶/分层透明全部在 runner（main.cpp）里完成，Dart 侧不再调用任何
+  // 窗口管理插件——那个插件子类化 WndProc，正是 0xC000041D 的崩溃来源。
   runApp(const WinApp());
 }

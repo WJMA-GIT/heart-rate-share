@@ -197,6 +197,33 @@ jobs:
           v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
           [ -n "$v" ] || { echo "cannot parse version"; exit 1; }
           echo "resolved=$v" >> "$GITHUB_OUTPUT"
+      # 启动冒烟门禁：只验证"能编译"是不够的——1.0.2 就是编译通过、真机启动即崩
+      # （0xC000041D @ window_manager_plugin.dll）。这里真的把 exe 跑起来 8 秒。
+      - name: Startup smoke (run the exe for 8s)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'build/windows/x64/runner/Release/heartrate.exe'
+          $log = "$env:LOCALAPPDATA\heartrate\logs\startup.log"
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath $exe -PassThru `
+            -RedirectStandardOutput 'smoke-stdout.txt' -RedirectStandardError 'smoke-stderr.txt'
+          Start-Sleep -Seconds 8
+          $alive = -not $proc.HasExited
+          $exit = if ($proc.HasExited) { $proc.ExitCode } else { 'running' }
+          Write-Host "alive=$alive exit=$exit pid=$($proc.Id)"
+          if (Test-Path $log) {
+            Write-Host '--- startup.log ---'
+            Get-Content $log | ForEach-Object { Write-Host $_ }
+          } else { Write-Host 'startup.log MISSING' }
+          if (Test-Path 'smoke-stderr.txt') { Write-Host '--- stderr ---'; Get-Content 'smoke-stderr.txt' }
+          if (-not $alive) { throw "exe 在 8 秒内退出了（exit=$exit）" }
+          if (-not (Select-String -Path $log -Pattern 'entering message loop' -Quiet)) {
+            throw 'startup.log 没有走到 "entering message loop"'
+          }
+          Stop-Process -Id $proc.Id -Force
+          Write-Host 'startup smoke OK'
+
       # 单文件 exe：7-Zip SFX（自解压）。双击 → 解到 %LOCALAPPDATA%\heartrate\app\<ver> → 启动。
       # 不是安装包：不写注册表、不要管理员、不弹 UAC；卸载 = 删那个目录。
       - name: Build single-file exe (7z SFX)

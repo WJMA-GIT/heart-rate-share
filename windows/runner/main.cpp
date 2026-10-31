@@ -97,7 +97,9 @@ void ApplyOverlayStyles(HWND hwnd) {
     AppendLog(L"startup.log", "overlay: SetLayeredWindowAttributes failed, opaque fallback");
   }
   ::SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
-  ::ShowWindow(hwnd, SW_SHOWNORMAL);
+  // 不在这里 ShowWindow：模板是在**首帧回调**里 Show()。早期版本在这里先 Show 一次、
+  // 回调里又 Show 一次，样式与显示在用户回调里反复切换，配合 window_manager 的
+  // WndProc 子类化直接 0xC000041D。现在样式在 Show 之前设好，只 Show 一次。
   AppendLog(L"startup.log", keyed ? "overlay: layered color-key ok" : "overlay: opaque");
 }
 
@@ -167,7 +169,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   AppendLog(L"startup.log", std::string("mode: safe=") + (safe_mode ? "1" : "0") +
                                  " opaque=" + (opaque_only ? "1" : "0"));
   if (safe_mode || opaque_only) {
-    ::ShowWindow(hwnd, SW_SHOWNORMAL);
     AppendLog(L"startup.log", "overlay: skipped (safe/opaque mode)");
   } else {
     ApplyOverlayStyles(hwnd);
