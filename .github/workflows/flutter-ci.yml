@@ -236,22 +236,28 @@ jobs:
           $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
           if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found at $vcvars" }
           Remove-Item loader.exe -Force -ErrorAction SilentlyContinue
-          cmd /c "call `"$vcvars`" >nul && cl /nologo /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE windows\loader\loader.cpp /Fe:loader.exe /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup user32.lib"
+          cmd /c "call `"$vcvars`" >nul && cl /nologo /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE windows\loader\loader.cpp /Fe:loader.exe /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup user32.lib bcrypt.lib"
           if (-not (Test-Path 'loader.exe')) { throw 'loader.exe not produced' }
           Write-Host "loader.exe built: $((Get-Item loader.exe).Length) bytes"
 
           # 拼接：loader + payload + 页脚(magic/offset/size)
           $loaderBytes = [IO.File]::ReadAllBytes((Resolve-Path 'loader.exe'))
           $payloadBytes = [IO.File]::ReadAllBytes($payload)
-          $footer = New-Object byte[] 32
-          [Text.Encoding]::ASCII.GetBytes('HRSLD001').CopyTo($footer, 0)
-          [BitConverter]::GetBytes([uint64]$loaderBytes.Length).CopyTo($footer, 8)
-          [BitConverter]::GetBytes([uint64]$payloadBytes.Length).CopyTo($footer, 16)
+          # 128B 页脚：magic(8) + formatVersion(u32) + reserved(u32) +
+          #             offset(u64) + length(u64) + sha256(32) + appVersion(32, UTF-8)
+          $sha = [System.Security.Cryptography.SHA256]::Create().ComputeHash($payloadBytes)
+          $footer = New-Object byte[] 128
+          [Text.Encoding]::ASCII.GetBytes('HRSLD002').CopyTo($footer, 0)
+          [BitConverter]::GetBytes([uint32]2).CopyTo($footer, 8)
+          [BitConverter]::GetBytes([uint64]$loaderBytes.Length).CopyTo($footer, 16)
+          [BitConverter]::GetBytes([uint64]$payloadBytes.Length).CopyTo($footer, 24)
+          $sha.CopyTo($footer, 32)
+          [Text.Encoding]::UTF8.GetBytes($ver).CopyTo($footer, 64)
           $out = "heartrate-$ver-windows-x64.exe"
           $fs = [IO.File]::Create($out)
           $fs.Write($loaderBytes, 0, $loaderBytes.Length)
           $fs.Write($payloadBytes, 0, $payloadBytes.Length)
-          $fs.Write($footer, 0, 32)
+          $fs.Write($footer, 0, 128)
           $fs.Close()
           Get-Item $out | Select-Object Name, Length
           $bytes = [IO.File]::ReadAllBytes((Resolve-Path $out))
@@ -350,7 +356,56 @@ jobs:
           Try-Mode 'normal' 'mode safe=0 opaque=0'
           Try-Mode 'safe-mode' 'mode safe=1 opaque=0'
           Try-Mode 'opaque' 'mode safe=0 opaque=1'
-          Write-Host 'single-file smoke OK (3 modes, Chinese path)'
+
+          # ---- 最小目录：只有一个 exe，没有任何附带文件 ----
+          $mini = Join-Path $cnDir 'only-exe'
+          Remove-Item $mini -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $mini | Out-Null
+          Copy-Item $runPath (Join-Path $mini (Split-Path $runPath -Leaf)) -Force
+          $files = (Get-ChildItem $mini -File).Count
+          if ($files -ne 1) { throw "最小目录里不止一个文件：$files" }
+          Get-Process heartrate -ErrorAction SilentlyContinue | Stop-Process -Force
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          Start-Process -FilePath (Join-Path $mini (Split-Path $runPath -Leaf)) | Out-Null
+          $seen = $false
+          for ($i = 0; $i -lt 300; $i++) {
+            Start-Sleep -Milliseconds 100
+            if (Get-Process heartrate -ErrorAction SilentlyContinue) { $seen = $true; break }
+          }
+          $sw.Stop()
+          if (-not $seen) { throw '最小目录双击没能拉起主程序' }
+          Write-Host ("cold start(ms)=" + $sw.ElapsedMilliseconds)
+          if ($sw.ElapsedMilliseconds -gt 3000) { throw "冷启动超过 3s：$($sw.ElapsedMilliseconds)ms" }
+          Get-Process heartrate -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 1
+
+          # ---- 热启动：命中缓存，直接拉起 ----
+          $sw2 = [Diagnostics.Stopwatch]::StartNew()
+          Start-Process -FilePath (Join-Path $mini (Split-Path $runPath -Leaf)) | Out-Null
+          $seen2 = $false
+          for ($i = 0; $i -lt 200; $i++) {
+            Start-Sleep -Milliseconds 50
+            if (Get-Process heartrate -ErrorAction SilentlyContinue) { $seen2 = $true; break }
+          }
+          $sw2.Stop()
+          if (-not $seen2) { throw '热启动没能拉起主程序' }
+          Write-Host ("hot start(ms)=" + $sw2.ElapsedMilliseconds)
+          if ($sw2.ElapsedMilliseconds -gt 2000) { throw "热启动超过 2s：$($sw2.ElapsedMilliseconds)ms" }
+          Get-Process heartrate -ErrorAction SilentlyContinue | Stop-Process -Force
+
+          # ---- 截断载荷：必须给出可读错误，不能半启动 ----
+          $truncated = Join-Path $cnDir 'truncated.exe'
+          $src = [IO.File]::ReadAllBytes($runPath)
+          $cut = $src[0..($src.Length - 2048)]
+          [IO.File]::WriteAllBytes($truncated, $cut)
+          Get-Process heartrate -ErrorAction SilentlyContinue | Stop-Process -Force
+          $lp = Start-Process -FilePath $truncated -PassThru
+          Start-Sleep -Seconds 5
+          $bad = Get-Process heartrate -ErrorAction SilentlyContinue
+          if ($bad) { $bad | Stop-Process -Force; throw '截断的 exe 竟然启动了主程序（应弹可读错误）' }
+          Write-Host '截断载荷：未启动主程序（弹错误框，符合预期）'
+          if (-not $lp.HasExited) { Stop-Process -Id $lp.Id -Force }
+          Write-Host 'single-file smoke OK (3 modes + 最小目录 + 冷/热启动 + 截断校验)'
 
       - uses: actions/upload-artifact@v4
         if: always()
