@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 #include "flutter_window.h"
@@ -144,10 +145,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   UINT dpi = 96;
   if (hwnd != nullptr) dpi = ::GetDpiForWindow(hwnd);
   AppendLog(L"startup.log", "dpi=" + std::to_string(dpi));
-  BOOL composition = FALSE;
-  if (SUCCEEDED(::DwmIsCompositionEnabled(&composition))) {
-    AppendLog(L"startup.log", composition ? "dwm: on" : "dwm: off");
-  }
   // 排查用逃生门：设 HEARTRATE_OPAQUE=1 就完全不碰分层窗口。
   wchar_t opaque[8] = {0};
   const DWORD opaque_len = ::GetEnvironmentVariableW(L"HEARTRATE_OPAQUE", opaque, 8);
