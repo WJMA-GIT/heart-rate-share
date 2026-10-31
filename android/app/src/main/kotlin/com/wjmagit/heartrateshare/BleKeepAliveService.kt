@@ -45,6 +45,8 @@ class BleKeepAliveService : Service() {
     private var overlayView: View? = null
     private var overlayRows: LinearLayout? = null
     private var overlayScroll: ScrollView? = null
+    private var dynamicNameWidth = 0
+    private var dynamicBpmWidth = 0
     private var overlayBackground: GradientDrawable? = null
     private var windowManager: WindowManager? = null
     private var prefs: SharedPreferences? = null
@@ -183,6 +185,27 @@ class BleKeepAliveService : Service() {
     private fun renderMembers(members: List<Map<String, Any?>>) {
         val rows = overlayRows ?: return
         rows.removeAllViews()
+        // 名称列 = 房间内最长名字的渲染宽度（同一房间所有行共用，短名字留白但心率位置对齐）。
+        // 与 lib/theme/overlay_metrics.dart 的 computeOverlayLayout 同一规则：
+        // nameWidth = max(measure(name)) + 2dp；bpmWidth = measure("888") + 2dp。
+        val namePaint = Paint().apply {
+            textSize = dp(12).toFloat()
+            typeface = Typeface.DEFAULT
+        }
+        val bpmPaint = Paint().apply {
+            textSize = dp(13).toFloat()
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        var longest = namePaint.measureText("宽")
+        for (member in members) {
+            val name = member["name"] as? String ?: "未命名成员"
+            val width = namePaint.measureText(name)
+            if (width > longest) longest = width
+        }
+        // 上限：屏宽 60%（超过才省略），与 Dart 侧 nameMaxScreenRatio 一致。
+        val cap = resources.displayMetrics.widthPixels * 0.6f
+        dynamicNameWidth = min(longest + dp(NAME_EXTRA_DP), cap)
+        dynamicBpmWidth = bpmPaint.measureText("888") + dp(NAME_EXTRA_DP)
         if (members.isEmpty()) {
             rows.addView(memberRow("等待成员加入房间", null, true, emptyList(), emptyList()))
         } else {
@@ -227,8 +250,8 @@ class BleKeepAliveService : Service() {
                 textSize = 12f
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-                // 定宽 + 省略号：名字长短不会把心率数字推得左右跳。
-                width = dp(NAME_WIDTH_DP)
+                // 定宽（= 房间内最长名宽）+ 省略号：短名字留白，心率位置不跳。
+                width = dynamicNameWidth
                 outline()
             },
         )
@@ -244,12 +267,12 @@ class BleKeepAliveService : Service() {
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.END
                 // 定宽 + 右对齐：心率位数变化时右侧折线不会左右抖。
-                width = dp(BPM_WIDTH_DP)
+                width = dynamicBpmWidth
                 outline()
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT,
-                ).apply { marginStart = dp(6) }
+                ).apply { marginStart = dp(GAP_DP) }
             },
         )
         // 关掉「显示折线图」时 Dart 侧不传点：这一行就只剩名称 + 心率，窗口随之变窄。
@@ -259,7 +282,7 @@ class BleKeepAliveService : Service() {
                     segments = points
                     this.bridges = bridges
                     layoutParams = LinearLayout.LayoutParams(dp(CHART_WIDTH_DP), dp(CHART_HEIGHT_DP))
-                        .apply { marginStart = dp(6) }
+                        .apply { marginStart = dp(GAP_DP) }
                 },
             )
         }
@@ -436,8 +459,9 @@ class BleKeepAliveService : Service() {
         /** 行数上限对应的最大高度（dp），超出就在窗口内部滚动。 */
         private const val MAX_ROWS_DP = 220
         // 与 lib/theme/overlay_metrics.dart 一一对应（CI 里有比对测试，改一处必须改两处）。
-        private const val NAME_WIDTH_DP = 96
-        private const val BPM_WIDTH_DP = 48
+        private const val GAP_DP = 8
+        private const val NAME_EXTRA_DP = 2
+        private const val CHART_WIDTH_DP_FALLBACK = 72
         private const val CHART_WIDTH_DP = 72
         private const val CHART_HEIGHT_DP = 20
 
