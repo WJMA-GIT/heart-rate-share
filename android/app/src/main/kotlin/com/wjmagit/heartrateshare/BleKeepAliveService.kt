@@ -441,7 +441,7 @@ class BleKeepAliveService : Service() {
         }
         return builder
             .setContentTitle("正在采集心率")
-            .setContentText("保持与心率带的连接，息屏后继续共享")
+            .setContentText("保持与蓝牙设备的连接，息屏后继续共享")
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setOngoing(true)
             .build()
