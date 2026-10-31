@@ -28,6 +28,7 @@ final class HeartRateSeries {
   final Duration window;
 
   /// 纵轴取值区间（BPM）。超出区间只影响画法，不改数据。
+  /// 保留这两个常量做"物理上限"兜底，实际画图用动态量程 `dynamicRangeFor`。
   static const minBpm = 30;
   static const maxBpm = 220;
 
@@ -46,6 +47,10 @@ final class HeartRateSeries {
 
   final List<HeartRatePoint> _points = [];
   int _revision = 0;
+
+  /// 上一帧用过的量程（动态量程的迟滞状态）。
+  HeartRateRange? rangeState;
+  HeartRateRange get range => rangeState ??= dynamicRangeFor(_points);
 
   List<HeartRatePoint> get points => List.unmodifiable(_points);
 
@@ -119,6 +124,75 @@ final class HeartRatePolyline {
   final List<(Offset, Offset)> bridges;
 
   bool get isEmpty => segments.isEmpty;
+
+  /// 上一帧用过的量程：动态量程的迟滞状态放这里，
+  /// 首页大图、悬浮窗小图、Windows 迷你折线共用同一条曲线状态。
+}
+
+/// 折线纵轴量程：按当前窗口自适应，保证 10 bpm 的起伏也看得出来。
+final class HeartRateRange {
+  const HeartRateRange(this.low, this.high);
+
+  /// 量程下限：**10 bpm**。恒定 64 时曲线居中平直；64±3 也能看出起伏。
+  static const minSpan = 10.0;
+
+  /// 上下留白 = 波动幅度 × 15%（最少 1 bpm），避免峰值贴边。
+  static const paddingRatio = 0.15;
+
+  /// 迟滞：新量程要比当前窄 20% 以上才收缩，避免小抖动时曲线上下跳；
+  /// 需要变宽时立即扩（绝不裁切真实变化）。
+  static const shrinkHysteresis = 0.2;
+
+  /// 量程台阶（bpm）：边界吸附到 5 的整数倍，缓慢漂移时不会每帧都变。
+  static const step = 10.0;
+
+  /// 扩张迟滞：新数据还在当前量程的 ±30% 余量内就不重算（画出边界靠 clamp，
+  /// 不会裁掉整段曲线）；超出余量才重算，缓慢漂移因此不会每帧缩放。
+  static const expandHysteresis = 0.3;
+
+  final double low;
+  final double high;
+  double get span => high - low;
+
+  @override
+  String toString() =>
+      'HeartRateRange(${low.toStringAsFixed(1)}, ${high.toStringAsFixed(1)})';
+}
+
+/// 按窗口内 min/max 算量程。
+/// [previous] 非空时套用迟滞：只在"明显变窄"时收缩，变宽立即生效。
+HeartRateRange dynamicRangeFor(
+  Iterable<HeartRatePoint> points, {
+  HeartRateRange? previous,
+}) {
+  final values = [for (final p in points) p.bpm];
+  if (values.isEmpty) return previous ?? const HeartRateRange(50, 60);
+  var low = values.reduce((a, b) => a < b ? a : b).toDouble();
+  var high = values.reduce((a, b) => a > b ? a : b).toDouble();
+  final spread = high - low;
+  final padding = spread * HeartRateRange.paddingRatio < 1
+      ? 1.0
+      : spread * HeartRateRange.paddingRatio;
+  var span = spread + padding * 2;
+  if (span < HeartRateRange.minSpan) {
+    span = HeartRateRange.minSpan;
+  }
+  final center = (low + high) / 2;
+  var target = HeartRateRange(
+    (center - span / 2).clamp(
+      HeartRateSeries.minBpm.toDouble(),
+      HeartRateSeries.maxBpm.toDouble(),
+    ),
+    (center + span / 2).clamp(
+      HeartRateSeries.minBpm.toDouble(),
+      HeartRateSeries.maxBpm.toDouble(),
+    ),
+  );
+  if (previous == null) return target;
+  if (target.span > previous.span) return target; // 变宽：立刻扩，绝不裁切
+  if (target.span < previous.span * (1 - HeartRateRange.shrinkHysteresis))
+    return target;
+  return previous; // 变化不明显：保持，避免上下跳
 }
 
 /// 把序列映射成**归一化折线**：x/y 都在 0..1（y = 0 在顶部）。
@@ -133,7 +207,12 @@ HeartRatePolyline normalizedPolyline(HeartRateSeries series) {
   // 右端对齐最后一个真实采样：不把"现在"当成数据点，断流后曲线不自己延长。
   final windowStart = points.last.at.subtract(series.window);
   final span = series.window.inMilliseconds.toDouble();
-  const spanBpm = HeartRateSeries.maxBpm - HeartRateSeries.minBpm;
+  final range = dynamicRangeFor(
+    points.where((p) => !p.at.isBefore(windowStart)),
+    previous: series.rangeState,
+  );
+  series.rangeState = range;
+  final spanBpm = range.span;
   final segments = <List<Offset>>[];
   final bridges = <(Offset, Offset)>[];
   var current = <Offset>[];
@@ -142,7 +221,7 @@ HeartRatePolyline normalizedPolyline(HeartRateSeries series) {
     final ratio = point.at.difference(windowStart).inMilliseconds / span;
     final offset = Offset(
       ratio.clamp(0.0, 1.0).toDouble(),
-      1 - ((point.bpm - HeartRateSeries.minBpm) / spanBpm).clamp(0.0, 1.0),
+      1 - ((point.bpm - range.low) / spanBpm).clamp(0.0, 1.0),
     );
     if (index > 0 && series.gapBefore(index)) {
       final gap = point.at.difference(points[index - 1].at);

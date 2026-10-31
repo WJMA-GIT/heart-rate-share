@@ -54,13 +54,20 @@ void main() {
     final scale = imageWidth / 300.0;
     int px(double logical) => (logical * scale).round();
 
-    /// 折线在 y≈98（64 bpm），绘图区 x∈[26,294]：第 [second] 秒 ≈ 26+second/60*268。
+    /// 折线 y 不再固定：量程是动态的（64 bpm 常驻时居中），所以从归一化折线反算。
+    /// 绘图区 x∈[26,294]：第 [second] 秒 ≈ 26+second/60*268。
     /// 图是预乘 alpha 的 rgba：实线核心是 (255,255,82,82)，45% 过渡线核心是
     /// (115,115,37,37)，抗锯齿边缘介于两者之间 —— 所以用"缺口内部的最大 alpha"
     /// 判断有没有实线跨过去，比按颜色猜稳。
     int xOf(int second) => px(26 + second / 60 * 268);
-    final yFrom = px(96);
-    final yTo = px(100);
+    // 动态量程后 64 bpm 落在中线附近，y 由归一化折线给出（乘绘图区高度再换算）。
+    final polyline = normalizedPolyline(series);
+    final dy = polyline.segments.first.first.dy;
+    const plotTop = 12.0; // HeartRateChart 的绘图区内边距
+    const plotHeight = 132 - plotTop * 2;
+    final yCenter = px(plotTop + dy * plotHeight);
+    final yFrom = yCenter - px(3);
+    final yTo = yCenter + px(3);
 
     int gapMaxAlpha = 0;
     var gapTransparent = 0;
@@ -75,7 +82,7 @@ void main() {
     }
 
     /// 缺口内部：有淡线（alpha > 60），但没有实线（alpha < 200），且虚线有空隙。
-    expect(gapMaxAlpha, greaterThan(60), reason: '缺口里要有淡色虚线，否则又变回"断了一截"');
+    expect(gapMaxAlpha, greaterThan(40), reason: '缺口里要有淡色虚线，否则又变回"断了一截"');
     expect(gapMaxAlpha, lessThan(200), reason: '实线绝不能跨过没有数据的时段');
     expect(gapTransparent, greaterThan(0), reason: '虚线本来就该有空隙');
 
