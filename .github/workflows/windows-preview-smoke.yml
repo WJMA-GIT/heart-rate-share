@@ -7,7 +7,8 @@ name: windows-preview-smoke
 #   3) startup.log 是千字节级（不是每帧刷栈的兆字节级），且没有 FlutterError。
 "on":
   push:
-    branches: [main, 'win/**']
+    # 分支模型收敛为三支后，Windows 的活直接提交到 windows（不再开临时分支）。
+    branches: [main, windows]
     paths:
       - 'windows/**'
       - 'native/windows/**'
