@@ -27,3 +27,14 @@
 - `branch-hygiene.yml`：push 到 main 或每周一自动删除**已合并进 main** 的临时分支；
   未合并的分支只告警不删（避免丢代码）。
 - `main` 受分支保护：禁止 force push、禁止删除。
+
+## 工具链版本（避免格式化/编译漂移）
+- 版本锚点在仓库根的 **`.fvmrc`**（当前 `3.47.8`）。本地用 `fvm use`（或直接安装同一版本），
+  CI 用 `subosito/flutter-action` 的 `flutter-version-file: .fvmrc` 读同一个文件。
+- 提交前本地跑：
+  ```
+  dart format --set-exit-if-changed lib test
+  flutter analyze   # 0 issue
+  flutter test      # 全量
+  ```
+- CI 的 format 门禁会先格式化再比对 `git diff`，文件名直接打在日志里（旧写法只说"1 file changed"）。
