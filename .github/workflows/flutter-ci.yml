@@ -172,9 +172,10 @@ jobs:
           v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
           [ -n "$v" ] || { echo "cannot parse version"; exit 1; }
           echo "resolved=$v" >> "$GITHUB_OUTPUT"
-      - name: Zip (免安装)
+      - name: Zip (免安装，含 README)
         shell: pwsh
         run: |
+          Copy-Item docs/win-run.txt build/windows/x64/runner/Release/README.txt -Force
           Compress-Archive -Path build/windows/x64/runner/Release/* `
             -DestinationPath "heartrate-${{ steps.ver.outputs.resolved }}-windows-x64.zip" -Force
       - uses: actions/upload-artifact@v4
@@ -232,6 +233,17 @@ jobs:
           pattern: windows-*
           path: assets
           merge-multiple: true
+      - name: Unwrap windows artifact (artifact 是 zip 套 zip)
+        run: |
+          set -euo pipefail
+          for z in assets/windows-*.zip; do
+            [ -e "$z" ] || continue
+            echo "unwrapping $z"
+            unzip -o -q "$z" -d assets/
+            rm -f "$z"
+          done
+          ls -lh assets/
+
       - name: Show assets
         run: ls -lh assets/
       - name: Create / update release
@@ -242,7 +254,7 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
                  --title "共享心率 $TAG" --generate-notes \
-                 --notes "Android release APK（按 ABI 分包，debug 签名，仅供真机测试，不可上架）。"
+                 --notes "Android APK（按 ABI 分包，可覆盖安装）与 Windows 免安装 zip（解压后双击 heartrate.exe；详见包内 README.txt）。"
           gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | .name + "  " + (.size|tostring) + " bytes"'

@@ -160,6 +160,77 @@ void main() {
     });
   });
 
+  group('资产选择：Windows zip 存在时 Android 仍只挑 APK', () {
+    Map<String, Object?> releaseWithZip() => {
+      'tag_name': 'v1.0.2',
+      'html_url':
+          'https://github.com/WJMA-GIT/heart-rate-share/releases/tag/v1.0.2',
+      'draft': false,
+      'prerelease': false,
+      'assets': [
+        {
+          'name': 'heartrate-1.0.2-windows-x64.zip',
+          'browser_download_url': 'https://example.invalid/win.zip',
+          'size': 12116457,
+        },
+        {
+          'name': 'heartrate-1.0.2-arm64-v8a-release.apk',
+          'browser_download_url': 'https://example.invalid/arm64.apk',
+          'size': 19229234,
+        },
+      ],
+    };
+
+    test('Android 只会选 APK，绝不选 Windows zip', () async {
+      final checker = UpdateChecker(
+        fetcher: (_) async => releaseWithZip(),
+        retryDelay: Duration.zero,
+      );
+      final result = await checker.check(
+        currentVersion: '1.0.1',
+        deviceAbi: 'arm64-v8a',
+      ) as UpdateAvailable;
+      expect(result.asset, isNotNull);
+      expect(result.asset!.name, endsWith('.apk'));
+      expect(result.asset!.name, contains('arm64-v8a'));
+      expect(result.asset!.name, isNot(contains('windows')));
+    });
+
+    test('v1.0.2 能被识别为更新（相对 1.0.1）', () async {
+      final checker = UpdateChecker(
+        fetcher: (_) async => releaseWithZip(),
+        retryDelay: Duration.zero,
+      );
+      final result = await checker.check(
+        currentVersion: '1.0.1',
+        deviceAbi: 'arm64-v8a',
+      );
+      expect(result, isA<UpdateAvailable>());
+      final available = result as UpdateAvailable;
+      expect(available.release.version.toString(), '1.0.2');
+    });
+
+    test('只有 zip 没有 APK 时：给"没有匹配安装包"，不去装错包', () async {
+      final json = releaseWithZip()
+        ..['assets'] = [
+          {
+            'name': 'heartrate-1.0.2-windows-x64.zip',
+            'browser_download_url': 'https://example.invalid/win.zip',
+            'size': 1,
+          },
+        ];
+      final checker = UpdateChecker(
+        fetcher: (_) async => json,
+        retryDelay: Duration.zero,
+      );
+      final result = await checker.check(
+        currentVersion: '1.0.1',
+        deviceAbi: 'arm64-v8a',
+      ) as UpdateAvailable;
+      expect(result.asset, isNull);
+    });
+  });
+
   group('检查失败的文案与重试', () {
     test('404（私有仓库/没有 Release）要说清楚，不能只说"网络错误"', () async {
       final checker = UpdateChecker(

@@ -343,6 +343,9 @@ final class LanProjectionServer {
             'room': roomCode,
             'port': portInUse,
             'name': displayName,
+            'platform': 'android',
+            'protocol': 1,
+            'members': _members.length,
           }),
         );
         try {

@@ -88,6 +88,9 @@ final class LanProjection extends ChangeNotifier {
     }
   }
 
+  /// 广播里用的设备名（昵称），PC 列表直接显示。
+  String get deviceName => _name.isEmpty ? 'Android' : _name;
+
   /// 手机自己的每次采样（1 Hz）都推给局域网客户端。
   void publishOwnSample({
     required String memberId,

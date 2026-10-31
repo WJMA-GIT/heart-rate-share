@@ -77,10 +77,12 @@ final class HeartRateService {
       return UnsupportedHeartRateSource('web', 'Not a target platform.');
     }
     if (Platform.isAndroid) return FlutterBluePlusSource();
+    // Windows：flutter_blue_plus 有 endorsed 的 WinRT 后端（flutter_blue_plus_winrt），
+    // 走同一个插件 API，所以这里复用同一份 FlutterBluePlusSource。
+    // 注意：构建机没有蓝牙，扫描/连接/订阅必须在带蓝牙的 Win10/11 上真机验证。
+    if (Platform.isWindows) return FlutterBluePlusSource();
     // TODO(iOS): Swift CoreBluetooth HRS central is a stub because native
     // background/restoration behavior must be designed and tested on hardware.
-    // TODO(Windows): C++/WinRT HRS central is a stub because adapter capability
-    // and the Store-packaged plugin boundary require real-device validation.
     return UnsupportedHeartRateSource(
       Platform.operatingSystem,
       'See native/${Platform.isIOS ? 'ios' : 'windows'} TODO stubs.',

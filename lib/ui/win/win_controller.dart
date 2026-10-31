@@ -3,29 +3,42 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../core/logging/app_logger.dart';
+import '../../ble/ble_models.dart';
+import '../../ble/heart_rate_service.dart';
+import '../../ble/heart_rate_sample.dart';
 import '../../core/lan/lan_projection_server.dart';
+import '../../core/logging/app_logger.dart';
 import '../../room/protocol.dart';
 import '../../room/room_client.dart';
 import '../widgets/heart_rate_chart.dart';
 
 /// 局域网里发现的一台手机（来自手机的 UDP 播发）。
+///
+/// 界面上只用 [name] / [platform] / [members] / 状态；房间码只在本对象内部用，
+/// 不展示给用户（用户拍板：不需要房间码）。
 final class LanPeer {
   LanPeer({
     required this.name,
     required this.room,
     required this.host,
     required this.port,
+    this.platform = 'android',
+    this.members = 0,
   });
 
   final String name;
   final String room;
   final String host;
   final int port;
+  final String platform;
+  final int members;
   DateTime lastSeen = DateTime.now();
 
-  String get id => '$host:$port/$room';
+  String get id => '$host:$port';
+
+  /// 不展示给用户，仅用于连接时带上（服务端已不校验）。
   Uri get uri => Uri(
     scheme: 'ws',
     host: host,
@@ -35,14 +48,23 @@ final class LanPeer {
   );
 }
 
-/// Windows 客户端的数据层：发现手机 → 连上手机的内网 WS → 把成员心率喂给折线。
-///
-/// 用的是**同一个** `RoomClient`（协议 v1 没变），所以 PC 端不需要第二套协议实现。
+enum WinTransport { none, ble, lan }
+
+/// Windows 客户端数据层：两条通路
+/// - **BLE 直连**（有蓝牙时优先）：复用 `HeartRateService`（flutter_blue_plus +
+///   Windows endorsed 的 WinRT 后端），扫描 0x180D → 连接 → 订阅 0x2A37；
+/// - **局域网投射**（没有蓝牙/没有设备时）：UDP 发现手机 → 点选 → 连手机内网 WS。
 final class WinController extends ChangeNotifier {
-  WinController({RoomClient? room, AppLogger? logger})
-    : _room =
-          room ?? RoomClient(displayName: 'Windows', memberId: _pcMemberId()),
-      _log = logger ?? AppLogger.instance {
+  WinController({
+    RoomClient? room,
+    HeartRateService? ble,
+    AppLogger? logger,
+    SharedPreferences? preferences,
+  }) : _room =
+           room ?? RoomClient(displayName: 'Windows', memberId: _pcMemberId()),
+       _ble = ble ?? HeartRateService(),
+       _log = logger ?? AppLogger.instance,
+       _prefs = preferences {
     _subs.add(
       _room.members.listen((members) {
         _members = members;
@@ -51,41 +73,92 @@ final class WinController extends ChangeNotifier {
       }),
     );
     _subs.add(_room.states.listen((_) => notifyListeners()));
+    _subs.add(
+      _ble.snapshots.listen((snapshot) {
+        _bleSnapshot = snapshot;
+        notifyListeners();
+      }),
+    );
+    _subs.add(_ble.samples.listen(_onBleSample));
   }
 
+  static const lastPeerKey = 'win.lastPeer';
+
   static String _pcMemberId() {
-    // 仅供局域网房间去重；不含任何设备标识。
     final rand = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
     return 'win-${rand.padLeft(12, '0').substring(0, 12)}';
   }
 
   final RoomClient _room;
+  final HeartRateService _ble;
   final AppLogger _log;
+  final SharedPreferences? _prefs;
   final List<StreamSubscription<Object?>> _subs = [];
   final List<LanPeer> _peers = [];
   final Map<String, HeartRateSeries> _series = {};
   final Map<String, DateTime> _lastSampleAt = {};
   RawDatagramSocket? _udp;
   List<MemberState> _members = const [];
-  String? _connectedRoom;
+  BleSnapshot _bleSnapshot = const BleSnapshot();
+  HeartRateSeries _bleSeries = HeartRateSeries();
+  int? _bleBpm;
+  DateTime? _bleLastSampleAt;
+  String? _connectedPeerName;
   String? _error;
 
   bool scanning = false;
   bool backgroundTransparent = true;
+  WinTransport transport = WinTransport.none;
 
   List<LanPeer> get peers => List.unmodifiable(_peers);
-  RoomConnectionState get state => _room.state;
-  bool get connected => _room.state == RoomConnectionState.connected;
+  RoomConnectionState get roomState => _room.state;
+  BleSnapshot get ble => _bleSnapshot;
+  bool get connected =>
+      transport == WinTransport.ble ||
+      _room.state == RoomConnectionState.connected;
   String? get error => _error;
-  String? get connectedRoom => _connectedRoom;
-  List<MemberState> get members => _members;
 
-  /// 当前走的是哪条通路（Phase 1 只有局域网；BLE 直连是 Phase 2）。
-  String get transportLabel => connected ? '局域网投射' : '未连接';
+  /// 界面显示的通路（必须能一眼看出走的是哪条）。
+  String get transportLabel {
+    switch (transport) {
+      case WinTransport.ble:
+        final id = _bleSnapshot.connectedDeviceId;
+        final name = _bleSnapshot.devices
+            .where((d) => d.id == id)
+            .map((d) => d.name.isEmpty ? d.id : d.name)
+            .firstOrNull;
+        return '蓝牙直连（${name ?? id ?? '设备'}）';
+      case WinTransport.lan:
+        return '局域网（${_connectedPeerName ?? '手机'}）';
+      case WinTransport.none:
+        return '未连接';
+    }
+  }
+
+  /// 蓝牙可用（适配器打开）时优先 BLE。
+  bool get bleAdapterOn =>
+      _bleSnapshot.adapterState == 'on' ||
+      _bleSnapshot.adapterState == 'poweredOn';
+  List<dynamic> get bleDevices => _bleSnapshot.devices;
 
   HeartRateSeries seriesFor(String memberId) =>
       _series.putIfAbsent(memberId, HeartRateSeries.new);
 
+  /// BLE 自己的那一行（成员名 = 设备名）。
+  HeartRateSeries get ownSeries => _bleSeries;
+  int? get ownBpm {
+    final last = _bleLastSampleAt;
+    if (last == null) return null;
+    if (DateTime.now().difference(last) > const Duration(seconds: 5)) {
+      return null;
+    }
+    return _bleBpm;
+  }
+
+  /// 局域网房间里的成员（不含 BLE 自己那行）。
+  List<MemberState> get members => _members;
+
+  /// 局域网行的实时心率（5 秒没更新就当没有）。
   int? liveBpm(MemberState member) {
     final last = _lastSampleAt[member.report.memberId];
     if (last == null) return null;
@@ -95,7 +168,8 @@ final class WinController extends ChangeNotifier {
     return member.report.bpm;
   }
 
-  /// 监听手机侧的 UDP 播发（8771）。10 秒没再听到就当离线。
+  // ------------------------------------------------------------------ 发现
+
   Future<void> startDiscovery() async {
     if (_udp != null) return;
     scanning = true;
@@ -120,13 +194,11 @@ final class WinController extends ChangeNotifier {
               DateTime.now().difference(p.lastSeen) >
               const Duration(seconds: 12),
         );
-        if (_peers.length != before) {
-          notifyListeners();
-        }
+        if (_peers.length != before) notifyListeners();
       });
     } catch (error, stack) {
       _log.error('win', 'discovery failed', null, error, stack);
-      _error = '无法监听局域网广播（端口 8771 可能被占用）';
+      _error = '无法监听局域网广播（端口 8771 被占用或被安全软件拦截）';
     }
     scanning = false;
     notifyListeners();
@@ -137,64 +209,120 @@ final class WinController extends ChangeNotifier {
       final json =
           jsonDecode(utf8.decode(datagram.data)) as Map<String, Object?>;
       if (json['app'] != 'heart-rate-share') return;
-      final room = json['room'] as String? ?? '';
       final port = json['port'] as int? ?? 0;
-      if (room.isEmpty || port <= 0) return;
+      if (port <= 0) return;
       final host = datagram.address.address;
       final peer = LanPeer(
         name: (json['name'] as String?) ?? host,
-        room: room,
+        room: (json['room'] as String?) ?? '',
         host: host,
         port: port,
+        platform: (json['platform'] as String?) ?? 'android',
+        members: (json['members'] as int?) ?? 0,
       );
       final index = _peers.indexWhere((p) => p.id == peer.id);
       if (index >= 0) {
-        _peers[index].lastSeen = DateTime.now();
+        _peers[index] = peer..lastSeen = DateTime.now();
       } else {
         _peers.add(peer);
       }
       notifyListeners();
     } catch (_) {
-      // 不是我们的包，忽略
+      // 不是我们的包
     }
   }
 
-  Future<bool> connect(LanPeer peer) =>
-      connectTo(peer.host, peer.port, peer.room);
+  /// 上次选过的设备（自动重连用）。
+  String? get lastPeerId => _prefs?.getString(lastPeerKey);
 
-  Future<bool> connectTo(String host, int port, String room) async {
+  // ------------------------------------------------------------------ 连接
+
+  Future<bool> connectPeer(LanPeer peer) async {
+    await _ble.disconnect().catchError((_) {});
     _error = null;
-    _connectedRoom = room;
+    transport = WinTransport.lan;
+    _connectedPeerName = peer.name;
     notifyListeners();
-    final uri = Uri(
-      scheme: 'ws',
-      host: host,
-      port: port,
-      path: '/ws',
-      queryParameters: {'room': room},
-    );
     try {
-      await _room.connect(uri);
+      await _room.connect(peer.uri);
+      await _prefs?.setString(lastPeerKey, peer.id);
       _log.info(
         'win',
-        'connected to $host:$port room=$room',
-        code: 'win_connected',
+        'lan connected ${peer.host}:${peer.port}',
+        code: 'win_lan_connected',
       );
       notifyListeners();
       return true;
     } catch (error) {
-      _error = '连不上 $host:$port（房间码或 Wi-Fi 不对？）';
-      _log.warn('win', 'connect failed: $error', code: 'win_connect_failed');
+      _error = '连不上 ${peer.name}（${peer.host}:${peer.port}）——检查 Wi-Fi 是否同一网段';
+      _log.warn('win', 'lan connect failed: $error', code: 'win_lan_failed');
+      transport = WinTransport.none;
       notifyListeners();
       return false;
     }
   }
 
-  Future<void> disconnect() async {
-    await _room.disconnect();
-    _connectedRoom = null;
+  /// 手动兜底：直接填 IP:端口（广播被挡时用）。
+  Future<bool> connectManual(String address) async {
+    final parts = address.trim().split(':');
+    final host = parts.first;
+    final port = parts.length > 1
+        ? int.tryParse(parts[1]) ?? LanProjectionServer.defaultPort
+        : LanProjectionServer.defaultPort;
+    return connectPeer(LanPeer(name: host, room: '', host: host, port: port));
+  }
+
+  /// BLE：扫描心率设备（插件侧已按 0x180D 过滤）。
+  Future<void> scanBle() async {
+    _error = null;
+    notifyListeners();
+    try {
+      await _ble.scan();
+    } catch (error) {
+      _error = '蓝牙扫描失败：$error（确认系统蓝牙已打开、设备已配对/在附近）';
+      _log.warn('win', 'ble scan failed: $error', code: 'win_ble_scan_failed');
+    }
+    notifyListeners();
+  }
+
+  Future<bool> connectBle(String deviceId) async {
+    _error = null;
+    try {
+      await _room.disconnect();
+      await _ble.connect(deviceId);
+      transport = WinTransport.ble;
+      _connectedPeerName = null;
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _error = '蓝牙连接失败：$error';
+      transport = WinTransport.none;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  void _onBleSample(HeartRateSample sample) {
+    final last = _bleSeries.latest;
+    if (last == null || sample.receivedAt.isAfter(last.at)) {
+      _bleSeries.add(HeartRatePoint(at: sample.receivedAt, bpm: sample.bpm));
+    }
+    _bleBpm = sample.bpm;
+    _bleLastSampleAt = DateTime.now();
+    if (transport != WinTransport.ble) transport = WinTransport.ble;
+    notifyListeners();
+  }
+
+  Future<void> disconnectAll() async {
+    await _room.disconnect().catchError((_) {});
+    await _ble.disconnect().catchError((_) {});
+    _connectedPeerName = null;
     _series.clear();
     _lastSampleAt.clear();
+    _bleSeries = HeartRateSeries();
+    _bleBpm = null;
+    _bleLastSampleAt = null;
+    transport = WinTransport.none;
     notifyListeners();
   }
 
@@ -224,6 +352,7 @@ final class WinController extends ChangeNotifier {
     _udp?.close();
     _udp = null;
     unawaited(_room.dispose());
+    unawaited(_ble.dispose());
     super.dispose();
   }
 }
