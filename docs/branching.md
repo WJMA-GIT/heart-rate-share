@@ -1,0 +1,29 @@
+# 分支模型（三条长期分支）
+
+| 分支 | 谁推 | 用途 |
+|---|---|---|
+| `main` | 线 A（发布人） | **只做整合与发布**：合并 `android`/`windows`、打 tag、建 Release、推镜像 |
+| `android` | 线 A | 安卓与共享 Dart 层（`lib/**` 除 `lib/ui/win/**`、`android/**`、`test/**`） |
+| `windows` | 线 B | Windows 原生与桌面 Dart（`windows/**`、`lib/ui/win/**`、`lib/main.dart` 的 Windows 分支） |
+
+## 流程
+1. 各自在自己分支上提交，**不要跨线改文件**。
+2. 完成后由线 A 合并进 `main`：`android` → `main`、`windows` → `main`。
+3. 合并方式：**逐 hunk / 逐文件合并，禁止整份覆盖**。冲突时按"文件所有权"解决：
+   `windows/**`、`lib/ui/win/**` 归线 B；其余归线 A。
+4. 合并后必须校验关键实现仍在（防覆盖丢代码）：
+   - `WS_THICKFRAME` + `WM_NCHITTEST`（窗口可拖边缩放）
+   - `HEARTRATE_PREVIEW`（mock 连接态开关）
+   - `::swscanf_s`（window_state 读取，`std::` 下没有）
+   - `lib/ui/win/win_app.dart` 中无 `version: 'x.y.z'` 字面量（版本走 `AppVersion.read()`）
+5. 回归：`dart format` → `flutter analyze`（0 issue）→ `flutter test`（全量）→ Windows release 构建
+   → 单文件 loader 冒烟（三模式 + 最小目录 + 冷/热启动 + 载荷截断）→ `windows-preview-smoke` 绿。
+6. 发布：只有 `main` 能打 tag。
+   ```
+   tag vX.Y.Z → 资产仅 heartrate-X.Y.Z-arm64-v8a-release.apk + heartrate-X.Y.Z-windows-x64.exe
+   ```
+
+## 自动化
+- `branch-hygiene.yml`：push 到 main 或每周一自动删除**已合并进 main** 的临时分支；
+  未合并的分支只告警不删（避免丢代码）。
+- `main` 受分支保护：禁止 force push、禁止删除。

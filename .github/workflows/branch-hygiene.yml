@@ -1,0 +1,36 @@
+name: branch-hygiene
+
+# 三支模型（main / android / windows）的护栏：自动删掉已合并进 main 的临时分支。
+# 只删「已合并且不是三条长期分支」的分支；未合并的一律保留并在日志里点名，
+# 避免把没进 main 的代码删掉（丢代码是第一红线）。
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete merged temporary branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          keep="main android windows"
+          gh api "repos/$GITHUB_REPOSITORY/branches" --paginate --jq '.[].name' > /tmp/branches.txt
+          while read -r b; do
+            [ -z "$b" ] && continue
+            case " $keep " in *" $b "*) echo "keep $b"; continue;; esac
+            if gh api "repos/$GITHUB_REPOSITORY/compare/main...$b" --jq '.ahead_by' | grep -qx 0; then
+              echo "delete merged branch: $b"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$b" || echo "::warning::删除失败（可能受保护）：$b"
+            else
+              echo "::warning::分支 $b 尚未合并进 main，保留（请人工合并或删除）"
+            fi
+          done < /tmp/branches.txt

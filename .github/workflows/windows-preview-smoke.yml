@@ -82,19 +82,28 @@ jobs:
           $proc = Start-Process -FilePath $exe -ArgumentList '--connected-preview' -PassThru
           Write-Host "started pid=$($proc.Id)"
 
-          # 等两种界面都切换过（预览每 6 秒翻一次连接状态，40 秒足够跑 2~3 轮）
-          $deadline = (Get-Date).AddSeconds(40)
+          # 日志是按行 flush 的，读的时候可能刚好读到半行：轮询 + 收尾再读一次，
+          # 不靠 sleep 猜时序。预览每 6 秒翻一次连接状态，45 秒够跑 3~4 轮。
+          function Read-LogText([string]$path) {
+            if (-not (Test-Path $path)) { return '' }
+            try { return (Get-Content $path -Raw) } catch { return '' }
+          }
+
+          $deadline = (Get-Date).AddSeconds(45)
           $text = ''
-          while ((Get-Date) -lt $deadline) {
+          do {
             Start-Sleep -Milliseconds 500
             if (-not (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)) {
               throw 'heartrate.exe 在冒烟过程中退出了'
             }
-            if (Test-Path $log) {
-              $text = Get-Content $log -Raw
-              if ($text -match 'ui_mode: full -> compact' -and $text -match 'ui_mode: compact -> full') { break }
-            }
-          }
+            $text = Read-LogText $log
+          } while ((Get-Date) -lt $deadline -and
+                   -not ($text -match 'ui_mode: full -> compact' -and
+                         $text -match 'ui_mode: compact -> full'))
+
+          # 最后一行可能在上一轮读取之后才落盘：再等 1 秒重读一次再判定。
+          Start-Sleep -Seconds 1
+          $text = Read-LogText $log
           if (-not (Test-Path $log)) { throw '没有生成 startup.log' }
           Get-Content $log | ForEach-Object { Write-Host $_ }
 
@@ -102,6 +111,8 @@ jobs:
           if ($text -notmatch 'ui_mode: compact -> full') { throw '日志里没有 ui_mode: compact -> full（断开后没回完整界面）' }
           if ($text -match 'FlutterError|Null check operator') { throw '日志里出现 Flutter 错误（渲染/布局异常）' }
           if ($text -notmatch 'preview: connected-preview on') { throw '预览开关没生效（Dart 侧没收到 --connected-preview）' }
+          # 原生侧把命令行开关翻译成环境变量这一步，单独断言：失败时一眼能定位是哪一侧。
+          if ($text -notmatch 'mode safe=0 opaque=0 preview=1') { throw '命令行 --connected-preview 没有被翻译成 HEARTRATE_PREVIEW（原生侧）' }
 
           # 千字节级：正常启动的日志是几 KB，1.8MB 那种是每帧刷栈
           $size = (Get-Item $log).Length
