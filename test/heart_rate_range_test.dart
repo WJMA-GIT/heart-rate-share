@@ -23,6 +23,53 @@ double _yRange(List<int> bpms) {
 }
 
 void main() {
+  group('纵轴刻度跟随动态量程', () {
+    List<int> ticksFor(List<int> bpms) {
+      final series = _series(bpms);
+      normalizedPolyline(series); // 让 rangeState 生效
+      return heartRateTicks(series.range);
+    }
+
+    test('64±3：刻度覆盖窗内 min/max、整数、等差', () {
+      final series = _series([61, 67, 61, 67]);
+      final polyline = normalizedPolyline(series);
+      final ticks = heartRateTicks(series.range);
+      expect(ticks.length, inInclusiveRange(2, 6));
+      expect(ticks.first, lessThanOrEqualTo(61));
+      expect(ticks.last, greaterThanOrEqualTo(67));
+      final step = ticks[1] - ticks[0];
+      for (var i = 1; i < ticks.length; i++) {
+        expect(ticks[i] - ticks[i - 1], step, reason: '刻度必须等差');
+        expect(ticks[i], isA<int>());
+      }
+      // 曲线不越出绘图区（y ∈ 0..1）
+      final ys = [for (final seg in polyline.segments) ...seg.map((o) => o.dy)];
+      expect(ys.every((y) => y >= 0 && y <= 1), isTrue);
+      expect(ticks, isNotEmpty);
+    });
+
+    test('60→140：刻度覆盖到 140，且与 64±3 的刻度不同（确实在变）', () {
+      final narrow = ticksFor([61, 67, 61, 67]);
+      final wide = ticksFor([60, 60, 140, 140]);
+      expect(wide.first, lessThanOrEqualTo(60));
+      expect(wide.last, greaterThanOrEqualTo(140));
+      final step = wide[1] - wide[0];
+      for (var i = 1; i < wide.length; i++) {
+        expect(wide[i] - wide[i - 1], step);
+      }
+      expect(wide, isNot(equals(narrow)), reason: '量程变了刻度必须跟着变');
+    });
+
+    test('恒定 64：刻度围绕 64 且量程 ≥10', () {
+      final series = _series(List.filled(10, 64));
+      normalizedPolyline(series);
+      final ticks = heartRateTicks(series.range);
+      expect(ticks.first, lessThanOrEqualTo(64));
+      expect(ticks.last, greaterThanOrEqualTo(64));
+      expect(series.range.span, greaterThanOrEqualTo(HeartRateRange.minSpan));
+    });
+  });
+
   test('恒定 64：量程至少 10 bpm，曲线居中平直', () {
     final series = _series(List.filled(20, 64));
     final polyline = normalizedPolyline(series);

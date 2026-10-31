@@ -199,6 +199,28 @@ HeartRateRange dynamicRangeFor(
   return previous; // 变化不明显：保持，避免上下跳
 }
 
+/// 纵轴刻度：**与曲线同一份量程**（`series.range`），整数、等差 3–5 档。
+/// 最低刻度 ≤ 量程下界、最高刻度 ≥ 量程上界，因此曲线永远画在刻度范围内。
+List<int> heartRateTicks(HeartRateRange range) {
+  const steps = [2, 5, 10, 20, 25, 50];
+  var step = steps.last;
+  for (final candidate in steps) {
+    final count = (range.span / candidate).ceil() + 1;
+    if (count >= 3 && count <= 5) {
+      step = candidate;
+      break;
+    }
+  }
+  final low = (range.low / step).floor() * step;
+  final high = (range.high / step).ceil() * step;
+  final ticks = <int>[];
+  for (var value = low; value <= high; value += step) {
+    ticks.add(value.toInt());
+  }
+  if (ticks.length < 2) ticks.add((low + step).toInt());
+  return ticks;
+}
+
 /// 把序列映射成**归一化折线**：x/y 都在 0..1（y = 0 在顶部）。
 ///
 /// 这是首页 132dp 大图与悬浮窗小图**唯一**的一份画法：两端只负责把归一化点
@@ -369,8 +391,16 @@ final class _ChartPainter extends CustomPainter {
     final gridPaint = Paint()
       ..color = grid
       ..strokeWidth = 1;
-    for (final bpm in const [60, 120, 180]) {
-      final y = _y(bpm, plot);
+    // 刻度与曲线共用 series.range（同一帧同一份量程）：
+    // 量程一跳，网格与数字同帧跟着走，不会出现"曲线动了刻度没动"。
+    final ticks = heartRateTicks(series.range);
+    final first = ticks.first;
+    final last = ticks.last;
+    final tickSpan = (last - first) == 0 ? 1 : (last - first);
+    for (final bpm in ticks) {
+      final y =
+          plot.bottom -
+          ((bpm - first) / tickSpan).clamp(0.0, 1.0) * plot.height;
       canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), gridPaint);
       _text(canvas, '$bpm', Offset(plot.left - 4, y), alignRight: true);
     }
@@ -442,13 +472,6 @@ final class _ChartPainter extends CustomPainter {
       final end = (pos + dash).clamp(0.0, length);
       canvas.drawLine(from + step * pos, from + step * end, paint);
     }
-  }
-
-  double _y(int bpm, Rect plot) {
-    final ratio =
-        (bpm - HeartRateSeries.minBpm) /
-        (HeartRateSeries.maxBpm - HeartRateSeries.minBpm);
-    return plot.bottom - ratio.clamp(0.0, 1.0).toDouble() * plot.height;
   }
 
   void _text(
