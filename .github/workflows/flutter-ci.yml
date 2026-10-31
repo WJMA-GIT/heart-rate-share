@@ -318,6 +318,16 @@ jobs:
             Start-Sleep -Seconds 8
             $again = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
             if (-not $again) { throw "[$name] heartrate.exe 在 8 秒内退出" }
+            # 解压布局：exe 必须在根级（不能多一层 build/win-stage），且没有 window_manager
+            if (-not (Test-Path (Join-Path $appDir 'heartrate.exe'))) {
+              throw "[$name] 自解压目录里没有根级 heartrate.exe：$appDir"
+            }
+            if (Test-Path (Join-Path $appDir 'build')) {
+              throw "[$name] 自解压多了一层 build 目录（打包时带了前缀）"
+            }
+            if (Test-Path (Join-Path $appDir 'window_manager_plugin.dll')) {
+              throw "[$name] 解压目录里仍有 window_manager_plugin.dll"
+            }
             $log = Join-Path $logDir 'startup.log'
             if (-not (Test-Path $log)) { throw "[$name] 没有 startup.log" }
             Get-Content $log | ForEach-Object { Write-Host $_ }
@@ -333,16 +343,6 @@ jobs:
             }
             Stop-Process -Id $proc.Id -Force
             Write-Host "[$name] OK"
-          }
-
-          if (-not (Test-Path (Join-Path $appDir 'heartrate.exe'))) {
-            throw "自解压目录里没有 heartrate.exe：$appDir"
-          }
-          if (Test-Path (Join-Path $appDir 'build')) {
-            throw "自解压多了一层 build 目录（打包时带了前缀）"
-          }
-          if (Test-Path (Join-Path $appDir 'window_manager_plugin.dll')) {
-            throw '解压目录里仍有 window_manager_plugin.dll'
           }
 
           Try-Mode 'normal' 'mode: safe=0 opaque=0'
