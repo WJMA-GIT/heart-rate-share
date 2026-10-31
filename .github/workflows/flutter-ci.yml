@@ -248,7 +248,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $ver = '${{ steps.ver.outputs.resolved }}'
+          # 直接读 pubspec，别依赖 job outputs（跨 job 串号时会出现 expected 1.0.11 这种）
+          $ver = ((Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9A-Za-z.\-]+)\+').Matches.Groups[1].Value)
+          if ([string]::IsNullOrWhiteSpace($ver)) { throw 'cannot parse version from pubspec.yaml' }
+          Write-Host "resolved from pubspec: $ver"
           $stage = 'build/win-stage'
           Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $stage | Out-Null
@@ -323,7 +326,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $ver = '${{ steps.ver.outputs.resolved }}'
+          # 直接读 pubspec，别依赖 job outputs（跨 job 串号时会出现 expected 1.0.11 这种）
+          $ver = ((Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9A-Za-z.\-]+)\+').Matches.Groups[1].Value)
+          if ([string]::IsNullOrWhiteSpace($ver)) { throw 'cannot parse version from pubspec.yaml' }
+          Write-Host "resolved from pubspec: $ver"
           $exe = (Resolve-Path "heartrate-$ver-windows-x64.exe").Path
           # 中文 + 空格路径（用户机器就是 D:\默认下载）
           $cnDir = Join-Path $env:SystemDrive '默认下载 冒烟'
