@@ -221,8 +221,10 @@ jobs:
           if (-not $sevenZip) { throw '7z.exe not found on runner' }
 
           # 找 SFX 模块：先看 7-Zip 安装目录，再从官方 extra 包取（版本会变，用页面发现+固定回退）
+          # 只要 7zS.sfx（安装器版）：只有它保证 RunProgram 在解压后自动执行。
+          # 7z.sfx 是自解压"外壳"版，实测不会自动启动（1.0.4/1.0.5 的问题）。
           $sfx = $null
-          foreach ($name in @('7zS.sfx', '7z.sfx')) {
+          foreach ($name in @('7zS.sfx')) {
             $candidate = Join-Path (Split-Path $sevenZip) $name
             if (Test-Path $candidate) { $sfx = $candidate; Write-Host "sfx local: $candidate"; break }
           }
@@ -233,6 +235,7 @@ jobs:
               $urls += ([regex]::Matches($html, 'a/7z[0-9]+-extra\.7z') |
                 ForEach-Object { 'https://www.7-zip.org/' + $_.Value } | Select-Object -Unique)
             } catch { Write-Host 'download.html unreachable' }
+            # 2301 是官方 extra 包里确实存在的版本（实测 url 200）
             $urls += 'https://www.7-zip.org/a/7z2301-extra.7z'
             foreach ($u in $urls) {
               try {
@@ -241,8 +244,7 @@ jobs:
                 $found = Get-ChildItem '7zextra' -Recurse -Filter '7zS.sfx' -ErrorAction SilentlyContinue |
                   Select-Object -First 1
                 if (-not $found) {
-                  $found = Get-ChildItem '7zextra' -Recurse -Filter '7z.sfx' -ErrorAction SilentlyContinue |
-                    Select-Object -First 1
+                  Write-Host "extra package has no 7zS.sfx"
                 }
                 if ($found) { $sfx = $found.FullName; Write-Host "sfx from $u"; break }
               } catch { Write-Host "skip $u : $($_.Exception.Message)" }
