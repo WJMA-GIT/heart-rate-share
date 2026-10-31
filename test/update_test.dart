@@ -210,6 +210,64 @@ void main() {
       expect(available.release.version.toString(), '1.0.2');
     });
 
+    test('assets 里有 exe 时也不会被选中（只认 .apk）', () async {
+      final json = {
+        'tag_name': 'v1.0.3',
+        'html_url':
+            'https://github.com/WJMA-GIT/heart-rate-share/releases/tag/v1.0.3',
+        'draft': false,
+        'prerelease': false,
+        'assets': [
+          {
+            'name': 'heartrate-1.0.3-windows-x64.exe',
+            'browser_download_url': 'https://example.invalid/win.exe',
+            'size': 25000000,
+          },
+          {
+            'name': 'heartrate-1.0.3-arm64-v8a-release.apk',
+            'browser_download_url': 'https://example.invalid/arm64.apk',
+            'size': 19000000,
+          },
+        ],
+      };
+      final checker = UpdateChecker(
+        fetcher: (_) async => json,
+        retryDelay: Duration.zero,
+      );
+      final result = await checker.check(
+        currentVersion: '1.0.2',
+        deviceAbi: 'arm64-v8a',
+      ) as UpdateAvailable;
+      expect(result.asset!.name, endsWith('.apk'));
+      expect(result.asset!.name, isNot(contains('.exe')));
+    });
+
+    test('只有 exe 没有 APK 时：不给包（不装错东西）', () async {
+      final json = {
+        'tag_name': 'v1.0.3',
+        'html_url':
+            'https://github.com/WJMA-GIT/heart-rate-share/releases/tag/v1.0.3',
+        'draft': false,
+        'prerelease': false,
+        'assets': [
+          {
+            'name': 'heartrate-1.0.3-windows-x64.exe',
+            'browser_download_url': 'https://example.invalid/win.exe',
+            'size': 1,
+          },
+        ],
+      };
+      final checker = UpdateChecker(
+        fetcher: (_) async => json,
+        retryDelay: Duration.zero,
+      );
+      final result = await checker.check(
+        currentVersion: '1.0.2',
+        deviceAbi: 'arm64-v8a',
+      ) as UpdateAvailable;
+      expect(result.asset, isNull);
+    });
+
     test('只有 zip 没有 APK 时：给"没有匹配安装包"，不去装错包', () async {
       final json = releaseWithZip()
         ..['assets'] = [

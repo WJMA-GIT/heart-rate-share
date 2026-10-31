@@ -10,6 +10,7 @@ import 'core/config/app_config.dart';
 import 'core/l10n/strings_zh.dart';
 import 'core/logging/app_logger.dart';
 import 'core/platform/room_overlay.dart';
+import 'core/platform/startup_log.dart';
 import 'core/profile/connection_profile.dart';
 import 'core/profile/install_identity.dart';
 import 'core/profile/user_profile_store.dart';
@@ -26,7 +27,17 @@ Future<void> main() async {
   // 桌面（Windows）走独立的悬浮窗界面：没有 BLE/悬浮窗服务/安装器这些 Android 能力，
   // 数据通路是「连手机的内网投射服务」，复用同一个 RoomClient 与折线画法。
   if (!kIsWeb && Platform.isWindows) {
-    await runWinApp();
+    // 桌面：先接住所有 Dart 异常并落到 startup.log（和原生 runner 同一份），
+    // 用户只要回传这一个文件就能定位"双击没反应"。
+    StartupLog.attach(platform: 'windows');
+    StartupLog.installHandlers();
+    try {
+      await runWinApp();
+    } catch (error, stack) {
+      StartupLog.info('fatal during startup: $error');
+      StartupLog.info('$stack');
+      rethrow;
+    }
     return;
   }
   var appVersion = '';

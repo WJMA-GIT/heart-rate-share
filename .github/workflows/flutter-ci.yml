@@ -110,8 +110,9 @@ jobs:
           EOF
           chmod 600 android/key.properties
           echo "keystore decoded: $(stat -c%s "$KS") bytes"
-      - name: Build split-per-abi release APKs
-        run: flutter build apk --release --split-per-abi
+      # 只出 arm64-v8a：另外两个 ABI 已停用（用户明确只要 v8a，省时长省体积）
+      - name: Build arm64-v8a release APK
+        run: flutter build apk --release --target-platform android-arm64 --split-per-abi
       - name: Print APK signing certificate
         run: |
           set -euo pipefail
@@ -131,10 +132,9 @@ jobs:
           APP_VERSION: ${{ steps.ver.outputs.resolved }}
         run: |
           mkdir -p out
-          for f in build/app/outputs/flutter-apk/app-*-release.apk; do
-            abi=$(basename "$f" | sed -E 's/^app-(.*)-release\.apk$/\1/')
-            cp "$f" "out/heartrate-${APP_VERSION}-${abi}-release.apk"
-          done
+          # 只保留 arm64-v8a 一个资产
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+             "out/heartrate-${APP_VERSION}-arm64-v8a-release.apk"
           ls -lh out/
       - uses: actions/upload-artifact@v4
         with:
@@ -165,6 +165,31 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter build windows --release
+      - name: Sync Runner.rc version from pubspec
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9.]+)\+').Matches.Groups[1].Value
+          $rc = 'windows/runner/Runner.rc'
+          (Get-Content $rc) -replace 'VERSION_AS_STRING "[0-9.]+"', "VERSION_AS_STRING `"$ver`"" |
+            Set-Content $rc -Encoding UTF8
+          Write-Host "Runner.rc version -> $ver"
+      - name: Bundle VC++ runtime DLLs
+        shell: pwsh
+        run: |
+          # 不打包 CRT 的话，没装过 VC++ 2015-2022 运行库的机器会"双击秒退"（loader 失败，
+          # 连我们的 startup.log 都进不去）。运行时 DLL 是允许随程序分发的。
+          $dest = 'build/windows/x64/runner/Release'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            $vs = & $vswhere -latest -products * -property installationPath
+            $crt = Get-ChildItem -Path "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory -ErrorAction SilentlyContinue |
+              Sort-Object Name -Descending | Select-Object -First 1
+            if ($crt) {
+              Copy-Item "$($crt.FullName)\*.dll" $dest -Force
+              Write-Host "copied CRT from $($crt.FullName)"
+            } else { Write-Warning 'CRT redist not found' }
+          } else { Write-Warning 'vswhere not found' }
+          Get-ChildItem $dest -Filter *.dll | Select-Object Name
       - name: Resolve app version from pubspec
         id: ver
         shell: bash
@@ -172,16 +197,65 @@ jobs:
           v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
           [ -n "$v" ] || { echo "cannot parse version"; exit 1; }
           echo "resolved=$v" >> "$GITHUB_OUTPUT"
-      - name: Zip (免安装，含 README)
+      # 单文件 exe：7-Zip SFX（自解压）。双击 → 解到 %LOCALAPPDATA%\heartrate\app\<ver> → 启动。
+      # 不是安装包：不写注册表、不要管理员、不弹 UAC；卸载 = 删那个目录。
+      - name: Build single-file exe (7z SFX)
         shell: pwsh
         run: |
-          Copy-Item docs/win-run.txt build/windows/x64/runner/Release/README.txt -Force
-          Compress-Archive -Path build/windows/x64/runner/Release/* `
-            -DestinationPath "heartrate-${{ steps.ver.outputs.resolved }}-windows-x64.zip" -Force
+          $ErrorActionPreference = 'Stop'
+          $ver = '${{ steps.ver.outputs.resolved }}'
+          $stage = 'build/win-stage'
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item 'build/windows/x64/runner/Release/*' $stage -Recurse -Force
+          Copy-Item docs/win-run.txt "$stage/README.txt" -Force
+
+          $sevenZip = @(
+            'C:\Program Files\7-Zip\7z.exe',
+            'C:\Program Files (x86)\7-Zip\7z.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $sevenZip) { throw '7z.exe not found on runner' }
+          $sfx = Join-Path (Split-Path $sevenZip) '7zS.sfx'
+          if (-not (Test-Path $sfx)) {
+            # 官方 extra 包里有 SFX 模块；版本号会变，按候选列表逐个试
+            $urls = @(
+              'https://www.7-zip.org/a/7z2409-extra.7z',
+              'https://www.7-zip.org/a/7z2408-extra.7z',
+              'https://www.7-zip.org/a/7z2500-extra.7z',
+              'https://www.7-zip.org/a/7z2501-extra.7z'
+            )
+            foreach ($u in $urls) {
+              try {
+                Invoke-WebRequest $u -OutFile '7zextra.7z' -UseBasicParsing -ErrorAction Stop
+                & $sevenZip x '7zextra.7z' -o'7zextra' -y | Out-Null
+                $found = Get-ChildItem '7zextra' -Recurse -Filter '7zS.sfx' -ErrorAction SilentlyContinue |
+                  Select-Object -First 1
+                if ($found) { $sfx = $found.FullName; Write-Host "sfx from $u"; break }
+              } catch { Write-Host "skip $u" }
+            }
+          }
+          if (-not (Test-Path $sfx)) { throw '7zS.sfx not available（没有退回 zip，按约定停下）' }
+
+          # 只保留必需键，少一个未知键就少一个在别人机器上弹配置错误的风险
+          $config = ";!@Install@!UTF-8!`r`nTitle=`"共享心率 $ver`"`r`nRunProgram=`"heartrate.exe`"`r`nGUIMode=`"2`"`r`nInstallPath=`"%LOCALAPPDATA%\heartrate\app\$ver`"`r`nOverwriteMode=`"2`"`r`n;!@InstallEnd@!`r`n"
+          Set-Content -Path 'sfx-config.txt' -Value $config -Encoding UTF8
+
+          & $sevenZip a -t7z 'payload.7z' "$stage\*" -mx=9 | Out-Null
+
+          $out = "heartrate-$ver-windows-x64.exe"
+          # SFX 模块 + 配置 + 载荷 = 一个可双击的 exe
+          cmd /c "copy /b `"$sfx`" + `"sfx-config.txt`" + `"payload.7z`" `"$out`"" | Out-Null
+          if (-not (Test-Path $out)) { throw 'SFX exe not produced' }
+          Get-Item $out | Select-Object Name, Length
+          # 基本自检：MZ 头 + 内含 7z 签名 + 不是 zip
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $out))
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'not a PE file' }
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          if (-not $text.Contains('7z')) { throw 'payload missing' }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ github.sha }}
-          path: heartrate-*-windows-x64.zip
+          path: heartrate-*-windows-x64.exe
           if-no-files-found: error
           retention-days: 14
 
