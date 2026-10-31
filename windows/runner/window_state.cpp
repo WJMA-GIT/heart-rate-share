@@ -63,7 +63,7 @@ bool LoadWindowRect(RECT* rect, bool* maximized) {
   int width = 0;
   int height = 0;
   int is_maximized = 0;
-  if (std::swscanf_s(line, L"%d %d %d %d %d", &x, &y, &width, &height, &is_maximized) != 5) {
+  if (::swscanf_s(line, L"%d %d %d %d %d", &x, &y, &width, &height, &is_maximized) != 5) {
     return false;
   }
   if (width < kMinWidth || height < kMinHeight) return false;
