@@ -32,8 +32,12 @@ Future<void> main() async {
     // 用户只要回传这一个文件就能定位"双击没反应"。
     StartupLog.attach(platform: 'windows');
     StartupLog.installHandlers();
+    // --connected-preview（runner 把它翻译成 HEARTRATE_PREVIEW=1，和 SAFE_MODE 同一套）：
+    // 注入 mock 成员并强制已连接，供 windows-preview-smoke 用。
+    final preview = Platform.environment['HEARTRATE_PREVIEW'] == '1';
+    if (preview) StartupLog.info('preview: connected-preview on');
     try {
-      await runWinApp();
+      await runWinApp(preview: preview);
     } catch (error, stack) {
       StartupLog.info('fatal during startup: $error');
       StartupLog.info('$stack');

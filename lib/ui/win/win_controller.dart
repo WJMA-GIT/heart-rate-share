@@ -60,6 +60,7 @@ final class WinController extends ChangeNotifier {
     HeartRateService? ble,
     AppLogger? logger,
     SharedPreferences? preferences,
+    this.preview = false,
   }) : _room =
            room ?? RoomClient(displayName: 'Windows', memberId: _pcMemberId()),
        _injectedBle = ble,
@@ -111,6 +112,12 @@ final class WinController extends ChangeNotifier {
 
   final RoomClient _room;
   final HeartRateService? _injectedBle;
+
+  /// `--connected-preview`：注入 mock 成员并强制「已连接」（CI 冒烟用）。
+  final bool preview;
+  bool _previewOnline = true;
+  Timer? _previewTick;
+  Timer? _previewCycle;
   HeartRateService? _ble;
   bool _bleFailed = false;
   final AppLogger _log;
@@ -135,9 +142,12 @@ final class WinController extends ChangeNotifier {
   List<LanPeer> get peers => List.unmodifiable(_peers);
   RoomConnectionState get roomState => _room.state;
   BleSnapshot get ble => _bleSnapshot;
-  bool get connected =>
-      transport == WinTransport.ble ||
-      _room.state == RoomConnectionState.connected;
+  bool get connected {
+    if (preview) return _previewOnline;
+    return transport == WinTransport.ble ||
+        _room.state == RoomConnectionState.connected;
+  }
+
   String? get error => _error;
 
   /// 界面显示的通路（必须能一眼看出走的是哪条）。
@@ -373,6 +383,54 @@ final class WinController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ------------------------------------------------- 预览（--connected-preview）
+
+  /// 没有手机也没有心率带时，也要把「连接 → 全透明精简态 → 断开」走一遍：
+  /// 注入 3 个 mock 成员，每 6 秒切一次连接状态（CI 冒烟据此断言两种界面都出现过）。
+  void startPreview() {
+    transport = WinTransport.lan;
+    _connectedPeerName = '预览设备';
+    _previewSample();
+    _previewTick = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _previewSample(),
+    );
+    _previewCycle = Timer.periodic(const Duration(seconds: 6), (_) {
+      _previewOnline = !_previewOnline;
+      notifyListeners();
+    });
+    _log.info('win', 'preview: mock members on', code: 'win_preview_on');
+  }
+
+  static const _previewNames = ['预览一号', '预览二号', '预览三号'];
+
+  void _previewSample() {
+    final now = DateTime.now();
+    final base = 62 + now.second % 17;
+    _members = [
+      for (var i = 0; i < _previewNames.length; i++)
+        MemberState(
+          report: HeartRateReport(
+            memberId: 'preview-$i',
+            displayName: _previewNames[i],
+            bpm: base + i * 3,
+            rrIntervalsMs: const [],
+            sensorContact: true,
+            sequence: now.second,
+            measuredAt: now,
+          ),
+          lastSeen: now,
+          online: true,
+        ),
+    ];
+    for (final member in _members) {
+      final report = member.report;
+      seriesFor(report.memberId).add(HeartRatePoint(at: now, bpm: report.bpm));
+      _lastSampleAt[report.memberId] = now;
+    }
+    notifyListeners();
+  }
+
   void _track(List<MemberState> members) {
     final now = DateTime.now();
     for (final member in members) {
@@ -391,6 +449,8 @@ final class WinController extends ChangeNotifier {
     for (final sub in _subs) {
       unawaited(sub.cancel());
     }
+    _previewTick?.cancel();
+    _previewCycle?.cancel();
     _udp?.close();
     _udp = null;
     unawaited(_room.dispose());

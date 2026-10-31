@@ -37,7 +37,31 @@ void startWindowDrag() {
 }
 
 /// 最小化 / 关闭：无边框窗口没有系统按钮，自己发 Win32 消息。
-void _postCommand(int command) {
+void _postCommand(int command) => _post(0x0112, command, 0); // WM_SYSCOMMAND
+
+void minimizeWindow() => _postCommand(0xF020); // SC_MINIMIZE
+void closeWindow() => _postCommand(0xF060); // SC_CLOSE
+
+// ---------------------------------------------------------------- 窗口尺寸
+
+// 三条 WM_APP 消息，对应 windows/runner/win32_window.cpp 里的同名分支：
+// 尺寸统一用 DIP 传，DPI 折算全部留在原生的 ClientToWindow 一处。
+const int _wmAppMinClientSize = 0x8001;
+const int _wmAppCompact = 0x8002;
+const int _wmAppClientSize = 0x8003;
+
+/// 最小客户区（DIP）：720×480，乘当前 UI 缩放后由 runner 的 WM_GETMINMAXINFO 兜住。
+void setWindowMinSize(double width, double height) =>
+    _post(_wmAppMinClientSize, width.round(), height.round());
+
+/// 透明精简态进/出：进的时候 runner 记下当前矩形，出去时原样还原。
+void setCompactWindow(bool compact) => _post(_wmAppCompact, compact ? 1 : 0, 0);
+
+/// 按内容改客户区（DIP）：精简态宽度按内容、高度按行数。
+void setWindowClientSize(double width, double height) =>
+    _post(_wmAppClientSize, width.round(), height.round());
+
+void _post(int message, int wparam, int lparam) {
   if (!Platform.isWindows) return;
   try {
     final user32 = DynamicLibrary.open('user32.dll');
@@ -52,13 +76,13 @@ void _postCommand(int command) {
         >('PostMessageW');
     final hwnd = getForegroundWindow();
     if (hwnd == 0) return;
-    const wmSysCommand = 0x0112;
-    postMessage(hwnd, wmSysCommand, command, 0);
-  } catch (_) {}
+    // 发给自己进程的前台窗口：点「连接」/拖缩放时窗口必然在前台。
+    // shortcut: 首帧之前发出的消息可能丢（窗口还没显示），原生默认 720×480 兜底。
+    postMessage(hwnd, message, wparam, lparam);
+  } catch (_) {
+    // 消息发不出去不影响功能（最小尺寸原生默认就是 720×480）
+  }
 }
-
-void minimizeWindow() => _postCommand(0xF020); // SC_MINIMIZE
-void closeWindow() => _postCommand(0xF060); // SC_CLOSE
 
 /// 真退出（结束进程），不是最小化。
 void quitApp() {

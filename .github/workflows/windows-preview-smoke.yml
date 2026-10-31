@@ -1,0 +1,130 @@
+name: windows-preview-smoke
+
+# Windows 目录的界面冒烟（线 B）。
+# --connected-preview 注入 mock 成员并强制「已连接」，断言：
+#   1) startup.log 里 full -> compact 与 compact -> full 两种切换都出现过；
+#   2) 进程全程存活、窗口带 WS_THICKFRAME（拖边框能缩放），且能回到完整界面尺寸（>=720x480）；
+#   3) startup.log 是千字节级（不是每帧刷栈的兆字节级），且没有 FlutterError。
+"on":
+  push:
+    branches: [main, 'win/**']
+    paths:
+      - 'windows/**'
+      - 'native/windows/**'
+      - 'lib/ui/win/**'
+      - 'lib/main.dart'
+      - '.github/workflows/windows-preview-smoke.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - 'native/windows/**'
+      - 'lib/ui/win/**'
+      - 'lib/main.dart'
+      - '.github/workflows/windows-preview-smoke.yml'
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.47.8'
+
+jobs:
+  windows-preview-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Build (release)
+        run: flutter build windows --release
+      - name: Preview smoke (--connected-preview)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path 'build/windows/x64/runner/Release/heartrate.exe').Path
+          $logDir = Join-Path $env:LOCALAPPDATA 'heartrate\logs'
+          $log = Join-Path $logDir 'startup.log'
+          # 干净起点：日志和上次的窗口几何都清掉，否则可能命中缓存直接"看起来通过"
+          Remove-Item $logDir -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item (Join-Path $env:LOCALAPPDATA 'heartrate\window.state') -Force -ErrorAction SilentlyContinue
+          Get-Process heartrate -ErrorAction SilentlyContinue | Stop-Process -Force
+
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public class HrsWin {
+            public delegate bool EnumProc(IntPtr hwnd, IntPtr lparam);
+            [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr lparam);
+            [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+            [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
+            [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+            [StructLayout(LayoutKind.Sequential)]
+            public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+            public static IntPtr Main(uint pid) {
+              IntPtr found = IntPtr.Zero;
+              EnumWindows(delegate(IntPtr hwnd, IntPtr lparam) {
+                uint owner;
+                GetWindowThreadProcessId(hwnd, out owner);
+                if (owner == pid && (GetWindowLong(hwnd, -16) & 0x10000000) != 0) {
+                  found = hwnd;
+                  return false;
+                }
+                return true;
+              }, IntPtr.Zero);
+              return found;
+            }
+          }
+          "@
+
+          $proc = Start-Process -FilePath $exe -ArgumentList '--connected-preview' -PassThru
+          Write-Host "started pid=$($proc.Id)"
+
+          # 等两种界面都切换过（预览每 6 秒翻一次连接状态，40 秒足够跑 2~3 轮）
+          $deadline = (Get-Date).AddSeconds(40)
+          $text = ''
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+            if (-not (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)) {
+              throw 'heartrate.exe 在冒烟过程中退出了'
+            }
+            if (Test-Path $log) {
+              $text = Get-Content $log -Raw
+              if ($text -match 'ui_mode: full -> compact' -and $text -match 'ui_mode: compact -> full') { break }
+            }
+          }
+          if (-not (Test-Path $log)) { throw '没有生成 startup.log' }
+          Get-Content $log | ForEach-Object { Write-Host $_ }
+
+          if ($text -notmatch 'ui_mode: full -> compact') { throw '日志里没有 ui_mode: full -> compact（连上后没进精简态）' }
+          if ($text -notmatch 'ui_mode: compact -> full') { throw '日志里没有 ui_mode: compact -> full（断开后没回完整界面）' }
+          if ($text -match 'FlutterError|Null check operator') { throw '日志里出现 Flutter 错误（渲染/布局异常）' }
+          if ($text -notmatch 'preview: connected-preview on') { throw '预览开关没生效（Dart 侧没收到 --connected-preview）' }
+
+          # 千字节级：正常启动的日志是几 KB，1.8MB 那种是每帧刷栈
+          $size = (Get-Item $log).Length
+          Write-Host "startup.log size = $size bytes"
+          if ($size -lt 1024) { throw "startup.log 太小（$size bytes），可能没跑到界面" }
+          if ($size -gt 65536) { throw "startup.log 异常膨胀：$size bytes" }
+
+          # 窗口层面：能缩放（WS_THICKFRAME），且完整界面下不小于最小尺寸 720x480
+          $hwnd = [HrsWin]::Main([uint32]$proc.Id)
+          if ($hwnd -eq [IntPtr]::Zero) { throw '找不到主窗口' }
+          $style = [HrsWin]::GetWindowLong($hwnd, -16)
+          if (($style -band 0x00040000) -eq 0) { throw '窗口没有 WS_THICKFRAME，拖边框仍然不能缩放' }
+
+          $bigEnough = $false
+          for ($i = 0; $i -lt 24; $i++) {
+            $rect = New-Object HrsWin+RECT
+            [void][HrsWin]::GetWindowRect($hwnd, [ref]$rect)
+            $w = $rect.Right - $rect.Left
+            $h = $rect.Bottom - $rect.Top
+            if ($w -ge 700 -and $h -ge 450) { $bigEnough = $true; Write-Host "full window = ${w}x${h}"; break }
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not $bigEnough) { throw '完整界面从没达到 720x480（最小尺寸/几何恢复没生效）' }
+
+          Get-Process -Id $proc.Id | Stop-Process -Force
+          Write-Host 'preview smoke OK'

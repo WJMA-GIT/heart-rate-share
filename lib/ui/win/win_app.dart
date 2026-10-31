@@ -22,9 +22,13 @@ import 'win_drag.dart';
 /// 字号 12/14/16/20/28、圆角 8/12/16。页面本身不碰平台能力，纯数据驱动，
 /// 便于 golden 截图（`test/win_ui_golden_test.dart`）。
 final class WinApp extends StatefulWidget {
-  const WinApp({this.controller, super.key});
+  const WinApp({this.controller, this.preview = false, super.key});
 
   final WinController? controller;
+
+  /// `--connected-preview`：注入 mock 成员并强制「已连接」，给 CI 冒烟用
+  /// （`windows-preview-smoke` 断言 full→compact→full 两种界面真的切换过）。
+  final bool preview;
 
   @override
   State<WinApp> createState() => _WinAppState();
@@ -38,6 +42,10 @@ final class _WinAppState extends State<WinApp> {
   bool _safeMode = false;
   _Section _section = _Section.connect;
   double _scale = 1.0;
+
+  /// 当前界面形态（`full` / `compact`）：只用来打切换日志，顺带防重复推窗口消息。
+  String _uiMode = 'full';
+  String _pushedMetrics = '';
 
   /// 缩放持久化键（0.8–1.6，步进 0.1）。
   static const _scaleKey = 'win.scale';
@@ -63,18 +71,58 @@ final class _WinAppState extends State<WinApp> {
 
   WinController get _controller => _controllerOrNull!;
 
+  /// 窗口形态跟着「连接状态 + 缩放」走：最小尺寸、精简态内容尺寸、切换日志。
+  /// 用签名去重，只有真的变了才发一次 Win32 消息（每帧都发会把消息队列灌满）。
+  void _syncWindow(bool connected) {
+    final mode = connected ? 'compact' : 'full';
+    final rows = _compactRowCount();
+    final signature = '$mode/${_scale.toStringAsFixed(1)}/$rows';
+    if (mode != _uiMode) {
+      StartupLog.info('ui_mode: $_uiMode -> $mode');
+      _uiMode = mode;
+      _pushedMetrics = '';
+    }
+    if (signature == _pushedMetrics) return;
+    _pushedMetrics = signature;
+    if (!connected) {
+      setCompactWindow(false);
+      setWindowMinSize(_minWindowWidth * _scale, _minWindowHeight * _scale);
+      return;
+    }
+    // 全透明精简态：宽度按内容（三列固定宽 + 内边距），高度按行数（8 行封顶）。
+    final width = _CompactMetrics.width * _scale;
+    final height = _CompactMetrics.height(rows) * _scale;
+    setCompactWindow(true);
+    setWindowMinSize(width, height);
+    setWindowClientSize(width, height);
+  }
+
+  /// 精简态要几行：蓝牙一行 + 房间成员，8 行封顶（多出来的人靠滚轮看）。
+  int _compactRowCount() {
+    final controller = _controllerOrNull;
+    if (controller == null) return 0;
+    final extra = controller.transport == WinTransport.ble ? 1 : 0;
+    final rows = extra + controller.members.length;
+    return rows > _CompactMetrics.maxRows ? _CompactMetrics.maxRows : rows;
+  }
+
   @override
   void initState() {
     super.initState();
     _safeMode = Platform.environment['HEARTRATE_SAFE_MODE'] == '1';
     StartupLog.info('win: init (safeMode=$_safeMode)');
     try {
-      final controller = widget.controller ?? WinController();
+      final controller =
+          widget.controller ?? WinController(preview: widget.preview);
       _owns = widget.controller == null;
       _controllerOrNull = controller;
       controller.addListener(_onChange);
       _loadScale();
-      if (!_safeMode) controller.startDiscovery();
+      if (widget.preview) {
+        controller.startPreview();
+      } else if (!_safeMode) {
+        controller.startDiscovery();
+      }
       StartupLog.info('win: ready');
     } catch (error, stack) {
       _fatal = error;
@@ -110,6 +158,8 @@ final class _WinAppState extends State<WinApp> {
   Widget build(BuildContext context) {
     final connected =
         _fatal == null && _controllerOrNull != null && _controller.connected;
+    // 在 build 里推窗口尺寸：这里是唯一同时知道「连接状态 + 缩放」的地方。
+    _syncWindow(connected);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: WinTheme.data(),
@@ -132,32 +182,40 @@ final class _WinAppState extends State<WinApp> {
             )
           : Scaffold(
               backgroundColor: WinColors.bg,
-              body: Column(
-                children: [
-                  _TopBar(
-                    controller: _controller,
-                    safeMode: _safeMode,
-                    scale: _scale,
-                    onZoomIn: () => _bumpScale(0.1),
-                    onZoomOut: () => _bumpScale(-0.1),
-                    onToggleSection: (section) =>
-                        setState(() => _section = section),
-                    section: _section,
-                  ),
-                  Expanded(
-                    child: Row(
-                      children: [
-                        _NavRail(
-                          section: _section,
-                          onSelect: (section) =>
-                              setState(() => _section = section),
-                          onDrag: startWindowDrag,
+              body: LayoutBuilder(
+                builder: (context, constraints) {
+                  // 窄于阈值（×缩放）就把导航折叠成图标，宽度让给内容。
+                  final iconOnly =
+                      constraints.maxWidth < _narrowLayoutWidth * _scale;
+                  return Column(
+                    children: [
+                      _TopBar(
+                        controller: _controller,
+                        safeMode: _safeMode,
+                        scale: _scale,
+                        onZoomIn: () => _bumpScale(0.1),
+                        onZoomOut: () => _bumpScale(-0.1),
+                        onToggleSection: (section) =>
+                            setState(() => _section = section),
+                        section: _section,
+                      ),
+                      Expanded(
+                        child: Row(
+                          children: [
+                            _NavRail(
+                              section: _section,
+                              iconOnly: iconOnly,
+                              onSelect: (section) =>
+                                  setState(() => _section = section),
+                              onDrag: startWindowDrag,
+                            ),
+                            Expanded(child: _page()),
+                          ],
                         ),
-                        Expanded(child: _page()),
-                      ],
-                    ),
-                  ),
-                ],
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
     );
@@ -173,6 +231,7 @@ final class _WinAppState extends State<WinApp> {
           devices: [for (final d in c.bleDevices) d],
           peers: c.peers,
           error: c.error,
+          scale: _scale,
           onScanBle: c.scanBle,
           onConnectBle: c.connectBle,
           onConnectPeer: (peer) async {
@@ -191,6 +250,7 @@ final class _WinAppState extends State<WinApp> {
           ownBpm: c.ownBpm,
           ownSeries: c.ownSeries,
           showBleRow: c.transport == WinTransport.ble,
+          scale: _scale,
         );
       case _Section.settings:
         return SettingsView(
@@ -429,18 +489,22 @@ final class _NavRail extends StatelessWidget {
     required this.section,
     required this.onSelect,
     required this.onDrag,
+    required this.iconOnly,
   });
 
   final _Section section;
   final ValueChanged<_Section> onSelect;
   final VoidCallback onDrag;
 
+  /// 窄窗口下的图标模式：只剩图标（168 → 64），把宽度让给内容。
+  final bool iconOnly;
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onPanStart: (_) => onDrag(),
       child: Container(
-        width: 168,
+        width: iconOnly ? 64 : 168,
         decoration: const BoxDecoration(
           color: WinColors.surface,
           border: Border(right: BorderSide(color: WinColors.line)),
@@ -452,13 +516,14 @@ final class _NavRail extends StatelessWidget {
             _item(Icons.groups_outlined, '房间', _Section.room),
             _item(Icons.tune, '设置', _Section.settings),
             const Spacer(),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                '拖动标题栏移动窗口',
-                style: winText(11, color: WinColors.textDim),
+            if (!iconOnly)
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  '拖动标题栏移动窗口',
+                  style: winText(11, color: WinColors.textDim),
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -467,39 +532,78 @@ final class _NavRail extends StatelessWidget {
 
   Widget _item(IconData icon, String label, _Section target) {
     final selected = section == target;
+    final item = Container(
+      height: 40,
+      padding: EdgeInsets.symmetric(horizontal: iconOnly ? 0 : 10),
+      decoration: BoxDecoration(
+        color: selected ? WinColors.surfaceHigh : Colors.transparent,
+        borderRadius: BorderRadius.circular(AppRadius.button),
+      ),
+      child: Row(
+        mainAxisAlignment: iconOnly
+            ? MainAxisAlignment.center
+            : MainAxisAlignment.start,
+        children: [
+          Icon(
+            icon,
+            size: 16,
+            color: selected ? WinColors.accent : WinColors.textDim,
+          ),
+          if (!iconOnly) const SizedBox(width: 10),
+          if (!iconOnly)
+            Text(
+              label,
+              style: winText(
+                14,
+                color: selected ? WinColors.text : WinColors.textDim,
+              ),
+            ),
+        ],
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.button),
         onTap: () => onSelect(target),
-        child: Container(
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: selected ? WinColors.surfaceHigh : Colors.transparent,
-            borderRadius: BorderRadius.circular(AppRadius.button),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 16,
-                color: selected ? WinColors.accent : WinColors.textDim,
-              ),
-              const SizedBox(width: 10),
-              Text(
-                label,
-                style: winText(
-                  14,
-                  color: selected ? WinColors.text : WinColors.textDim,
-                ),
-              ),
-            ],
-          ),
-        ),
+        // 图标模式下没有文字，靠 Tooltip 说明。
+        child: iconOnly ? Tooltip(message: label, child: item) : item,
       ),
     );
   }
+}
+
+/// 完整界面的最小客户区（DIP，×UI 缩放后生效）：720×480 是导航 + 内容
+/// 都还放得下的宽度，再小就只能靠滚动看了。
+const double _minWindowWidth = 720;
+const double _minWindowHeight = 480;
+
+/// 自适应阈值（都乘当前 UI 缩放，放大后按比例提前收）：
+/// 窗口窄于它就折叠导航、设备表丢掉 RSSI 列；够宽才把成员卡片排成两列。
+const double _narrowLayoutWidth = 900;
+const double _wideLayoutWidth = 1000;
+
+/// 精简态尺寸：宽度按内容（三列固定宽 + 内边距），高度按行数（8 行封顶）。
+/// 这几个数必须和 `_CompactRow` 里的列宽一致，否则窗口和内容对不上。
+abstract final class _CompactMetrics {
+  static const double padding = 8;
+  static const double verticalPadding = 6;
+  // 列宽/行高不再本地定义：与手机悬浮窗共用 OverlayMetrics（CI 里比对 Dart↔Kotlin）。
+  static const double nameWidth = OverlayMetrics.nameWidth;
+  static const double bpmWidth = OverlayMetrics.bpmWidth;
+  static const double gap = 6;
+  static const double chartWidth = OverlayMetrics.chartWidth;
+  static const double rowHeight = OverlayMetrics.rowHeight;
+
+  /// 断开按钮那一行 + 与行列表的间距（按钮自带内边距，留宽一点免得被裁）。
+  static const double footer = 48;
+  static const int maxRows = 8;
+
+  static double get width =>
+      nameWidth + bpmWidth + gap + chartWidth + padding * 2;
+
+  static double height(int rows) =>
+      rowHeight * (rows < 1 ? 1 : rows) + footer + verticalPadding * 2;
 }
 
 /// 连接成功后的全透明精简态：只有「名称 | 心率大字 | 迷你折线 | 断开」。
@@ -540,31 +644,30 @@ final class _CompactView extends StatelessWidget {
         ),
       );
     }
-    // 高度上限 + 内部滚动：人多时窗口不再无限长高（列宽与手机悬浮窗同一份常量）。
-
+    final maxListHeight =
+        _CompactMetrics.rowHeight * _CompactMetrics.maxRows * scale;
     return GestureDetector(
       onPanStart: (_) => startWindowDrag(),
       behavior: HitTestBehavior.translucent,
       child: ColoredBox(
         // 与原生颜色键一致：这一色被抠成全透明，内容照常不透明。
         color: const Color(0xFF010203),
-        child: Padding(
+        // 用户手动把窗口拉小时整块可滚，不至于变成黄色溢出条。
+        child: SingleChildScrollView(
           padding: EdgeInsets.symmetric(
-            horizontal: 8 * scale,
-            vertical: 6 * scale,
+            horizontal: _CompactMetrics.padding * scale,
+            vertical: _CompactMetrics.verticalPadding * scale,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: OverlayMetrics.maxListHeight * scale,
-                ),
-                child: SingleChildScrollView(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: rows),
-                ),
+                // 8 行封顶：人再多也只占这么高，滚轮在这块里滚，不拖整窗。
+                constraints: BoxConstraints(maxHeight: maxListHeight),
+                child: SingleChildScrollView(child: Column(children: rows)),
               ),
-              const SizedBox(height: 4),
+              SizedBox(height: 4 * scale),
               Align(
                 alignment: Alignment.centerRight,
                 child: OutlinedButton.icon(
@@ -581,7 +684,8 @@ final class _CompactView extends StatelessWidget {
   }
 }
 
-/// 三列固定宽：名称 96×scale / 心率 48×scale 右对齐 / 折线 72×scale。名字再长也不挤动数值。
+/// 三列固定宽：名称 / 心率右对齐 / 折线（宽度都来自 `_CompactMetrics`，
+/// 窗口就是按它算出来的）。名字再长也不挤动数值。
 final class _CompactRow extends StatelessWidget {
   const _CompactRow({
     required this.name,
@@ -599,11 +703,11 @@ final class _CompactRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    height: OverlayMetrics.rowHeight * scale,
+    height: _CompactMetrics.rowHeight * scale,
     child: Row(
       children: [
         SizedBox(
-          width: OverlayMetrics.nameWidth * scale,
+          width: _CompactMetrics.nameWidth * scale,
           child: Tooltip(
             message: name,
             child: Text(
@@ -618,7 +722,7 @@ final class _CompactRow extends StatelessWidget {
           ),
         ),
         SizedBox(
-          width: OverlayMetrics.bpmWidth * scale,
+          width: _CompactMetrics.bpmWidth * scale,
           child: Text(
             online ? (bpm?.toString() ?? '--') : '--',
             textAlign: TextAlign.right,
@@ -629,10 +733,10 @@ final class _CompactRow extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(width: 6),
+        SizedBox(width: _CompactMetrics.gap * scale),
         SizedBox(
-          width: OverlayMetrics.chartWidth * scale,
-          height: OverlayMetrics.chartHeight * scale,
+          width: _CompactMetrics.chartWidth * scale,
+          height: 18 * scale,
           child: CustomPaint(painter: WinSparklinePainter(series)),
         ),
       ],
@@ -653,6 +757,7 @@ final class ConnectView extends StatelessWidget {
     required this.onConnectBle,
     required this.onConnectPeer,
     required this.onConnectManual,
+    this.scale = 1,
     super.key,
   });
 
@@ -666,8 +771,14 @@ final class ConnectView extends StatelessWidget {
   final Future<void> Function(dynamic peer) onConnectPeer;
   final Future<bool> Function(String address) onConnectManual;
 
+  /// UI 缩放：自适应阈值跟着它走（放大 1.6 后在同样的窗口宽度下提前变窄）。
+  final double scale;
+
   @override
   Widget build(BuildContext context) {
+    // 窄窗口先丢 RSSI 这一列（次要信息），别把名称和连接按钮挤没。
+    final narrow =
+        MediaQuery.sizeOf(context).width < _narrowLayoutWidth * scale;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -697,9 +808,13 @@ final class ConnectView extends StatelessWidget {
               else
                 Column(
                   children: [
-                    _TableHeader(),
+                    _TableHeader(narrow: narrow),
                     for (final device in devices)
-                      _BleRow(device: device, onConnect: onConnectBle),
+                      _BleRow(
+                        device: device,
+                        narrow: narrow,
+                        onConnect: onConnectBle,
+                      ),
                   ],
                 ),
             ],
@@ -837,9 +952,16 @@ final class _ManualIpRowState extends State<_ManualIpRow> {
 }
 
 final class _BleRow extends StatelessWidget {
-  const _BleRow({required this.device, required this.onConnect});
+  const _BleRow({
+    required this.device,
+    required this.onConnect,
+    this.narrow = false,
+  });
   final dynamic device;
   final Future<bool> Function(String id) onConnect;
+
+  /// 窄窗口：RSSI 是次要列，先丢它（名称/类型/按钮留着）。
+  final bool narrow;
 
   @override
   Widget build(BuildContext context) {
@@ -874,14 +996,18 @@ final class _BleRow extends StatelessWidget {
                   ),
                 ),
               ),
-              SizedBox(
-                width: 64,
-                child: Text(
-                  '${device.rssi}',
-                  textAlign: TextAlign.right,
-                  style: winText(AppTextSize.caption, color: WinColors.textDim),
+              if (!narrow)
+                SizedBox(
+                  width: 64,
+                  child: Text(
+                    '${device.rssi}',
+                    textAlign: TextAlign.right,
+                    style: winText(
+                      AppTextSize.caption,
+                      color: WinColors.textDim,
+                    ),
+                  ),
                 ),
-              ),
               const SizedBox(width: 12),
               FilledButton(
                 onPressed: () => onConnect(device.id),
@@ -896,6 +1022,10 @@ final class _BleRow extends StatelessWidget {
 }
 
 final class _TableHeader extends StatelessWidget {
+  const _TableHeader({this.narrow = false});
+
+  final bool narrow;
+
   @override
   Widget build(BuildContext context) => SizedBox(
     height: 32,
@@ -915,14 +1045,15 @@ final class _TableHeader extends StatelessWidget {
             style: winText(AppTextSize.caption, color: WinColors.textDim),
           ),
         ),
-        SizedBox(
-          width: 64,
-          child: Text(
-            'RSSI',
-            textAlign: TextAlign.right,
-            style: winText(AppTextSize.caption, color: WinColors.textDim),
+        if (!narrow)
+          SizedBox(
+            width: 64,
+            child: Text(
+              'RSSI',
+              textAlign: TextAlign.right,
+              style: winText(AppTextSize.caption, color: WinColors.textDim),
+            ),
           ),
-        ),
         const SizedBox(width: 76),
       ],
     ),
@@ -941,6 +1072,7 @@ final class RoomView extends StatelessWidget {
     required this.ownBpm,
     required this.ownSeries,
     required this.showBleRow,
+    this.scale = 1,
     super.key,
   });
 
@@ -952,6 +1084,9 @@ final class RoomView extends StatelessWidget {
   final int? ownBpm;
   final HeartRateSeries ownSeries;
   final bool showBleRow;
+
+  /// UI 缩放：列数阈值与卡片高度都跟着它走。
+  final double scale;
 
   @override
   Widget build(BuildContext context) {
@@ -984,6 +1119,11 @@ final class RoomView extends StatelessWidget {
         ),
       );
     }
+    // 够宽才排两列，窄了单列；卡片高度固定在 96×缩放，列数变高度不变。
+    final windowWidth = MediaQuery.sizeOf(context).width;
+    final contentWidth = windowWidth - 200; // 导航 168 + 内容区外边距
+    final columns = windowWidth >= _wideLayoutWidth * scale ? 2 : 1;
+    final cardWidth = (contentWidth - 12 * (columns - 1)) / columns;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -997,8 +1137,8 @@ final class RoomView extends StatelessWidget {
           )
         else
           GridView.count(
-            crossAxisCount: 2,
-            childAspectRatio: 3.1,
+            crossAxisCount: columns,
+            childAspectRatio: cardWidth / (96 * scale),
             mainAxisSpacing: 12,
             crossAxisSpacing: 12,
             shrinkWrap: true,
@@ -1352,10 +1492,10 @@ final class WinSparklinePainter extends CustomPainter {
 }
 
 /// Windows 入口。
-Future<void> runWinApp() async {
+Future<void> runWinApp({bool preview = false}) async {
   WidgetsFlutterBinding.ensureInitialized();
   StartupLog.stage('win: runApp');
-  runApp(const WinApp());
+  runApp(WinApp(preview: preview));
 }
 
 String winTransportHint() => Zh.lanTitle;
