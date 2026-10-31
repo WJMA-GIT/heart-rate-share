@@ -43,19 +43,16 @@ final class _WinAppState extends State<WinApp> {
   bool _safeMode = false;
   _Section _section = _Section.connect;
   double _scale = 1.0;
-  String _version = '...';
 
   /// 当前界面形态（`full` / `compact`）：只用来打切换日志，顺带防重复推窗口消息。
   String _uiMode = 'full';
   String _pushedMetrics = '';
 
+  /// 设置页显示的版本号：启动读一次（PackageInfo → exe 版本资源），不再手写死。
+  String _version = '—';
+
   /// 缩放持久化键（0.8–1.6，步进 0.1）。
   static const _scaleKey = 'win.scale';
-
-  Future<void> _loadVersion() async {
-    final value = await AppVersion.read();
-    if (mounted) setState(() => _version = value);
-  }
 
   Future<void> _loadScale() async {
     try {
@@ -74,6 +71,12 @@ final class _WinAppState extends State<WinApp> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_scaleKey, _scale);
     } catch (_) {}
+  }
+
+  /// 版本号只读一次（全应用唯一入口 `AppVersion`），不要放进 build 里反复异步读。
+  Future<void> _loadVersion() async {
+    final value = await AppVersion.read();
+    if (mounted) setState(() => _version = value);
   }
 
   WinController get _controller => _controllerOrNull!;
