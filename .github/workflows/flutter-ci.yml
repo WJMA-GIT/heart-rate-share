@@ -31,13 +31,6 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
-      # 桌面界面截图（离屏渲染的真实产物，不是 mock）：连接页 / 房间页
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: win-ui-screenshots
-          path: build/win-screenshots/*.png
-          if-no-files-found: warn
 
   # ------------------------------------------------------- 平台工程存在性探测
   # 仓库目前只有 android/；ios/ 与 windows/ 工程补齐后，下面的 job 会自动启用，
@@ -475,17 +468,8 @@ jobs:
           done
           ls -lh assets/
 
-      # 界面截图也作为发布资产（公开仓库，浏览器点开就能看）
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: win-ui-screenshots
-          path: shots
       - name: Show assets
-        run: |
-          set -euo pipefail
-          if [ -d shots ]; then cp -v shots/ui-*.png assets/ || true; fi
-          ls -lh assets/
+        run: ls -lh assets/
       - name: Create / update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -494,7 +478,7 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
                  --title "共享心率 $TAG" --generate-notes \
-                 --notes "资产：arm64 APK（可覆盖安装，签名不变）+ Windows 单文件 exe（双击直开，自解到 %LOCALAPPDATA%\\heartrate\\app\\<版本>，无安装/无注册表/无管理员）+ 5 张界面截图（ui-*.png：连接页/房间页/设置页/放大后/全透明精简态）。"
+                 --notes "资产：arm64 APK（可覆盖安装，签名不变）+ Windows 单文件 exe（双击直开，自解到 %LOCALAPPDATA%\\heartrate\\app\\<版本>，无安装/无注册表/无管理员）（无截图资产：UI 以真机验收为准）。"
           gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | .name + "  " + (.size|tostring) + " bytes"'

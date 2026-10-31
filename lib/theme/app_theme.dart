@@ -81,7 +81,10 @@ abstract final class AppTheme {
       brightness: Brightness.dark,
       colorScheme: scheme,
       scaffoldBackgroundColor: AppColors.bg,
-      fontFamily: 'Segoe UI',
+      // 显式字体链：中文优先微软雅黑，再退 Segoe UI，最后 sans-serif。
+      // 不写死这个的话，缺中文字体的环境（离屏渲染/精简系统）会渲染成方块或乱码。
+      fontFamily: 'Microsoft YaHei UI',
+      fontFamilyFallback: const ['Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI', 'sans-serif'],
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.brand,
