@@ -186,6 +186,16 @@ abstract final class Zh {
 
   static const debugEnabledByTaps = '诊断面板已开启';
   static const debugPanelHint = '诊断面板已开启（连点版本号 5 次可再次触发）';
+  // ---- 投射到局域网 ----
+  static const lanTitle = '投射到局域网';
+  static const lanBody =
+      '让同一 Wi-Fi 下的电脑（Windows 版）直接看到房间里的心率，不需要连公网。默认开启，可随时关闭。';
+  static String lanRunning(String room, int port, int clients) =>
+      '正在投射：房间 $room · 端口 $port · 已连接 $clients 台';
+  static const lanStarting = '正在启动投射…';
+  static const lanStopped = '投射已关闭（不监听端口、不广播）';
+  static const lanFailed = '投射启动失败（端口被占用？）——可以关掉再开一次';
+
   // ---- 检查更新 ----
   static const updateTitle = '检查更新';
   static const updateCheck = '检查';

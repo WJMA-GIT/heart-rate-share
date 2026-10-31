@@ -33,6 +33,12 @@ abstract interface class IdentityStore {
   Future<void> saveOverlayAlpha(double alpha);
   Future<bool> loadOverlayChart();
   Future<void> saveOverlayChart(bool show);
+
+  /// 「投射到局域网」：开关（默认开启）+ 房间码。跟着安装走。
+  Future<bool> loadLanEnabled();
+  Future<void> saveLanEnabled(bool enabled);
+  Future<String?> loadLanRoom();
+  Future<void> saveLanRoom(String room);
 }
 
 /// 生成 / 解析安装标识。
@@ -67,6 +73,8 @@ final class InMemoryIdentityStore implements IdentityStore {
     this.overlayEnabled = false,
     this.overlayAlpha = OverlayDefaults.defaultAlpha,
     this.overlayChart = OverlayDefaults.defaultShowChart,
+    this.lanEnabled = true,
+    this.lanRoom,
   });
 
   String? installId;
@@ -75,6 +83,8 @@ final class InMemoryIdentityStore implements IdentityStore {
   bool overlayEnabled;
   double overlayAlpha;
   bool overlayChart;
+  bool lanEnabled;
+  String? lanRoom;
 
   @override
   Future<String?> loadInstallId() async => installId;
@@ -114,6 +124,18 @@ final class InMemoryIdentityStore implements IdentityStore {
 
   @override
   Future<void> saveOverlayChart(bool show) async => overlayChart = show;
+
+  @override
+  Future<bool> loadLanEnabled() async => lanEnabled;
+
+  @override
+  Future<void> saveLanEnabled(bool enabled) async => lanEnabled = enabled;
+
+  @override
+  Future<String?> loadLanRoom() async => lanRoom;
+
+  @override
+  Future<void> saveLanRoom(String room) async => lanRoom = room;
 }
 
 final class SharedPreferencesIdentityStore implements IdentityStore {
@@ -125,6 +147,8 @@ final class SharedPreferencesIdentityStore implements IdentityStore {
   static const overlayEnabledKey = 'overlay.enabled';
   static const overlayAlphaKey = 'overlay.alpha';
   static const overlayChartKey = 'overlay.chart';
+  static const lanEnabledKey = 'lan.enabled';
+  static const lanRoomKey = 'lan.room';
 
   final SharedPreferences _preferences;
 
@@ -185,5 +209,24 @@ final class SharedPreferencesIdentityStore implements IdentityStore {
   Future<void> saveOverlayChart(bool show) async {
     final ok = await _preferences.setBool(overlayChartKey, show);
     if (!ok) throw StateError('overlay chart persistence failed');
+  }
+
+  @override
+  Future<bool> loadLanEnabled() async =>
+      _preferences.getBool(lanEnabledKey) ?? true; // 默认开启
+
+  @override
+  Future<void> saveLanEnabled(bool enabled) async {
+    final ok = await _preferences.setBool(lanEnabledKey, enabled);
+    if (!ok) throw StateError('lan preference persistence failed');
+  }
+
+  @override
+  Future<String?> loadLanRoom() async => _preferences.getString(lanRoomKey);
+
+  @override
+  Future<void> saveLanRoom(String room) async {
+    final ok = await _preferences.setString(lanRoomKey, room);
+    if (!ok) throw StateError('lan room persistence failed');
   }
 }

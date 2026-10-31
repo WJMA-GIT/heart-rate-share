@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,9 +19,16 @@ import 'ui/pages/heart_rate_page.dart';
 import 'ui/pages/room_page.dart';
 import 'ui/pages/settings_page.dart';
 import 'ui/widgets/permission_gate.dart';
+import 'ui/win/win_app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 桌面（Windows）走独立的悬浮窗界面：没有 BLE/悬浮窗服务/安装器这些 Android 能力，
+  // 数据通路是「连手机的内网投射服务」，复用同一个 RoomClient 与折线画法。
+  if (!kIsWeb && Platform.isWindows) {
+    await runWinApp();
+    return;
+  }
   var appVersion = '';
   try {
     final info = await PackageInfo.fromPlatform();
@@ -94,6 +105,8 @@ Future<void> main() async {
     identityStore: identityStore,
     recentProfiles: recentProfiles,
   );
+  // 手机侧「投射到局域网」默认开启：启动即按偏好拉起（失败只降级，不影响其他功能）。
+  unawaited(state.startLanProjection());
   runApp(HeartRateApp(state: state));
 }
 

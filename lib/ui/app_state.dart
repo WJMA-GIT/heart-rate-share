@@ -6,6 +6,7 @@ import '../ble/ble_models.dart';
 import '../ble/heart_rate_sample.dart';
 import '../ble/heart_rate_service.dart';
 import '../core/l10n/strings_zh.dart';
+import '../core/lan/lan_projection.dart';
 import '../core/logging/app_logger.dart';
 import '../core/platform/room_overlay.dart';
 import '../core/profile/connection_profile.dart';
@@ -39,6 +40,7 @@ final class AppState extends ChangeNotifier {
     List<ConnectionProfile> recentProfiles = const [],
     RoomTls? tls,
     HeartRateSeries? series,
+    LanProjection? lanProjection,
     RoomOverlayBackend? overlayBackend,
     bool initialOverlayEnabled = false,
     double initialOverlayAlpha = OverlayDefaults.defaultAlpha,
@@ -49,6 +51,8 @@ final class AppState extends ChangeNotifier {
        _profileStore = profileStore ?? InMemoryUserProfileStore(),
        _identity = identityStore ?? InMemoryIdentityStore(),
        _overlayBackend = overlayBackend ?? const PlatformRoomOverlay(),
+       lan =
+           lanProjection ?? LanProjection(store: identityStore, logger: logger),
        series = series ?? HeartRateSeries(),
        _overlayEnabled = initialOverlayEnabled,
        _overlayAlpha = initialOverlayAlpha
@@ -73,6 +77,7 @@ final class AppState extends ChangeNotifier {
       room.members.listen((members) {
         _members = members;
         _trackMemberSamples();
+        lan.publishRoomMembers(members);
         _notify();
         unawaited(_syncOverlay());
       }),
@@ -92,6 +97,9 @@ final class AppState extends ChangeNotifier {
 
   /// 首页折线的数据源：只装真实采样，超窗/超量即丢弃。
   final HeartRateSeries series;
+
+  /// 手机侧「投射到局域网」（默认开启）：PC 没有蓝牙时靠它拿数据。
+  final LanProjection lan;
   List<ConnectionProfile> _recentProfiles = const [];
   ConnectionMode? _mode;
   String _nickname;
@@ -177,6 +185,7 @@ final class AppState extends ChangeNotifier {
 
   void _onSample(HeartRateSample value) {
     series.addSample(value);
+    _publishToLan(value);
     room.report(
       bpm: value.bpm,
       rrIntervalsMs: value.rrIntervalsMs,
@@ -184,6 +193,35 @@ final class AppState extends ChangeNotifier {
       measuredAt: value.receivedAt,
     );
     _notify();
+  }
+
+  int _lanSequence = 0;
+
+  /// 手机自己的 1 Hz 采样也发给局域网客户端（PC 上看到的就是"手机这一行 + 房间里其他人"）。
+  void _publishToLan(HeartRateSample value) {
+    if (!lan.running) return;
+    _lanSequence += 1;
+    lan.publishOwnSample(
+      memberId: room.memberId,
+      name: _nickname,
+      bpm: value.bpm,
+      rrMs: value.rrIntervalsMs,
+      sensorContact: value.sensorContact,
+      sequence: _lanSequence,
+      measuredAt: value.receivedAt,
+    );
+  }
+
+  /// 开关投射：落盘 + 起停内网服务；房间码沿用现有生成规则。
+  Future<void> setLanEnabled(bool value) async {
+    await lan.setEnabled(value);
+    _notify();
+  }
+
+  /// 启动时按偏好把投射服务拉起来（默认开启）。
+  Future<void> startLanProjection() async {
+    await lan.restore();
+    await lan.apply(roomCode: currentRoomCode, displayName: _nickname);
   }
 
   /// 远端/官方：连上去并记住这次配置。
@@ -416,6 +454,7 @@ final class AppState extends ChangeNotifier {
     }
     _overlayVisible = false;
     unawaited(_overlayBackend.hide());
+    lan.dispose();
     unawaited(room.dispose());
     unawaited(heartRate.dispose());
     unawaited(discovery.dispose());

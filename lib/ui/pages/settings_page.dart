@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -135,6 +137,37 @@ final class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  /// 投射到局域网：开关 + 状态（房间码/端口/连接数）。默认开启。
+  Widget _lanTile(BuildContext context) {
+    final lan = widget.state.lan;
+    return AnimatedBuilder(
+      animation: lan,
+      builder: (context, _) {
+        final status = lan.starting
+            ? Zh.lanStarting
+            : !lan.enabled
+            ? Zh.lanStopped
+            : lan.running
+            ? Zh.lanRunning(lan.displayCode, lan.port, lan.connections)
+            : Zh.lanFailed;
+        return Card(
+          elevation: 0,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: SwitchListTile(
+            secondary: const Icon(Icons.wifi_tethering),
+            title: const Text(Zh.lanTitle),
+            subtitle: Text('${Zh.lanBody}\n$status'),
+            isThreeLine: true,
+            value: lan.enabled,
+            onChanged: (value) async {
+              await widget.state.setLanEnabled(value);
+            },
+          ),
+        );
+      },
+    );
+  }
+
   /// 系统悬浮窗：开关 + 背景不透明度（可到 0）+ 显示折线图。
   Widget _overlayTile(BuildContext context) {
     final state = widget.state;
@@ -234,6 +267,7 @@ final class _SettingsPageState extends State<SettingsPage> {
               _permissionsTile(context),
               if (PlatformRoomOverlay.supported) _overlayTile(context),
               // 检查更新只在 Android 上有意义（安装器/签名校验都是平台能力）。
+              if (Platform.isAndroid) _lanTile(context),
               if (PlatformUpdateInstaller.supported) const UpdateTile(),
               const Divider(height: 24),
               TextField(
