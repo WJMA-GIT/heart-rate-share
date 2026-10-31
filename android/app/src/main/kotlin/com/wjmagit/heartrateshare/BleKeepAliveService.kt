@@ -227,7 +227,8 @@ class BleKeepAliveService : Service() {
                 textSize = 12f
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-                maxWidth = dp(NAME_MAX_DP)
+                // 定宽 + 省略号：名字长短不会把心率数字推得左右跳。
+                width = dp(NAME_WIDTH_DP)
                 outline()
             },
         )
@@ -243,7 +244,7 @@ class BleKeepAliveService : Service() {
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.END
                 // 定宽 + 右对齐：心率位数变化时右侧折线不会左右抖。
-                minWidth = dp(BPM_WIDTH_DP)
+                width = dp(BPM_WIDTH_DP)
                 outline()
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -434,9 +435,10 @@ class BleKeepAliveService : Service() {
 
         /** 行数上限对应的最大高度（dp），超出就在窗口内部滚动。 */
         private const val MAX_ROWS_DP = 220
-        private const val NAME_MAX_DP = 110
-        private const val BPM_WIDTH_DP = 34
-        private const val CHART_WIDTH_DP = 56
+        // 与 lib/theme/overlay_metrics.dart 一一对应（CI 里有比对测试，改一处必须改两处）。
+        private const val NAME_WIDTH_DP = 96
+        private const val BPM_WIDTH_DP = 48
+        private const val CHART_WIDTH_DP = 72
         private const val CHART_HEIGHT_DP = 20
 
         /** 背景底色（不透明度由用户滑块决定，0 = 全透明）。 */

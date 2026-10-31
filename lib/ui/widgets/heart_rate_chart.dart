@@ -50,6 +50,9 @@ final class HeartRateSeries {
 
   /// 上一帧用过的量程（动态量程的迟滞状态）。
   HeartRateRange? rangeState;
+
+  /// 上次重算量程的时间：冲刺时曲线别每帧重标定（2 秒最多一次）。
+  DateTime? rangeAt;
   HeartRateRange get range => rangeState ??= dynamicRangeFor(_points);
 
   List<HeartRatePoint> get points => List.unmodifiable(_points);
@@ -208,10 +211,23 @@ HeartRatePolyline normalizedPolyline(HeartRateSeries series) {
   // 右端对齐最后一个真实采样：不把"现在"当成数据点，断流后曲线不自己延长。
   final windowStart = points.last.at.subtract(series.window);
   final span = series.window.inMilliseconds.toDouble();
-  final range = dynamicRangeFor(
-    points.where((p) => !p.at.isBefore(windowStart)),
-    previous: series.rangeState,
-  );
+  final visible = points.where((p) => !p.at.isBefore(windowStart)).toList();
+  final now = visible.isEmpty ? null : visible.last.at;
+  final elapsed = series.rangeAt == null || now == null
+      ? null
+      : now.difference(series.rangeAt!);
+  final throttled = elapsed != null && elapsed < const Duration(seconds: 2);
+  // 超出当前量程的数据必须立刻扩（绝不裁切），限流只管"没超界时的重标定"。
+  final outside =
+      series.rangeState != null &&
+      visible.any(
+        (p) =>
+            p.bpm < series.rangeState!.low || p.bpm > series.rangeState!.high,
+      );
+  final range = (throttled && !outside)
+      ? series.rangeState!
+      : dynamicRangeFor(visible, previous: series.rangeState);
+  if (!throttled || outside) series.rangeAt = now;
   series.rangeState = range;
   final spanBpm = range.span;
   final segments = <List<Offset>>[];

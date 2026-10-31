@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../core/l10n/strings_zh.dart';
 import '../../core/platform/startup_log.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/overlay_metrics.dart';
 import '../../room/protocol.dart';
 import '../widgets/heart_rate_chart.dart';
 
@@ -539,7 +540,8 @@ final class _CompactView extends StatelessWidget {
         ),
       );
     }
-    if (rows.length > 8) rows.removeRange(8, rows.length); // 8 人上限，不无限长高
+    // 高度上限 + 内部滚动：人多时窗口不再无限长高（列宽与手机悬浮窗同一份常量）。
+
     return GestureDetector(
       onPanStart: (_) => startWindowDrag(),
       behavior: HitTestBehavior.translucent,
@@ -554,7 +556,14 @@ final class _CompactView extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              for (final row in rows) row,
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: OverlayMetrics.maxListHeight * scale,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: rows),
+                ),
+              ),
               const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,
@@ -590,11 +599,11 @@ final class _CompactRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    height: 22 * scale,
+    height: OverlayMetrics.rowHeight * scale,
     child: Row(
       children: [
         SizedBox(
-          width: 96 * scale,
+          width: OverlayMetrics.nameWidth * scale,
           child: Tooltip(
             message: name,
             child: Text(
@@ -609,7 +618,7 @@ final class _CompactRow extends StatelessWidget {
           ),
         ),
         SizedBox(
-          width: 48 * scale,
+          width: OverlayMetrics.bpmWidth * scale,
           child: Text(
             online ? (bpm?.toString() ?? '--') : '--',
             textAlign: TextAlign.right,
@@ -622,8 +631,8 @@ final class _CompactRow extends StatelessWidget {
         ),
         const SizedBox(width: 6),
         SizedBox(
-          width: 72 * scale,
-          height: 18 * scale,
+          width: OverlayMetrics.chartWidth * scale,
+          height: OverlayMetrics.chartHeight * scale,
           child: CustomPaint(painter: WinSparklinePainter(series)),
         ),
       ],
