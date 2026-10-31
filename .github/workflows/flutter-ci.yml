@@ -152,9 +152,8 @@ jobs:
           v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
           echo "pubspec version: $v"
           # 匹配 version: '1.2.3' / version = "1.2.3" 这类手写字面量
-          # TODO(线B)：lib/ui/win/win_app.dart 里还有一处 `version: '1.0.8'` 硬编码，
-          # 归 Windows 线改（改用 AppVersion.read()）。这里先排除该目录，其余一律禁止。
-          if grep -rnE "version: *['\"][0-9]+\.[0-9]+\.[0-9]+" lib/ --exclude-dir=win ; then
+          # 已全量生效：`lib/ui/win/win_app.dart` 的版本字面量已改成 AppVersion.read()。
+          if grep -rnE "version: *['\"][0-9]+\.[0-9]+\.[0-9]+" lib/ ; then
             echo "::error::lib/ 里出现手写的版本字面量，必须改用 AppVersion.read()"
             exit 1
           fi
@@ -294,10 +293,20 @@ jobs:
           $fs.Write($payloadBytes, 0, $payloadBytes.Length)
           $fs.Write($footer, 0, 128)
           $fs.Close()
-          # exe 版本资源必须与 pubspec 一致（设置页从 PackageInfo 读的就是它）
-          $fileVersion = (Get-Item $out).VersionInfo.FileVersion
-          Write-Host "exe FileVersion=$fileVersion (expected $ver)"
-          if ($fileVersion -notlike "$ver*") { throw "exe 版本资源($fileVersion)与发布版本($ver)不一致" }
+          # 方案 b：单文件外层是 loader（无 .rc、没有版本资源），真正带版本的是 payload 里的
+          # heartrate.exe。这里解出 payload 读它的 FileVersion，才是**真的**在校验版本号。
+          $probe = Join-Path $env:TEMP "hrs-verprobe-$ver"
+          Remove-Item $probe -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -Path $payload -DestinationPath $probe -Force
+          $inner = Join-Path $probe 'heartrate.exe'
+          if (-not (Test-Path $inner)) { throw "payload 里没有 heartrate.exe" }
+          $fileVersion = (Get-Item $inner).VersionInfo.FileVersion
+          $product = (Get-Item $inner).VersionInfo.ProductVersion
+          Write-Host "payload heartrate.exe FileVersion=$fileVersion ProductVersion=$product (expected $ver)"
+          if ([string]::IsNullOrWhiteSpace($fileVersion) -or $fileVersion -notlike "$ver*") {
+            throw "payload 内 heartrate.exe 版本($fileVersion)与发布版本($ver)不一致"
+          }
+          Remove-Item $probe -Recurse -Force -ErrorAction SilentlyContinue
           Get-Item $out | Select-Object Name, Length
           $bytes = [IO.File]::ReadAllBytes((Resolve-Path $out))
           if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'not a PE file' }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/l10n/strings_zh.dart';
+import '../../core/platform/app_version.dart';
 import '../../core/platform/startup_log.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/overlay_metrics.dart';
@@ -42,6 +43,7 @@ final class _WinAppState extends State<WinApp> {
   bool _safeMode = false;
   _Section _section = _Section.connect;
   double _scale = 1.0;
+  String _version = '...';
 
   /// 当前界面形态（`full` / `compact`）：只用来打切换日志，顺带防重复推窗口消息。
   String _uiMode = 'full';
@@ -49,6 +51,11 @@ final class _WinAppState extends State<WinApp> {
 
   /// 缩放持久化键（0.8–1.6，步进 0.1）。
   static const _scaleKey = 'win.scale';
+
+  Future<void> _loadVersion() async {
+    final value = await AppVersion.read();
+    if (mounted) setState(() => _version = value);
+  }
 
   Future<void> _loadScale() async {
     try {
@@ -118,6 +125,7 @@ final class _WinAppState extends State<WinApp> {
       _controllerOrNull = controller;
       controller.addListener(_onChange);
       _loadScale();
+      _loadVersion();
       if (widget.preview) {
         controller.startPreview();
       } else if (!_safeMode) {
@@ -229,6 +237,7 @@ final class _WinAppState extends State<WinApp> {
           adapterState: c.ble.adapterState,
           bleBusy: c.ble.phase.name,
           devices: [for (final d in c.bleDevices) d],
+          hiddenDevices: c.hiddenBleDeviceCount,
           peers: c.peers,
           error: c.error,
           scale: _scale,
@@ -259,7 +268,9 @@ final class _WinAppState extends State<WinApp> {
           logPath: StartupLog.path ?? '(未创建)',
           onOpenLogs: () => c.openLogFolder(),
           safeMode: _safeMode,
-          version: '1.0.8',
+          version: _version,
+          bleDebug: c.bleDebug,
+          onToggleBleDebug: c.toggleBleDebug,
         );
     }
   }
@@ -625,7 +636,7 @@ final class _CompactView extends StatelessWidget {
     if (controller.transport == WinTransport.ble) {
       rows.add(
         _CompactRow(
-          name: '蓝牙心率带',
+          name: '蓝牙设备',
           bpm: controller.ownBpm,
           series: controller.ownSeries,
           scale: scale,
@@ -757,6 +768,7 @@ final class ConnectView extends StatelessWidget {
     required this.onConnectBle,
     required this.onConnectPeer,
     required this.onConnectManual,
+    this.hiddenDevices = 0,
     this.scale = 1,
     super.key,
   });
@@ -771,6 +783,9 @@ final class ConnectView extends StatelessWidget {
   final Future<void> Function(dynamic peer) onConnectPeer;
   final Future<bool> Function(String address) onConnectManual;
 
+  /// 被「只列心率设备」过滤掉的条数：空状态里给一句排查提示。
+  final int hiddenDevices;
+
   /// UI 缩放：自适应阈值跟着它走（放大 1.6 后在同样的窗口宽度下提前变窄）。
   final double scale;
 
@@ -783,7 +798,7 @@ final class ConnectView extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       children: [
         _SectionTitle(
-          '蓝牙心率带',
+          '蓝牙设备',
           trailing: '适配器：${adapterState.isEmpty ? "未知" : adapterState}',
         ),
         _Card(
@@ -792,12 +807,14 @@ final class ConnectView extends StatelessWidget {
               if (devices.isEmpty)
                 _EmptyState(
                   icon: Icons.bluetooth_disabled,
-                  title: '未发现蓝牙设备',
-                  bullets: const [
+                  title: '未发现心率设备（蓝牙设备）',
+                  bullets: [
                     '确认系统蓝牙已开启（不是飞行模式）',
-                    '心率带可能被手机 App 占用：BLE 心率带通常只能同时连一台，先在手机上断开',
-                    '心率带可能在休眠：戴上或按一下机身按键唤醒',
+                    '设备可能被手机 App 占用：蓝牙设备通常只能同时连一台，先在手机上断开',
+                    '设备可能在休眠：戴上或按一下机身按键唤醒',
                     '仍扫不到可在 Windows 设置里先配对一次，再回来扫描',
+                    if (hiddenDevices > 0)
+                      '已过滤 $hiddenDevices 个非心率设备：设置页可打开「显示全部蓝牙设备」排查',
                   ],
                   action: FilledButton.icon(
                     onPressed: () => onScanBle(),
@@ -960,12 +977,11 @@ final class _BleRow extends StatelessWidget {
   final dynamic device;
   final Future<bool> Function(String id) onConnect;
 
-  /// 窄窗口：RSSI 是次要列，先丢它（名称/类型/按钮留着）。
+  /// 窄窗口：RSSI 是次要列，先丢它（名称/地址/按钮留着）。
   final bool narrow;
 
   @override
   Widget build(BuildContext context) {
-    final hrs = device.isHrsCandidate == true;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -982,18 +998,19 @@ final class _BleRow extends StatelessWidget {
               Expanded(
                 flex: 3,
                 child: Text(
-                  device.name.isEmpty ? device.id : device.name,
+                  device.name.isEmpty ? '(未命名)' : device.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: winText(AppTextSize.body),
                 ),
               ),
               Expanded(
-                flex: 2,
+                flex: 3,
                 child: Text(
-                  hrs ? '心率带' : '其他 BLE',
-                  style: winText(
-                    12,
-                    color: hrs ? WinColors.accent : WinColors.textDim,
-                  ),
+                  '${device.id}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: winText(AppTextSize.caption, color: WinColors.textDim),
                 ),
               ),
               if (!narrow)
@@ -1039,9 +1056,9 @@ final class _TableHeader extends StatelessWidget {
           ),
         ),
         Expanded(
-          flex: 2,
+          flex: 3,
           child: Text(
-            '类型',
+            '地址',
             style: winText(AppTextSize.caption, color: WinColors.textDim),
           ),
         ),
@@ -1094,19 +1111,14 @@ final class RoomView extends StatelessWidget {
       return _EmptyState(
         icon: Icons.link_off,
         title: '还没有连上数据源',
-        bullets: const ['到「连接」页选一台手机（局域网）或心率带（蓝牙）'],
+        bullets: const ['到「连接」页选一台手机（局域网）或蓝牙设备（蓝牙）'],
         action: const SizedBox.shrink(),
       );
     }
     final cards = <Widget>[];
     if (showBleRow) {
       cards.add(
-        _MemberCard(
-          name: '蓝牙心率带',
-          bpm: ownBpm,
-          series: ownSeries,
-          online: true,
-        ),
+        _MemberCard(name: '蓝牙设备', bpm: ownBpm, series: ownSeries, online: true),
       );
     }
     for (final member in members) {
@@ -1234,6 +1246,8 @@ final class SettingsView extends StatelessWidget {
     required this.onOpenLogs,
     required this.safeMode,
     required this.version,
+    this.bleDebug = false,
+    this.onToggleBleDebug,
     super.key,
   });
 
@@ -1243,6 +1257,10 @@ final class SettingsView extends StatelessWidget {
   final Future<void> Function() onOpenLogs;
   final bool safeMode;
   final String version;
+
+  /// 隐藏兜底：显示全部蓝牙设备（默认只列广播带 0x180D 的心率设备）。
+  final bool bleDebug;
+  final VoidCallback? onToggleBleDebug;
 
   @override
   Widget build(BuildContext context) {
@@ -1259,6 +1277,16 @@ final class SettingsView extends StatelessWidget {
                 title: Text('背景全透明', style: winText(AppTextSize.body)),
                 subtitle: Text(
                   '关闭则用深色底；文字与折线始终不透明',
+                  style: winText(AppTextSize.caption, color: WinColors.textDim),
+                ),
+              ),
+              const Divider(height: 1, color: WinColors.line),
+              SwitchListTile(
+                value: bleDebug,
+                onChanged: (_) => onToggleBleDebug?.call(),
+                title: Text('显示全部蓝牙设备', style: winText(AppTextSize.body)),
+                subtitle: Text(
+                  '排查用：默认只列广播带心率服务（0x180D）的设备',
                   style: winText(AppTextSize.caption, color: WinColors.textDim),
                 ),
               ),

@@ -2,8 +2,11 @@
 
 #include <dwmapi.h>
 #include <flutter_windows.h>
+#include <windowsx.h>  // GET_X_LPARAM / GET_Y_LPARAM（WM_NCHITTEST 的鼠标坐标）
 
+#include "diagnostics.h"
 #include "resource.h"
+#include "window_state.h"
 
 namespace {
 
@@ -35,6 +38,81 @@ using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 // scale factor
 int Scale(int source, double scale_factor) {
   return static_cast<int>(source * scale_factor);
+}
+
+// Dart 侧（lib/ui/win/win_drag.dart）推过来的三条窗口消息，不走任何插件：
+//   WM_APP+1 wparam=宽 lparam=高   最小客户区（DIP，已含 UI 缩放）
+//   WM_APP+2 wparam=1/0            透明精简态 进/出
+//   WM_APP+3 wparam=宽 lparam=高   按内容改客户区（DIP）
+constexpr UINT kMsgMinClientSize = WM_APP + 1;
+constexpr UINT kMsgCompact = WM_APP + 2;
+constexpr UINT kMsgClientSize = WM_APP + 3;
+
+// 客户区尺寸（DIP）→ 窗口尺寸（物理像素）。DIP→物理的 DPI 折算只做在这一处。
+RECT ClientToWindow(HWND window, int dip_width, int dip_height) {
+  const double scale = ::GetDpiForWindow(window) / 96.0;
+  RECT rect{0, 0, static_cast<LONG>(dip_width * scale),
+            static_cast<LONG>(dip_height * scale)};
+  ::AdjustWindowRectEx(&rect,
+                       static_cast<DWORD>(::GetWindowLongPtr(window, GWL_STYLE)), FALSE,
+                       static_cast<DWORD>(::GetWindowLongPtr(window, GWL_EXSTYLE)));
+  return rect;
+}
+
+void ResizeClientDip(HWND window, int dip_width, int dip_height) {
+  if (window == nullptr || dip_width <= 0 || dip_height <= 0) return;
+  const RECT rect = ClientToWindow(window, dip_width, dip_height);
+  ::SetWindowPos(window, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+// 没有几何记录（首次运行 / 记录指向已拔掉的显示器）：主屏工作区居中。
+void CenterOnPrimary(HWND window) {
+  MONITORINFO monitor{};
+  monitor.cbSize = sizeof(monitor);
+  if (!::GetMonitorInfo(::MonitorFromWindow(window, MONITOR_DEFAULTTOPRIMARY), &monitor)) {
+    return;
+  }
+  RECT rect{};
+  if (!::GetWindowRect(window, &rect)) return;
+  const LONG width = rect.right - rect.left;
+  const LONG height = rect.bottom - rect.top;
+  const LONG x =
+      monitor.rcWork.left + ((monitor.rcWork.right - monitor.rcWork.left) - width) / 2;
+  const LONG y =
+      monitor.rcWork.top + ((monitor.rcWork.bottom - monitor.rcWork.top) - height) / 2;
+  ::SetWindowPos(window, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+// 无边框（去掉了 WS_CAPTION）+ 分层色键窗口：系统的非客户区拖拽区不生效，
+// 鼠标落在边框上没人认，窗口就「拉不动」。自己回 WM_NCHITTEST：
+// 命中带 8 DIP（和 96dpi 下 WS_THICKFRAME 的边框同宽，不会吃掉客户区），
+// 四角同样 8 DIP，内部一律 HTCLIENT（交给 Flutter 子窗口）。
+constexpr int kResizeBorderDip = 8;
+
+LRESULT HitTestResize(HWND window, LPARAM lparam) {
+  RECT rect{};
+  if (!::GetWindowRect(window, &rect)) return HTCLIENT;
+  const LONG width = rect.right - rect.left;
+  const LONG height = rect.bottom - rect.top;
+  const LONG x = GET_X_LPARAM(lparam) - rect.left;
+  const LONG y = GET_Y_LPARAM(lparam) - rect.top;
+  if (x < 0 || y < 0 || x >= width || y >= height) return HTNOWHERE;
+  const LONG dpi = static_cast<LONG>(::GetDpiForWindow(window));
+  const LONG border = ::MulDiv(kResizeBorderDip, static_cast<LONG>(dpi), 96);
+  const bool left = x < border;
+  const bool right = x >= width - border;
+  const bool top = y < border;
+  const bool bottom = y >= height - border;
+  if (top && left) return HTTOPLEFT;
+  if (top && right) return HTTOPRIGHT;
+  if (bottom && left) return HTBOTTOMLEFT;
+  if (bottom && right) return HTBOTTOMRIGHT;
+  if (left) return HTLEFT;
+  if (right) return HTRIGHT;
+  if (top) return HTTOP;
+  if (bottom) return HTBOTTOM;
+  return HTCLIENT;
 }
 
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
@@ -144,13 +222,28 @@ bool Win32Window::Create(const std::wstring& title,
     return false;
   }
 
+  // 几何记忆：上次的矩形按物理像素原样套用（和 Windows 自己的窗口记忆一致），
+  // 没有记录或记录指向已断开的显示器时，主屏工作区居中。
+  RECT saved{};
+  bool maximized = false;
+  if (hrs::LoadWindowRect(&saved, &maximized)) {
+    ::SetWindowPos(window, nullptr, saved.left, saved.top, saved.right - saved.left,
+                   saved.bottom - saved.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    start_maximized_ = maximized;
+    hrs::Log("window: geometry restored");
+  } else {
+    CenterOnPrimary(window);
+    hrs::Log("window: geometry default (centered)");
+  }
+
   UpdateTheme(window);
 
   return OnCreate();
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  return ShowWindow(window_handle_,
+                    start_maximized_ ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
 }
 
 // static
@@ -180,12 +273,50 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_DESTROY:
+      // 精简态的尺寸是内容尺寸，落盘会让下次以「三行高」启动，所以不记。
+      if (!compact_) hrs::SaveWindowRect(hwnd);
       window_handle_ = nullptr;
       Destroy();
       if (quit_on_close_) {
         PostQuitMessage(0);
       }
       return 0;
+
+    case WM_GETMINMAXINFO: {
+      auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+      // 最小尺寸跟着 UI 缩放走（Dart 侧推过来的是 DIP），这里统一折成物理像素。
+      const RECT min_rect = ClientToWindow(hwnd, min_client_width_, min_client_height_);
+      info->ptMinTrackSize.x = min_rect.right - min_rect.left;
+      info->ptMinTrackSize.y = min_rect.bottom - min_rect.top;
+      // 最大不超过当前显示器工作区：不给拖到屏幕外/盖住任务栏的机会。
+      MONITORINFO monitor{};
+      monitor.cbSize = sizeof(monitor);
+      if (::GetMonitorInfo(::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                           &monitor)) {
+        info->ptMaxTrackSize.x = monitor.rcWork.right - monitor.rcWork.left;
+        info->ptMaxTrackSize.y = monitor.rcWork.bottom - monitor.rcWork.top;
+      }
+      return 0;
+    }
+
+    case kMsgMinClientSize:
+      min_client_width_ = static_cast<int>(wparam);
+      min_client_height_ = static_cast<int>(lparam);
+      EnforceMinClientSize();
+      return 0;
+
+    case kMsgCompact:
+      ApplyCompact(wparam != 0);
+      return 0;
+
+    case kMsgClientSize:
+      ResizeClientDip(hwnd, static_cast<int>(wparam), static_cast<int>(lparam));
+      return 0;
+
+    case WM_NCHITTEST:
+      // 精简态按内容自适应、最大化时也不给缩放（先还原回普通态再说）。
+      if (compact_ || ::IsZoomed(hwnd)) return HTCLIENT;
+      return HitTestResize(hwnd, lparam);
 
     case WM_DPICHANGED: {
       auto newRectSize = reinterpret_cast<RECT*>(lparam);
@@ -261,6 +392,40 @@ HWND Win32Window::GetHandle() {
 
 void Win32Window::SetQuitOnClose(bool quit_on_close) {
   quit_on_close_ = quit_on_close;
+}
+
+// 用户把 UI 放大到 1.6 后最小尺寸跟着变大：已经比最小还小的窗口现场撑开，
+// 否则「放大后被裁」还是会发生。
+void Win32Window::EnforceMinClientSize() {
+  if (window_handle_ == nullptr) return;
+  RECT client{};
+  if (!::GetClientRect(window_handle_, &client)) return;
+  const double scale = ::GetDpiForWindow(window_handle_) / 96.0;
+  const int width = static_cast<int>((client.right - client.left) / scale);
+  const int height = static_cast<int>((client.bottom - client.top) / scale);
+  if (width >= min_client_width_ && height >= min_client_height_) return;
+  ResizeClientDip(window_handle_, width > min_client_width_ ? width : min_client_width_,
+                  height > min_client_height_ ? height : min_client_height_);
+}
+
+// 透明精简态：进之前记下完整界面的矩形，退出时原样还原。
+void Win32Window::ApplyCompact(bool compact) {
+  if (window_handle_ == nullptr || compact == compact_) return;
+  compact_ = compact;
+  if (compact) {
+    // 最大化状态先还原：否则记下来的是铺满屏幕的矩形，退出精简态也回不到原样。
+    if (::IsZoomed(window_handle_)) ::ShowWindow(window_handle_, SW_RESTORE);
+    full_rect_ = {};
+    ::GetWindowRect(window_handle_, &full_rect_);
+    return;
+  }
+  if (full_rect_.right > full_rect_.left && full_rect_.bottom > full_rect_.top) {
+    ::SetWindowPos(window_handle_, nullptr, full_rect_.left, full_rect_.top,
+                   full_rect_.right - full_rect_.left,
+                   full_rect_.bottom - full_rect_.top,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+    full_rect_ = {};
+  }
 }
 
 bool Win32Window::OnCreate() {

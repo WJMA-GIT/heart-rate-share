@@ -38,6 +38,11 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      # 这条线自己把格式关掉：ci 的 quality 只在 main/PR 上跑，分支上没人拦，
+      # 合进去才发现 dart format 红过一次（tall style 会把手写换行合并回去）。
+      - name: Format gate (lib/win)
+        shell: bash
+        run: dart format --output=none --set-exit-if-changed lib/ui/win
       - name: Build (release)
         run: flutter build windows --release
       - name: Preview smoke (--connected-preview)
@@ -61,6 +66,7 @@ jobs:
             [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
             [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
             [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+            [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wparam, IntPtr lparam);
             [StructLayout(LayoutKind.Sequential)]
             public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
             public static IntPtr Main(uint pid) {
@@ -120,22 +126,57 @@ jobs:
           if ($size -lt 1024) { throw "startup.log 太小（$size bytes），可能没跑到界面" }
           if ($size -gt 65536) { throw "startup.log 异常膨胀：$size bytes" }
 
-          # 窗口层面：能缩放（WS_THICKFRAME），且完整界面下不小于最小尺寸 720x480
+          # 窗口层面 A：能缩放。无边框窗口没有系统拖拽区，缩放全靠自己回
+          # WM_NCHITTEST —— 直接给窗口发这条消息，断言四边/四角/内部各自的返回值。
+          # HTCLIENT=1 HTLEFT=10 HTRIGHT=11 HTTOP=12 HTTOPLEFT=13 HTTOPRIGHT=14
+          # HTBOTTOM=15 HTBOTTOMLEFT=16 HTBOTTOMRIGHT=17
           $hwnd = [HrsWin]::Main([uint32]$proc.Id)
           if ($hwnd -eq [IntPtr]::Zero) { throw '找不到主窗口' }
           $style = [HrsWin]::GetWindowLong($hwnd, -16)
-          if (($style -band 0x00040000) -eq 0) { throw '窗口没有 WS_THICKFRAME，拖边框仍然不能缩放' }
+          if (($style -band 0x00040000) -eq 0) { throw '窗口没有 WS_THICKFRAME' }
 
-          $bigEnough = $false
+          function Hit-Test([IntPtr]$h, [int]$x, [int]$y) {
+            $lp = [IntPtr](($y -shl 16) -bor ($x -band 0xFFFF))
+            return ([HrsWin]::SendMessage($h, 0x0084, [IntPtr]::Zero, $lp)).ToInt32()
+          }
+
+          # 窗口层面 B：完整界面不小于最小尺寸 720x480；两个断言一起做（精简态下
+          # 窗口只有内容那么大、且按设计不可缩放，所以要轮询等它回到完整界面）。
+          $windowOk = $false
           for ($i = 0; $i -lt 24; $i++) {
             $rect = New-Object HrsWin+RECT
             [void][HrsWin]::GetWindowRect($hwnd, [ref]$rect)
             $w = $rect.Right - $rect.Left
             $h = $rect.Bottom - $rect.Top
-            if ($w -ge 700 -and $h -ge 450) { $bigEnough = $true; Write-Host "full window = ${w}x${h}"; break }
+            if ($w -lt 700 -or $h -lt 450) { Start-Sleep -Milliseconds 500; continue }
+
+            $midX = [int](($rect.Left + $rect.Right) / 2)
+            $midY = [int](($rect.Top + $rect.Bottom) / 2)
+            $probe = @(
+              @('left',         ($rect.Left + 3),  $midY,             10),
+              @('right',        ($rect.Right - 4), $midY,             11),
+              @('top',          $midX,             ($rect.Top + 3),   12),
+              @('bottom',       $midX,             ($rect.Bottom - 4),15),
+              @('topleft',      ($rect.Left + 3),  ($rect.Top + 3),   13),
+              @('topright',     ($rect.Right - 4), ($rect.Top + 3),   14),
+              @('bottomleft',   ($rect.Left + 3),  ($rect.Bottom - 4),16),
+              @('bottomright',  ($rect.Right - 4), ($rect.Bottom - 4),17),
+              @('center',       $midX,             $midY,             1)
+            )
+            $report = @()
+            $allOk = $true
+            foreach ($case in $probe) {
+              $got = Hit-Test $hwnd $case[1] $case[2]
+              $report += "$($case[0])=$got"
+              if ($got -ne $case[3]) { $allOk = $false }
+            }
+            Write-Host ("WM_NCHITTEST [${w}x${h}]: " + ($report -join ', '))
+            if ($allOk) { $windowOk = $true; break }
             Start-Sleep -Milliseconds 500
           }
-          if (-not $bigEnough) { throw '完整界面从没达到 720x480（最小尺寸/几何恢复没生效）' }
+          if (-not $windowOk) {
+            throw 'WM_NCHITTEST 没有在四边/四角返回 HTLEFT/HTRIGHT/HTTOP/... 或窗口从没达到 720x480'
+          }
 
           Get-Process -Id $proc.Id | Stop-Process -Force
           Write-Host 'preview smoke OK'

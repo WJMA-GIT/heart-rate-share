@@ -90,7 +90,20 @@ class Win32Window {
   // Update the window frame's theme to match the system theme.
   static void UpdateTheme(HWND const window);
 
+  // 把窗口撑到当前最小客户区（UI 放大后原地变大，不等到用户去拖边框）。
+  void EnforceMinClientSize();
+
+  // 透明精简态进出：进之前记下完整界面的矩形，退出时原样还原。
+  void ApplyCompact(bool compact);
+
   bool quit_on_close_ = false;
+
+  // 最小客户区（DIP）：Dart 侧按 0.8–1.6 的 UI 缩放推过来，默认 720×480。
+  int min_client_width_ = 720;
+  int min_client_height_ = 480;
+  bool compact_ = false;
+  RECT full_rect_{};
+  bool start_maximized_ = false;
 
   // window handle for top level window.
   HWND window_handle_ = nullptr;

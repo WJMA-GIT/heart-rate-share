@@ -171,7 +171,24 @@ final class WinController extends ChangeNotifier {
   bool get bleAdapterOn =>
       _bleSnapshot.adapterState == 'on' ||
       _bleSnapshot.adapterState == 'poweredOn';
-  List<dynamic> get bleDevices => _bleSnapshot.devices;
+
+  /// 排查开关：默认只列广播里带心率服务 0x180D 的设备（和手机端 onlyHrs 一致），
+  /// 打开后全量显示（设置页里的隐藏兜底，不进主界面）。
+  bool bleDebug = false;
+
+  /// 界面用：只保留确认为心率设备的条目（`isHrsCandidate` = 广播带 0x180D）。
+  List<dynamic> get bleDevices {
+    final all = _bleSnapshot.devices;
+    if (bleDebug) return all;
+    return [
+      for (final device in all)
+        if (device.isHrsCandidate) device,
+    ];
+  }
+
+  /// 被过滤掉的条数：空状态里提示「可以打开全量显示排查」。
+  int get hiddenBleDeviceCount =>
+      bleDebug ? 0 : _bleSnapshot.devices.length - bleDevices.length;
 
   HeartRateSeries seriesFor(String memberId) =>
       _series.putIfAbsent(memberId, HeartRateSeries.new);
@@ -383,9 +400,14 @@ final class WinController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void toggleBleDebug() {
+    bleDebug = !bleDebug;
+    notifyListeners();
+  }
+
   // ------------------------------------------------- 预览（--connected-preview）
 
-  /// 没有手机也没有心率带时，也要把「连接 → 全透明精简态 → 断开」走一遍：
+  /// 没有手机也没有蓝牙设备时，也要把「连接 → 全透明精简态 → 断开」走一遍：
   /// 注入 3 个 mock 成员，每 6 秒切一次连接状态（CI 冒烟据此断言两种界面都出现过）。
   void startPreview() {
     transport = WinTransport.lan;
