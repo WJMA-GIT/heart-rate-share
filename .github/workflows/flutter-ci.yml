@@ -201,9 +201,9 @@ jobs:
           v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
           [ -n "$v" ] || { echo "cannot parse version"; exit 1; }
           echo "resolved=$v" >> "$GITHUB_OUTPUT"
-      # 单文件 exe：7-Zip SFX（自解压）。双击 → 解到 %LOCALAPPDATA%\heartrate\app\<ver> → 启动。
-      # 不是安装包：不写注册表、不要管理员、不弹 UAC；卸载 = 删那个目录。
-      - name: Build single-file exe (7z SFX)
+      # 单文件 exe：自写 loader（windows/loader/loader.cpp）+ 追加 zip 载荷 + 32 字节页脚。
+      # 为什么不用 7-Zip SFX：实测 RunProgram 不执行（用户要在解压目录里自己找 exe）。
+      - name: Build single-file exe (custom loader)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -214,69 +214,42 @@ jobs:
           Copy-Item 'build/windows/x64/runner/Release/*' $stage -Recurse -Force
           Copy-Item docs/win-run.txt "$stage/README.txt" -Force
 
-          $sevenZip = @(
-            'C:\\Program Files\\7-Zip\\7z.exe',
-            'C:\\Program Files (x86)\\7-Zip\\7z.exe'
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $sevenZip) { throw '7z.exe not found on runner' }
-
-          # 找 SFX 模块：先看 7-Zip 安装目录，再从官方 extra 包取（版本会变，用页面发现+固定回退）
-          # 只要 7zS.sfx（安装器版）：只有它保证 RunProgram 在解压后自动执行。
-          # 7z.sfx 是自解压"外壳"版，实测不会自动启动（1.0.4/1.0.5 的问题）。
-          $sfx = $null
-          foreach ($name in @('7zS.sfx')) {
-            $candidate = Join-Path (Split-Path $sevenZip) $name
-            if (Test-Path $candidate) { $sfx = $candidate; Write-Host "sfx local: $candidate"; break }
-          }
-          if (-not $sfx) {
-            $urls = @()
-            try {
-              $html = (Invoke-WebRequest 'https://www.7-zip.org/download.html' -UseBasicParsing).Content
-              $urls += ([regex]::Matches($html, 'a/7z[0-9]+-extra\.7z') |
-                ForEach-Object { 'https://www.7-zip.org/' + $_.Value } | Select-Object -Unique)
-            } catch { Write-Host 'download.html unreachable' }
-            # 2301 是官方 extra 包里确实存在的版本（实测 url 200）
-            $urls += 'https://www.7-zip.org/a/7z2301-extra.7z'
-            foreach ($u in $urls) {
-              try {
-                Invoke-WebRequest $u -OutFile '7zextra.7z' -UseBasicParsing -ErrorAction Stop
-                & $sevenZip x '7zextra.7z' -o'7zextra' -y | Out-Null
-                # 官方 extra 包里安装器版叫 7zS2.sfx（新版）/ 7zSD.sfx / 7zS.sfx，版本间会变，
-                # 按优先级都认：7zS2 是当前推荐的 installer SFX（会自动执行 RunProgram）。
-                foreach ($cand in @('7zS2.sfx', '7zS.sfx', '7zSD.sfx')) {
-                  $found = Get-ChildItem '7zextra' -Recurse -Filter $cand -ErrorAction SilentlyContinue |
-                    Select-Object -First 1
-                  if ($found) { break }
-                }
-                if (-not $found) { Write-Host 'extra package has no installer sfx' }
-                if ($found) { $sfx = $found.FullName; Write-Host "sfx from $u"; break }
-              } catch { Write-Host "skip $u : $($_.Exception.Message)" }
-            }
-          }
-          if (-not (Test-Path $sfx)) { throw '7zS.sfx not available（没有退回 zip，按约定停下）' }
-
-          # 只保留必需键，少一个未知键就少一个在别人机器上弹配置错误的风险
-          $config = ";!@Install@!UTF-8!`r`nTitle=`"共享心率 $ver`"`r`nRunProgram=`"heartrate.exe`"`r`nGUIMode=`"2`"`r`nInstallPath=`"%LOCALAPPDATA%\heartrate\app\$ver`"`r`nOverwriteMode=`"2`"`r`n;!@InstallEnd@!`r`n"
-          Set-Content -Path 'sfx-config.txt' -Value $config -Encoding UTF8
-
-          # 关键：在 stage 目录里打包，条目才是**根级**；否则会解出 build/win-stage/ 一层，
-          # RunProgram 找不到 heartrate.exe（1.0.4 就是这个毛病）
-          $payload = Join-Path (Get-Location).Path 'payload.7z'
+          # 载荷：在 stage 目录里打包，条目是根级（否则会多一层 build/win-stage）
+          $payload = Join-Path (Get-Location).Path 'payload.zip'
+          Remove-Item $payload -Force -ErrorAction SilentlyContinue
           Push-Location $stage
-          & $sevenZip a -t7z $payload '*' -mx=9 | Out-Null
+          Compress-Archive -Path * -DestinationPath $payload -CompressionLevel Optimal
           Pop-Location
-          if (-not (Test-Path $payload)) { throw 'payload.7z not produced' }
+          if (-not (Test-Path $payload)) { throw 'payload.zip not produced' }
 
+          # 编译 loader：静态 CRT（/MT，不依赖系统运行库）、无控制台（/SUBSYSTEM:WINDOWS）
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw 'vswhere not found' }
+          $vs = & $vswhere -latest -products * -property installationPath
+          $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+          if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found at $vcvars" }
+          Remove-Item loader.exe -Force -ErrorAction SilentlyContinue
+          cmd /c "call `"$vcvars`" >nul && cl /nologo /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE windows\loader\loader.cpp /Fe:loader.exe /link /SUBSYSTEM:WINDOWS"
+          if (-not (Test-Path 'loader.exe')) { throw 'loader.exe not produced' }
+          Write-Host "loader.exe built: $((Get-Item loader.exe).Length) bytes"
+
+          # 拼接：loader + payload + 页脚(magic/offset/size)
+          $loaderBytes = [IO.File]::ReadAllBytes((Resolve-Path 'loader.exe'))
+          $payloadBytes = [IO.File]::ReadAllBytes($payload)
+          $footer = New-Object byte[] 32
+          [Text.Encoding]::ASCII.GetBytes('HRSLD001').CopyTo($footer, 0)
+          [BitConverter]::GetBytes([uint64]$loaderBytes.Length).CopyTo($footer, 8)
+          [BitConverter]::GetBytes([uint64]$payloadBytes.Length).CopyTo($footer, 16)
           $out = "heartrate-$ver-windows-x64.exe"
-          # SFX 模块 + 配置 + 载荷 = 一个可双击的 exe
-          cmd /c "copy /b `"$sfx`" + `"sfx-config.txt`" + `"payload.7z`" `"$out`"" | Out-Null
-          if (-not (Test-Path $out)) { throw 'SFX exe not produced' }
+          $fs = [IO.File]::Create($out)
+          $fs.Write($loaderBytes, 0, $loaderBytes.Length)
+          $fs.Write($payloadBytes, 0, $payloadBytes.Length)
+          $fs.Write($footer, 0, 32)
+          $fs.Close()
           Get-Item $out | Select-Object Name, Length
-          # 基本自检：MZ 头 + 内含 7z 签名 + 不是 zip
-          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $out))
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path $out))
           if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'not a PE file' }
-          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
-          if (-not $text.Contains('7z')) { throw 'payload missing' }
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ github.sha }}
@@ -300,7 +273,7 @@ jobs:
           Write-Host "run from: $runPath"
 
           $logDir = Join-Path $env:LOCALAPPDATA 'heartrate\logs'
-          $appDir = Join-Path $env:LOCALAPPDATA "heartrate\app\$ver"
+          $appRoot = Join-Path $env:LOCALAPPDATA 'heartrate\app'
 
           function Try-Mode([string]$name, [string]$expect) {
             Write-Host "=== mode: $name ==="
@@ -324,13 +297,14 @@ jobs:
             $again = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
             if (-not $again) { throw "[$name] heartrate.exe 在 8 秒内退出" }
             # 解压布局：exe 必须在根级（不能多一层 build/win-stage），且没有 window_manager
-            if (-not (Test-Path (Join-Path $appDir 'heartrate.exe'))) {
-              throw "[$name] 自解压目录里没有根级 heartrate.exe：$appDir"
+            $appDir = Get-ChildItem $appRoot -Directory -ErrorAction SilentlyContinue |
+              Where-Object { Test-Path (Join-Path $_.FullName 'heartrate.exe') } |
+              Select-Object -First 1
+            if (-not $appDir) { throw "[$name] 解压目录里没有根级 heartrate.exe（$appRoot）" }
+            if (Test-Path (Join-Path $appDir.FullName 'build')) {
+              throw "[$name] 解压多了一层 build 目录（打包时带了前缀）"
             }
-            if (Test-Path (Join-Path $appDir 'build')) {
-              throw "[$name] 自解压多了一层 build 目录（打包时带了前缀）"
-            }
-            if (Test-Path (Join-Path $appDir 'window_manager_plugin.dll')) {
+            if (Test-Path (Join-Path $appDir.FullName 'window_manager_plugin.dll')) {
               throw "[$name] 解压目录里仍有 window_manager_plugin.dll"
             }
             $log = Join-Path $logDir 'startup.log'
@@ -341,6 +315,12 @@ jobs:
             }
             if (-not (Select-String -Path $log -SimpleMatch $expect -Quiet)) {
               throw "[$name] 日志里没有预期的 '$expect'（模式没生效？）"
+            }
+            # 编码自检：日志必须能按 UTF-8 严格解码，且没有替换符/典型 mojibake
+            $raw = [IO.File]::ReadAllText($log, [Text.Encoding]::UTF8)
+            if ($raw.Contains([char]0xFFFD)) { throw "[$name] 日志里有 U+FFFD（编码坏了）" }
+            foreach ($bad in @('å', 'äº', 'æ', 'ç')) {
+              if ($raw.Contains($bad)) { throw "[$name] 日志里有 mojibake 片段 '$bad'" }
             }
             if (Test-Path (Join-Path $logDir 'crash.log')) {
               Get-Content (Join-Path $logDir 'crash.log') | ForEach-Object { Write-Host $_ }

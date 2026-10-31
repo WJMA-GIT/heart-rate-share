@@ -8,6 +8,10 @@
 #include <string>
 
 #include "diagnostics.h"
+
+#ifndef HRS_VERSION
+#define HRS_VERSION "1.0.6"
+#endif
 #include "flutter_window.h"
 #include "utils.h"
 
@@ -30,22 +34,64 @@ bool Exists(const std::wstring& path) {
   return ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
-void ShowFatalBox(const std::string& detail) {
-  const std::wstring msg = L"共享心率启动失败。\n\n" + std::wstring(detail.begin(), detail.end()) +
-                           L"\n\n日志目录：%LOCALAPPDATA%\\heartrate\\logs\n"
-                           L"请把 startup.log / crash.log 发回给作者。";
-  ::MessageBoxW(nullptr, msg.c_str(), L"共享心率", MB_ICONERROR | MB_OK);
+// UTF-8 → 宽字符。**不能**逐字节 widen（那就是 "å…±äº«" 乱码的来源）。
+std::wstring Widen(const std::string& utf8) {
+  if (utf8.empty()) return {};
+  const int size = ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
+                                        static_cast<int>(utf8.size()), nullptr, 0);
+  if (size <= 0) return L"(unprintable)";
+  std::wstring out(static_cast<size_t>(size), L'\0');
+  ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), out.data(),
+                        size);
+  return out;
+}
+
+// 弹窗只放三行：产品名+版本 / 异常摘要 / 日志目录，统一 MessageBoxW。
+void ShowFatalBox(const std::string& summary_utf8) {
+  wchar_t log_dir[MAX_PATH] = {0};
+  ::GetEnvironmentVariableW(L"LOCALAPPDATA", log_dir, MAX_PATH);
+  std::wstring message = L"共享心率 " + Widen(HRS_VERSION) + L"\n" + Widen(summary_utf8) +
+                         L"\n日志：";
+  message += log_dir;
+  message += L"\\heartrate\\logs\\startup.log";
+  ::MessageBoxW(nullptr, message.c_str(), L"共享心率", MB_ICONERROR | MB_OK);
+}
+
+// 出错模块名与模块内偏移：这样弹窗/日志能直接指到 window_manager_plugin.dll:0x…b2af
+// 这种粒度，不用再让用户去翻事件查看器。
+void DescribeFault(const void* address, std::string* module, unsigned long long* offset) {
+  *module = "unknown";
+  *offset = 0;
+  if (address == nullptr) return;
+  HMODULE base = nullptr;
+  if (::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(address), &base) &&
+      base != nullptr) {
+    wchar_t path[MAX_PATH] = {0};
+    if (::GetModuleFileNameW(base, path, MAX_PATH) > 0) {
+      std::wstring full(path);
+      const size_t slash = full.find_last_of(L'\\');
+      *module = Utf8(slash == std::wstring::npos ? full : full.substr(slash + 1));
+    }
+    *offset = reinterpret_cast<unsigned long long>(address) -
+              reinterpret_cast<unsigned long long>(base);
+  }
 }
 
 LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info) {
-  char buffer[512] = {0};
   const DWORD code = info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionCode : 0;
   const void* address =
       info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionAddress : nullptr;
-  _snprintf_s(buffer, sizeof(buffer), _TRUNCATE, "CRASH exception=0x%08lX address=%p",
-              static_cast<unsigned long>(code), address);
-  Log("crash", buffer);
-  ShowFatalBox(buffer);
+  std::string module;
+  unsigned long long offset = 0;
+  DescribeFault(address, &module, &offset);
+  char summary[256] = {0};
+  _snprintf_s(summary, sizeof(summary), _TRUNCATE,
+              "exception=0x%08lX module=%s offset=0x%llX", static_cast<unsigned long>(code),
+              module.c_str(), offset);
+  Log("crash", summary);
+  ShowFatalBox(summary);
   return EXCEPTION_EXECUTE_HANDLER;
 }
 
