@@ -171,13 +171,58 @@ abstract final class WinColors {
 }
 
 abstract final class WinTheme {
-  static ThemeData data() => ThemeData(
-    useMaterial3: true,
-    brightness: Brightness.dark,
-    colorSchemeSeed: WinColors.accent,
-    scaffoldBackgroundColor: WinColors.bg,
-    fontFamily: 'Segoe UI',
-  );
+  /// 主色必须**显式钉成 #FF5252**：只给 colorSchemeSeed 时 M3 会走色调映射，
+  /// 按钮变成灰粉，看着像没上色（用户截图里"白/黄文字链接"就是这一类观感问题）。
+  static ThemeData data() {
+    final scheme =
+        ColorScheme.fromSeed(
+          seedColor: WinColors.accent,
+          brightness: Brightness.dark,
+        ).copyWith(
+          primary: WinColors.accent,
+          onPrimary: Colors.white,
+          surface: WinColors.surface,
+          onSurface: WinColors.text,
+        );
+    final buttonShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(8),
+    );
+    return ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: WinColors.bg,
+      fontFamily: 'Segoe UI',
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: WinColors.accent,
+          foregroundColor: Colors.white,
+          shape: buttonShape,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: WinColors.text,
+          side: const BorderSide(color: WinColors.line),
+          shape: buttonShape,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        ),
+      ),
+      // 链接样式只给"查看日志"这类次要动作，并且明确去掉下划线。
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: WinColors.textDim,
+          textStyle: const TextStyle(
+            fontSize: 12,
+            decoration: TextDecoration.none,
+          ),
+          shape: buttonShape,
+        ),
+      ),
+    );
+  }
 }
 
 TextStyle winText(
@@ -237,9 +282,11 @@ final class _TopBar extends StatelessWidget {
                 padding: const EdgeInsets.only(right: 12),
                 child: Text('安全模式', style: winText(12, color: WinColors.warn)),
               ),
-            TextButton(
+            IconButton(
+              tooltip: '设置',
+              iconSize: 16,
               onPressed: () => onToggleSection(_Section.settings),
-              child: Text('设置', style: winText(12, color: WinColors.textDim)),
+              icon: const Icon(Icons.tune, color: WinColors.textDim),
             ),
             IconButton(
               tooltip: controller.backgroundTransparent
@@ -430,14 +477,11 @@ final class ConnectView extends StatelessWidget {
                     '手机设置里「投射到局域网」要开着（默认开）',
                     'Windows 防火墙允许本程序的"专用网络"',
                   ],
-                  action: FilledButton.icon(
-                    onPressed: () => onConnectManual(''),
-                    icon: const Icon(Icons.keyboard, size: 16),
-                    label: const Text('手动输入 IP:端口'),
-                  ),
+                  action: _ManualIpRow(onConnect: onConnectManual),
                 )
               : Column(
                   children: [
+                    _ManualIpRow(onConnect: onConnectManual),
                     for (final peer in peers)
                       ListTile(
                         dense: true,
@@ -462,6 +506,85 @@ final class ConnectView extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 手动 IP:端口 输入：占位提示 + 格式校验（host 或 host:port，端口 1-65535）。
+final class _ManualIpRow extends StatefulWidget {
+  const _ManualIpRow({required this.onConnect});
+  final Future<bool> Function(String address) onConnect;
+
+  @override
+  State<_ManualIpRow> createState() => _ManualIpRowState();
+}
+
+final class _ManualIpRowState extends State<_ManualIpRow> {
+  final _controller = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final raw = _controller.text.trim();
+    if (raw.isEmpty) {
+      setState(() => _error = '请输入手机地址');
+      return;
+    }
+    final parts = raw.split(':');
+    final port = parts.length > 1 ? int.tryParse(parts[1]) : 8770;
+    if (parts.first.isEmpty || port == null || port < 1 || port > 65535) {
+      setState(() => _error = '格式：IP 或 IP:端口（端口 1-65535），例如 192.168.1.20:8770');
+      return;
+    }
+    setState(() => _error = null);
+    widget.onConnect(raw);
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _controller,
+            style: winText(14),
+            onSubmitted: (_) => _submit(),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: '手动连接：手机 IP 或 IP:端口（如 192.168.1.20:8770）',
+              hintStyle: winText(12, color: WinColors.textDim),
+              errorText: _error,
+              errorStyle: winText(11, color: WinColors.warn),
+              filled: true,
+              fillColor: WinColors.surfaceHigh,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: WinColors.line),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: WinColors.line),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          height: 44,
+          child: FilledButton(onPressed: _submit, child: const Text('连接')),
+        ),
+      ],
+    ),
+  );
 }
 
 final class _BleRow extends StatelessWidget {
