@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/l10n/strings_zh.dart';
 import '../../core/platform/startup_log.dart';
+import '../../theme/app_theme.dart';
 import '../../room/protocol.dart';
 import '../widgets/heart_rate_chart.dart';
 import 'win_controller.dart';
@@ -158,121 +159,22 @@ enum _Section { connect, room, settings }
 
 // ---------------------------------------------------------------- 设计令牌
 
+/// 只是 `AppColors` 的别名：Windows 端**不再有自己的色值**，全部来自手机端共用主题。
 abstract final class WinColors {
-  static const bg = Color(0xFF121214);
-  static const surface = Color(0xFF1B1B1F);
-  static const surfaceHigh = Color(0xFF232329);
-  static const line = Color(0xFF2C2C33);
-  static const accent = Color(0xFFFF5252);
-  static const text = Color(0xFFF2F2F5);
-  static const textDim = Color(0xFF9A9AA5);
-  static const ok = Color(0xFF4ADE80);
-  static const warn = Color(0xFFFBBF24);
+  static const bg = AppColors.bg;
+  static const surface = AppColors.surface;
+  static const surfaceHigh = AppColors.surfaceHigh;
+  static const line = AppColors.line;
+  static const accent = AppColors.brand;
+  static const text = AppColors.text;
+  static const textDim = AppColors.textDim;
+  static const ok = AppColors.ok;
+  static const warn = AppColors.warn;
 }
 
 abstract final class WinTheme {
-  /// 主色必须**显式钉成 #FF5252**：只给 colorSchemeSeed 时 M3 会走色调映射，
-  /// 按钮变成灰粉，看着像没上色（用户截图里"白/黄文字链接"就是这一类观感问题）。
-  static ThemeData data() {
-    final scheme =
-        ColorScheme.fromSeed(
-          seedColor: WinColors.accent,
-          brightness: Brightness.dark,
-        ).copyWith(
-          primary: WinColors.accent,
-          onPrimary: Colors.white,
-          surface: WinColors.surface,
-          onSurface: WinColors.text,
-        );
-    final buttonShape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(8),
-    );
-    return ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.dark,
-      colorScheme: scheme,
-      scaffoldBackgroundColor: WinColors.bg,
-      fontFamily: 'Segoe UI',
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          backgroundColor: WinColors.accent,
-          foregroundColor: Colors.white,
-          shape: buttonShape,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: WinColors.text,
-          side: const BorderSide(color: WinColors.line),
-          shape: buttonShape,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        ),
-      ),
-      cardTheme: CardThemeData(
-        color: WinColors.surface,
-        elevation: 0,
-        margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: WinColors.line),
-        ),
-      ),
-      dividerTheme: const DividerThemeData(
-        color: WinColors.line,
-        thickness: 1,
-        space: 1,
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: WinColors.surfaceHigh,
-        hintStyle: const TextStyle(fontSize: 12, color: WinColors.textDim),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 12,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: WinColors.line),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: WinColors.line),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: WinColors.accent, width: 1.5),
-        ),
-      ),
-      iconButtonTheme: IconButtonThemeData(
-        style: IconButton.styleFrom(foregroundColor: WinColors.textDim),
-      ),
-      switchTheme: SwitchThemeData(
-        thumbColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected)
-              ? Colors.white
-              : WinColors.textDim,
-        ),
-        trackColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected)
-              ? WinColors.accent
-              : WinColors.surfaceHigh,
-        ),
-      ),
-      // 链接样式只给"查看日志"这类次要动作，并且明确去掉下划线。
-      textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(
-          foregroundColor: WinColors.textDim,
-          textStyle: const TextStyle(
-            fontSize: 12,
-            decoration: TextDecoration.none,
-          ),
-          shape: buttonShape,
-        ),
-      ),
-    );
-  }
+  /// 直接复用手机端那套色值/字号（见 lib/theme/app_theme.dart）。
+  static ThemeData data() => AppTheme.desktop();
 }
 
 TextStyle winText(
@@ -312,7 +214,10 @@ final class _TopBar extends StatelessWidget {
           children: [
             const Icon(Icons.monitor_heart, size: 18, color: WinColors.accent),
             const SizedBox(width: 8),
-            Text('共享心率', style: winText(14, weight: FontWeight.w600)),
+            Text(
+              '共享心率',
+              style: winText(AppTextSize.body, weight: FontWeight.w600),
+            ),
             const SizedBox(width: 16),
             _Badge(
               label: connected ? '已连接' : '未连接',
@@ -333,7 +238,10 @@ final class _TopBar extends StatelessWidget {
             if (safeMode)
               Padding(
                 padding: const EdgeInsets.only(right: 12),
-                child: Text('安全模式', style: winText(12, color: WinColors.warn)),
+                child: Text(
+                  '安全模式',
+                  style: winText(AppTextSize.caption, color: WinColors.warn),
+                ),
               ),
             IconButton(
               tooltip: '设置',
@@ -482,14 +390,14 @@ final class _NavRail extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppRadius.button),
         onTap: () => onSelect(target),
         child: Container(
           height: 40,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
             color: selected ? WinColors.surfaceHigh : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(AppRadius.button),
           ),
           child: Row(
             children: [
@@ -599,10 +507,16 @@ final class ConnectView extends StatelessWidget {
                     for (final peer in peers)
                       ListTile(
                         dense: true,
-                        title: Text(peer.name, style: winText(14)),
+                        title: Text(
+                          peer.name,
+                          style: winText(AppTextSize.body),
+                        ),
                         subtitle: Text(
                           '${peer.platform} · ${peer.members} 人在线',
-                          style: winText(12, color: WinColors.textDim),
+                          style: winText(
+                            AppTextSize.caption,
+                            color: WinColors.textDim,
+                          ),
                         ),
                         trailing: FilledButton(
                           onPressed: () => onConnectPeer(peer),
@@ -615,7 +529,10 @@ final class ConnectView extends StatelessWidget {
         if (error != null)
           Padding(
             padding: const EdgeInsets.only(top: 12),
-            child: Text(error!, style: winText(12, color: WinColors.warn)),
+            child: Text(
+              error!,
+              style: winText(AppTextSize.caption, color: WinColors.warn),
+            ),
           ),
       ],
     );
@@ -666,12 +583,12 @@ final class _ManualIpRowState extends State<_ManualIpRow> {
         Expanded(
           child: TextField(
             controller: _controller,
-            style: winText(14),
+            style: winText(AppTextSize.body),
             onSubmitted: (_) => _submit(),
             decoration: InputDecoration(
               isDense: true,
               hintText: '手动连接：手机 IP 或 IP:端口（如 192.168.1.20:8770）',
-              hintStyle: winText(12, color: WinColors.textDim),
+              hintStyle: winText(AppTextSize.caption, color: WinColors.textDim),
               errorText: _error,
               errorStyle: winText(11, color: WinColors.warn),
               filled: true,
@@ -681,11 +598,11 @@ final class _ManualIpRowState extends State<_ManualIpRow> {
                 vertical: 12,
               ),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppRadius.button),
                 borderSide: const BorderSide(color: WinColors.line),
               ),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppRadius.button),
                 borderSide: const BorderSide(color: WinColors.line),
               ),
             ),
@@ -726,7 +643,7 @@ final class _BleRow extends StatelessWidget {
                 flex: 3,
                 child: Text(
                   device.name.isEmpty ? device.id : device.name,
-                  style: winText(14),
+                  style: winText(AppTextSize.body),
                 ),
               ),
               Expanded(
@@ -744,7 +661,7 @@ final class _BleRow extends StatelessWidget {
                 child: Text(
                   '${device.rssi}',
                   textAlign: TextAlign.right,
-                  style: winText(12, color: WinColors.textDim),
+                  style: winText(AppTextSize.caption, color: WinColors.textDim),
                 ),
               ),
               const SizedBox(width: 12),
@@ -768,18 +685,24 @@ final class _TableHeader extends StatelessWidget {
       children: [
         Expanded(
           flex: 3,
-          child: Text('名称', style: winText(12, color: WinColors.textDim)),
+          child: Text(
+            '名称',
+            style: winText(AppTextSize.caption, color: WinColors.textDim),
+          ),
         ),
         Expanded(
           flex: 2,
-          child: Text('类型', style: winText(12, color: WinColors.textDim)),
+          child: Text(
+            '类型',
+            style: winText(AppTextSize.caption, color: WinColors.textDim),
+          ),
         ),
         SizedBox(
           width: 64,
           child: Text(
             'RSSI',
             textAlign: TextAlign.right,
-            style: winText(12, color: WinColors.textDim),
+            style: winText(AppTextSize.caption, color: WinColors.textDim),
           ),
         ),
         const SizedBox(width: 76),
@@ -894,7 +817,7 @@ final class _MemberCard extends StatelessWidget {
               backgroundColor: WinColors.surfaceHigh,
               child: Text(
                 name.isEmpty ? '?' : name.substring(0, 1),
-                style: winText(14, color: WinColors.text),
+                style: winText(AppTextSize.body, color: WinColors.text),
               ),
             ),
             const SizedBox(width: 12),
@@ -907,7 +830,7 @@ final class _MemberCard extends StatelessWidget {
                     name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: winText(14),
+                    style: winText(AppTextSize.body),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -975,20 +898,20 @@ final class SettingsView extends StatelessWidget {
               SwitchListTile(
                 value: transparent,
                 onChanged: (_) => onToggleTransparent(),
-                title: Text('背景全透明', style: winText(14)),
+                title: Text('背景全透明', style: winText(AppTextSize.body)),
                 subtitle: Text(
                   '关闭则用深色底；文字与折线始终不透明',
-                  style: winText(12, color: WinColors.textDim),
+                  style: winText(AppTextSize.caption, color: WinColors.textDim),
                 ),
               ),
               const Divider(height: 1, color: WinColors.line),
               ListTile(
-                title: Text('安全模式', style: winText(14)),
+                title: Text('安全模式', style: winText(AppTextSize.body)),
                 subtitle: Text(
                   safeMode
                       ? '已开启（不透明窗口 + 不初始化蓝牙）'
                       : '未开启（启动加 --safe-mode 可排查问题）',
-                  style: winText(12, color: WinColors.textDim),
+                  style: winText(AppTextSize.caption, color: WinColors.textDim),
                 ),
               ),
             ],
@@ -1000,10 +923,10 @@ final class SettingsView extends StatelessWidget {
           child: Column(
             children: [
               ListTile(
-                title: Text('日志目录', style: winText(14)),
+                title: Text('日志目录', style: winText(AppTextSize.body)),
                 subtitle: SelectableText(
                   logPath,
-                  style: winText(12, color: WinColors.textDim),
+                  style: winText(AppTextSize.caption, color: WinColors.textDim),
                 ),
                 trailing: FilledButton(
                   onPressed: () => onOpenLogs(),
@@ -1012,10 +935,10 @@ final class SettingsView extends StatelessWidget {
               ),
               const Divider(height: 1, color: WinColors.line),
               ListTile(
-                title: Text('版本', style: winText(14)),
+                title: Text('版本', style: winText(AppTextSize.body)),
                 trailing: Text(
                   version,
-                  style: winText(12, color: WinColors.textDim),
+                  style: winText(AppTextSize.caption, color: WinColors.textDim),
                 ),
               ),
             ],
@@ -1038,10 +961,16 @@ final class _SectionTitle extends StatelessWidget {
     padding: const EdgeInsets.only(bottom: 8),
     child: Row(
       children: [
-        Text(text, style: winText(16, weight: FontWeight.w600)),
+        Text(
+          text,
+          style: winText(AppTextSize.section, weight: FontWeight.w600),
+        ),
         const Spacer(),
         if (trailing != null)
-          Text(trailing!, style: winText(12, color: WinColors.textDim)),
+          Text(
+            trailing!,
+            style: winText(AppTextSize.caption, color: WinColors.textDim),
+          ),
       ],
     ),
   );
@@ -1058,7 +987,7 @@ final class _Card extends StatelessWidget {
     color: WinColors.surface,
     clipBehavior: Clip.antiAlias,
     shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(AppRadius.card),
       side: const BorderSide(color: WinColors.line),
     ),
     child: child,
@@ -1088,7 +1017,10 @@ final class _EmptyState extends StatelessWidget {
           children: [
             Icon(icon, size: 20, color: WinColors.textDim),
             const SizedBox(width: 8),
-            Text(title, style: winText(14, weight: FontWeight.w600)),
+            Text(
+              title,
+              style: winText(AppTextSize.body, weight: FontWeight.w600),
+            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -1097,7 +1029,7 @@ final class _EmptyState extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 6),
             child: Text(
               '· $line',
-              style: winText(12, color: WinColors.textDim),
+              style: winText(AppTextSize.caption, color: WinColors.textDim),
             ),
           ),
         const SizedBox(height: 8),
@@ -1120,13 +1052,19 @@ final class _FatalView extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('启动异常（窗口还在，说明渲染正常）', style: winText(16, color: WinColors.warn)),
+          Text(
+            '启动异常（窗口还在，说明渲染正常）',
+            style: winText(AppTextSize.section, color: WinColors.warn),
+          ),
           const SizedBox(height: 8),
-          SelectableText(error, style: winText(12, color: WinColors.textDim)),
+          SelectableText(
+            error,
+            style: winText(AppTextSize.caption, color: WinColors.textDim),
+          ),
           const SizedBox(height: 8),
           SelectableText(
             '日志：${StartupLog.path ?? "未创建"}',
-            style: winText(12, color: WinColors.textDim),
+            style: winText(AppTextSize.caption, color: WinColors.textDim),
           ),
         ],
       ),

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:heartrate/room/protocol.dart';
+import 'package:heartrate/theme/app_theme.dart';
 import 'package:heartrate/ui/widgets/heart_rate_chart.dart';
 import 'package:heartrate/ui/win/win_app.dart';
 
@@ -136,6 +137,95 @@ void main() {
       'settings',
     );
   });
+
+  testWidgets('悬浮窗截图', (tester) async {
+    final series = _series();
+    await _shoot(
+      tester,
+      Scaffold(
+        backgroundColor: WinColors.bg,
+        body: Center(
+          child: Container(
+            width: 420,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: WinColors.surface.withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(AppRadius.capsule),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _OverlayRow(name: '甲', bpm: 72, series: series),
+                const SizedBox(height: 6),
+                _OverlayRow(name: '乙', bpm: 96, series: series),
+                const SizedBox(height: 6),
+                _OverlayRow(
+                  name: '丙',
+                  bpm: null,
+                  series: HeartRateSeries(),
+                  offline: true,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      'overlay',
+    );
+  });
+}
+
+/// 与手机悬浮窗一行同形：名称 | 心率大字 | 迷你折线。
+final class _OverlayRow extends StatelessWidget {
+  const _OverlayRow({
+    required this.name,
+    required this.bpm,
+    required this.series,
+    this.offline = false,
+  });
+  final String name;
+  final int? bpm;
+  final HeartRateSeries series;
+  final bool offline;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      SizedBox(
+        width: 96,
+        child: Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: AppTextSize.caption,
+            color: offline ? WinColors.textDim : Colors.white,
+            shadows: const [Shadow(blurRadius: 3, color: Color(0xCC000000))],
+          ),
+        ),
+      ),
+      const SizedBox(width: 8),
+      SizedBox(
+        width: 44,
+        child: Text(
+          offline ? '离线' : (bpm == null ? '--' : '$bpm'),
+          textAlign: TextAlign.right,
+          style: TextStyle(
+            fontSize: AppTextSize.body,
+            fontWeight: FontWeight.bold,
+            color: offline ? WinColors.textDim : WinColors.accent,
+            shadows: const [Shadow(blurRadius: 3, color: Color(0xCC000000))],
+          ),
+        ),
+      ),
+      const SizedBox(width: 8),
+      SizedBox(
+        width: 72,
+        height: 22,
+        child: CustomPaint(painter: WinSparklinePainter(series)),
+      ),
+    ],
+  );
 }
 
 final class _FakeDevice {

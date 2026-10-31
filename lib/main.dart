@@ -7,6 +7,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/config/app_config.dart';
+import 'theme/app_theme.dart';
 import 'core/l10n/strings_zh.dart';
 import 'core/logging/app_logger.dart';
 import 'core/platform/room_overlay.dart';
@@ -210,7 +211,7 @@ final class _HeartRateAppState extends State<HeartRateApp>
       navigatorKey: _navigatorKey,
       title: AppConfig.displayName,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: Colors.redAccent, useMaterial3: true),
+      theme: AppTheme.mobile(), // 与桌面共用一份色值（lib/theme/app_theme.dart）
       home: Scaffold(
         appBar: AppBar(title: Text(titles[_index])),
         body: SafeArea(
