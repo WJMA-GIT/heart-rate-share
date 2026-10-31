@@ -153,6 +153,21 @@ void main() {
     await socket.close();
   });
 
+  test('关掉开关后端口确实不再监听（netstat 级别证据）', () async {
+    final before = port;
+    await server.stop();
+    // 端口应立刻拒绝连接：这是"关掉后不残留监听"的硬证据。
+    await expectLater(
+      Socket.connect('127.0.0.1', before, timeout: const Duration(seconds: 2)),
+      throwsA(isA<SocketException>()),
+    );
+    expect(server.isRunning, isFalse);
+    expect(server.connectionCount, 0);
+    // 重新开回来，交给 tearDown 收尾
+    final ok = await server.start(room: 'LAN123', name: 'phone');
+    expect(ok, isTrue);
+  });
+
   test('公网地址判定：内网/回环放行，公网拒绝', () {
     expect(
       LanProjectionServer.isPrivateOrLoopbackAddress(
