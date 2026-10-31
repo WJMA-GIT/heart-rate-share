@@ -210,6 +210,56 @@ abstract final class WinTheme {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         ),
       ),
+      cardTheme: CardThemeData(
+        color: WinColors.surface,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: WinColors.line),
+        ),
+      ),
+      dividerTheme: const DividerThemeData(
+        color: WinColors.line,
+        thickness: 1,
+        space: 1,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: WinColors.surfaceHigh,
+        hintStyle: const TextStyle(fontSize: 12, color: WinColors.textDim),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 12,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: WinColors.line),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: WinColors.line),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: WinColors.accent, width: 1.5),
+        ),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(foregroundColor: WinColors.textDim),
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? Colors.white
+              : WinColors.textDim,
+        ),
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? WinColors.accent
+              : WinColors.surfaceHigh,
+        ),
+      ),
       // 链接样式只给"查看日志"这类次要动作，并且明确去掉下划线。
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
@@ -264,8 +314,11 @@ final class _TopBar extends StatelessWidget {
             const SizedBox(width: 8),
             Text('共享心率', style: winText(14, weight: FontWeight.w600)),
             const SizedBox(width: 16),
-            _Dot(color: connected ? WinColors.ok : WinColors.textDim),
-            const SizedBox(width: 6),
+            _Badge(
+              label: connected ? '已连接' : '未连接',
+              color: connected ? WinColors.ok : WinColors.textDim,
+            ),
+            const SizedBox(width: 8),
             Flexible(
               child: Text(
                 controller.transportLabel,
@@ -301,6 +354,18 @@ final class _TopBar extends StatelessWidget {
                 color: WinColors.textDim,
               ),
             ),
+            const SizedBox(width: 4),
+            _WinButton(
+              icon: Icons.remove,
+              tooltip: '最小化',
+              onTap: minimizeWindow,
+            ),
+            _WinButton(
+              icon: Icons.close,
+              tooltip: '关闭',
+              onTap: closeWindow,
+              danger: true,
+            ),
           ],
         ),
       ),
@@ -308,15 +373,64 @@ final class _TopBar extends StatelessWidget {
   }
 }
 
-final class _Dot extends StatelessWidget {
-  const _Dot({required this.color});
+/// 胶囊状态徽标：绿=在线/已连接，灰=离线，黄=连接中。
+final class _Badge extends StatelessWidget {
+  const _Badge({required this.label, required this.color});
+  final String label;
   final Color color;
 
   @override
   Widget build(BuildContext context) => Container(
-    width: 8,
-    height: 8,
-    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: color.withValues(alpha: 0.5)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Text(label, style: winText(11, color: color)),
+      ],
+    ),
+  );
+}
+
+/// 自绘标题栏按钮（无系统灰条，所以最小化/关闭自己做）。
+final class _WinButton extends StatelessWidget {
+  const _WinButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.danger = false,
+  });
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: onTap,
+      child: SizedBox(
+        width: 30,
+        height: 30,
+        child: Icon(
+          icon,
+          size: 14,
+          color: danger ? WinColors.accent : WinColors.textDim,
+        ),
+      ),
+    ),
   );
 }
 
@@ -595,44 +709,52 @@ final class _BleRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hrs = device.isHrsCandidate == true;
-    return Container(
-      height: 44,
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: WinColors.line)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 3,
-            child: Text(
-              device.name.isEmpty ? device.id : device.name,
-              style: winText(14),
-            ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => onConnect(device.id),
+        hoverColor: WinColors.surfaceHigh,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.only(right: 8),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: WinColors.line)),
           ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              hrs ? '心率带' : '其他 BLE',
-              style: winText(
-                12,
-                color: hrs ? WinColors.accent : WinColors.textDim,
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(
+                  device.name.isEmpty ? device.id : device.name,
+                  style: winText(14),
+                ),
               ),
-            ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  hrs ? '心率带' : '其他 BLE',
+                  style: winText(
+                    12,
+                    color: hrs ? WinColors.accent : WinColors.textDim,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 64,
+                child: Text(
+                  '${device.rssi}',
+                  textAlign: TextAlign.right,
+                  style: winText(12, color: WinColors.textDim),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton(
+                onPressed: () => onConnect(device.id),
+                child: const Text('连接'),
+              ),
+            ],
           ),
-          SizedBox(
-            width: 64,
-            child: Text(
-              '${device.rssi}',
-              textAlign: TextAlign.right,
-              style: winText(12, color: WinColors.textDim),
-            ),
-          ),
-          const SizedBox(width: 12),
-          FilledButton(
-            onPressed: () => onConnect(device.id),
-            child: const Text('连接'),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -929,12 +1051,15 @@ final class _Card extends StatelessWidget {
   const _Card({required this.child});
   final Widget child;
 
+  // 用 Material 而不是 DecoratedBox：ListTile/InkWell 的水波纹与悬停高亮要画在
+  // 最近的 Material 上，套 DecoratedBox 会把它们盖掉（debug 下还会断言失败）。
   @override
-  Widget build(BuildContext context) => Container(
-    decoration: BoxDecoration(
-      color: WinColors.surface,
+  Widget build(BuildContext context) => Material(
+    color: WinColors.surface,
+    clipBehavior: Clip.antiAlias,
+    shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: WinColors.line),
+      side: const BorderSide(color: WinColors.line),
     ),
     child: child,
   );

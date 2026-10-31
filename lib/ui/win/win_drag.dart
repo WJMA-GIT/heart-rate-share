@@ -34,3 +34,27 @@ void startWindowDrag() {
     // 拖动失败不影响其他功能（窗口仍可用快捷键/鼠标移出边缘调整）
   }
 }
+
+/// 最小化 / 关闭：无边框窗口没有系统按钮，自己发 Win32 消息。
+void _postCommand(int command) {
+  if (!Platform.isWindows) return;
+  try {
+    final user32 = DynamicLibrary.open('user32.dll');
+    final getForegroundWindow = user32
+        .lookupFunction<IntPtr Function(), int Function()>(
+          'GetForegroundWindow',
+        );
+    final postMessage = user32
+        .lookupFunction<
+          Int32 Function(IntPtr, Uint32, IntPtr, IntPtr),
+          int Function(int, int, int, int)
+        >('PostMessageW');
+    final hwnd = getForegroundWindow();
+    if (hwnd == 0) return;
+    const wmSysCommand = 0x0112;
+    postMessage(hwnd, wmSysCommand, command, 0);
+  } catch (_) {}
+}
+
+void minimizeWindow() => _postCommand(0xF020); // SC_MINIMIZE
+void closeWindow() => _postCommand(0xF060); // SC_CLOSE

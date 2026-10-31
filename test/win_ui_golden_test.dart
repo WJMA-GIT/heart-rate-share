@@ -118,6 +118,24 @@ void main() {
       'room',
     );
   });
+
+  testWidgets('设置页截图', (tester) async {
+    await _shoot(
+      tester,
+      Scaffold(
+        backgroundColor: WinColors.bg,
+        body: SettingsView(
+          transparent: true,
+          onToggleTransparent: () {},
+          logPath: r'C:\Users\MAWJ\AppData\Local\heartrate\logs\startup.log',
+          onOpenLogs: () async {},
+          safeMode: false,
+          version: '1.0.10',
+        ),
+      ),
+      'settings',
+    );
+  });
 }
 
 final class _FakeDevice {
