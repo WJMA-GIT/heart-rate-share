@@ -31,6 +31,13 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
+      # 桌面界面截图（离屏渲染的真实产物，不是 mock）：连接页 / 房间页
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: win-ui-screenshots
+          path: build/win-screenshots/*.png
+          if-no-files-found: warn
 
   # ------------------------------------------------------- 平台工程存在性探测
   # 仓库目前只有 android/；ios/ 与 windows/ 工程补齐后，下面的 job 会自动启用，

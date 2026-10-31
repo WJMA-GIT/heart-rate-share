@@ -134,10 +134,10 @@ final class HeartRateService {
     );
   }
 
-  Future<void> scan() async {
+  Future<void> scan({bool onlyHrs = true}) async {
     _scanning = true;
     try {
-      await _guard(() => _source.startScan());
+      await _guard(() => _source.startScan(onlyHrs: onlyHrs));
     } finally {
       // 快照是异步投递的：先让扫描期间产生的快照被消费掉，再解除标志，
       // 否则收尾那条 idle 会落在标志复位之后，防御就失效了。

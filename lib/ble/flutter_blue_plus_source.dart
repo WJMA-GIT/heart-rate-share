@@ -48,6 +48,7 @@ final class FlutterBluePlusSource implements HeartRateSource {
   final _decoder = const HrsDecoder();
   final _devices = <String, BluetoothDevice>{};
   final _rssiById = <String, int>{};
+  final _hasHrs = <String, bool>{};
   final _subscriptions = <StreamSubscription<Object?>>[];
   StreamSubscription<BluetoothAdapterState>? _adapterSubscription;
   StreamSubscription<BluetoothConnectionState>? _connectionSubscription;
@@ -102,6 +103,7 @@ final class FlutterBluePlusSource implements HeartRateSource {
   @override
   Future<void> startScan({
     Duration timeout = const Duration(seconds: 10),
+    bool onlyHrs = true,
   }) async {
     final epoch = ++_scanEpoch;
     if (_connected?.isConnected ?? false) {
@@ -123,6 +125,7 @@ final class FlutterBluePlusSource implements HeartRateSource {
     }
     _devices.clear();
     _rssiById.clear();
+    _hasHrs.clear();
     _emit(
       _snapshot.copyWith(
         phase: BleConnectionPhase.scanning,
@@ -134,19 +137,31 @@ final class FlutterBluePlusSource implements HeartRateSource {
     scanSubscription = FlutterBluePlus.scanResults.listen(
       (results) {
         for (final result in results) {
+          final id = result.device.remoteId.str;
           final serviceUuids = result.advertisementData.serviceUuids;
-          if (serviceUuids.contains(_hrsService)) {
-            _devices[result.device.remoteId.str] = result.device;
-            _rssiById[result.device.remoteId.str] = result.rssi;
+          final hrs = serviceUuids.contains(_hrsService);
+          // onlyHrs=false（Windows）：**不过滤**，全部收下，只标记是否像心率带；
+          // 以前的写法在扫描和这里各过滤一次，很多心率带广播不带 0x180D 就永远扫不到。
+          if (!onlyHrs || hrs) {
+            _devices[id] = result.device;
+            _rssiById[id] = result.rssi;
+            _hasHrs[id] = hrs;
           }
         }
-        final infos = _devices.entries.map((entry) {
-          return BleDeviceInfo(
-            id: entry.key,
-            name: entry.value.platformName,
-            rssi: _rssiById[entry.key] ?? -127,
-          );
-        }).toList()..sort((a, b) => b.rssi.compareTo(a.rssi));
+        final infos =
+            _devices.entries.map((entry) {
+              return BleDeviceInfo(
+                id: entry.key,
+                name: entry.value.platformName,
+                rssi: _rssiById[entry.key] ?? -127,
+                isHrsCandidate: _hasHrs[entry.key] ?? false,
+              );
+            }).toList()..sort((a, b) {
+              if (a.isHrsCandidate != b.isHrsCandidate) {
+                return a.isHrsCandidate ? -1 : 1;
+              }
+              return b.rssi.compareTo(a.rssi);
+            });
         _emit(_snapshot.copyWith(devices: infos));
       },
       onError: (Object error, StackTrace stack) {
@@ -155,7 +170,9 @@ final class FlutterBluePlusSource implements HeartRateSource {
     );
     _subscriptions.add(scanSubscription);
     await FlutterBluePlus.startScan(
-      withServices: [_hrsService],
+      // onlyHrs=false 时不要服务过滤：WinRT 后端对广播过滤支持不一致，
+      // 而且不少心率带只在连接后才暴露 0x180D。
+      withServices: onlyHrs ? [_hrsService] : const <Guid>[],
       timeout: timeout,
     );
     await Future<void>.delayed(timeout);

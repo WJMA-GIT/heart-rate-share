@@ -301,7 +301,7 @@ final class WinController extends ChangeNotifier {
     final ble = ensureBle();
     if (ble == null) return;
     try {
-      await ble.scan();
+      await ble.scan(onlyHrs: false);
     } catch (error) {
       _error = '蓝牙扫描失败：$error（确认系统蓝牙已打开、设备已配对/在附近）';
       _log.warn('win', 'ble scan failed: $error', code: 'win_ble_scan_failed');
@@ -350,6 +350,22 @@ final class WinController extends ChangeNotifier {
     _bleLastSampleAt = null;
     transport = WinTransport.none;
     notifyListeners();
+  }
+
+  /// 打开日志目录：不用让用户自己去 %LOCALAPPDATA% 里翻。
+  Future<void> openLogFolder() async {
+    final local = Platform.environment['LOCALAPPDATA'];
+    final dir = local == null ? null : Directory('$local\\heartrate\\logs');
+    final target = dir != null && dir.existsSync() ? dir.path : (local ?? '.');
+    try {
+      await Process.run('explorer.exe', [target]);
+    } catch (error) {
+      _log.warn(
+        'win',
+        'open log folder failed: $error',
+        code: 'win_open_log_failed',
+      );
+    }
   }
 
   void toggleBackground() {

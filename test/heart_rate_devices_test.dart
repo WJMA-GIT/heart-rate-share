@@ -38,6 +38,7 @@ final class FakeDeviceSource implements HeartRateSource {
   @override
   Future<void> startScan({
     Duration timeout = const Duration(seconds: 10),
+    bool onlyHrs = true,
   }) async => emitDevices();
 
   @override

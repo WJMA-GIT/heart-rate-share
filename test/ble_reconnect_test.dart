@@ -45,6 +45,7 @@ final class FakeHeartRateSource implements HeartRateSource {
   @override
   Future<void> startScan({
     Duration timeout = const Duration(seconds: 10),
+    bool onlyHrs = true,
   }) async {
     emit(_snapshot.copyWith(phase: BleConnectionPhase.scanning));
     if (scanEndsWithIdle) {

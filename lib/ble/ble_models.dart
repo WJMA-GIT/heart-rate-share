@@ -21,10 +21,15 @@ final class BleDeviceInfo {
     required this.id,
     required this.name,
     required this.rssi,
+    this.isHrsCandidate = false,
   });
   final String id; // Android MAC; iOS UUID (not a MAC address).
   final String name;
   final int rssi;
+
+  /// 广播里是否带 0x180D（心率服务）。Windows 全量扫描时用来排序：
+  /// 心率带排前面，但不是过滤条件（很多设备只在连接后才暴露服务）。
+  final bool isHrsCandidate;
   String get displayName => name.isEmpty ? '(unnamed HRS device)' : name;
 }
 

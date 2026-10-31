@@ -8,7 +8,12 @@ abstract interface class HeartRateSource {
   Stream<HeartRateSample> get samples;
   Stream<BleSnapshot> get snapshots;
 
-  Future<void> startScan({Duration timeout = const Duration(seconds: 10)});
+  /// [onlyHrs] = true 时只保留广播里带 0x180D 的设备（Android 现状）；
+  /// Windows 传 false：全量列出、只标记候选，避免漏掉"连接后才暴露服务"的心率带。
+  Future<void> startScan({
+    Duration timeout = const Duration(seconds: 10),
+    bool onlyHrs = true,
+  });
 
   /// [timeout] 为连接超时：手动连接用 [AppConfig.connectTimeout]，
   /// 自动重连用 [AppConfig.reconnectConnectTimeout]。
@@ -43,6 +48,7 @@ final class UnsupportedHeartRateSource implements HeartRateSource {
   @override
   Future<void> startScan({
     Duration timeout = const Duration(seconds: 10),
+    bool onlyHrs = true,
   }) async => _unsupported();
   @override
   Future<void> connect(

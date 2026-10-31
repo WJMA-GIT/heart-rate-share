@@ -2,17 +2,21 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 
+import '../../core/l10n/strings_zh.dart';
 import '../../core/platform/startup_log.dart';
+import '../../room/protocol.dart';
 import '../widgets/heart_rate_chart.dart';
 import 'win_controller.dart';
 import 'win_drag.dart';
 
-/// Windows 悬浮窗：无边框 + 置顶 + 背景可全透明（原生分层窗口的颜色键实现）。
+/// Windows 客户端（桌面布局）：左侧导航 + 顶部状态条 + 内容区。
 ///
-/// 两条通路：**有蓝牙优先 BLE 直连**，否则用局域网投射（扫到手机点一下就连，
-/// 不需要房间码）。画法与手机端完全一致：同一个 `normalizedPolyline`。
+/// 设计规范见 `generated/win/ui-spec.md`：深色基底、主色 #FF5252、8pt 栅格、
+/// 字号 12/14/16/20/28、圆角 8/12/16。页面本身不碰平台能力，纯数据驱动，
+/// 便于 golden 截图（`test/win_ui_golden_test.dart`）。
 final class WinApp extends StatefulWidget {
   const WinApp({this.controller, super.key});
+
   final WinController? controller;
 
   @override
@@ -23,34 +27,27 @@ final class _WinAppState extends State<WinApp> {
   WinController? _controllerOrNull;
   Object? _fatal;
   bool _owns = false;
-  bool _showPanel = true;
   bool _autoConnectTried = false;
   bool _safeMode = false;
+  _Section _section = _Section.connect;
 
   WinController get _controller => _controllerOrNull!;
 
   @override
   void initState() {
     super.initState();
-    // 先建窗口（runApp 已经跑起来了），再在 try/catch 里初始化数据层：
-    // 早先 WinController 在 runApp 之前构造，BLE 插件一抛异常就整个进程秒退。
-    _safeMode =
-        (const String.fromEnvironment('SAFE_MODE') == '1') ||
-        (Platform.environment['HEARTRATE_SAFE_MODE'] == '1');
+    _safeMode = Platform.environment['HEARTRATE_SAFE_MODE'] == '1';
     StartupLog.info('win: init (safeMode=$_safeMode)');
     try {
       final controller = widget.controller ?? WinController();
       _owns = widget.controller == null;
       _controllerOrNull = controller;
       controller.addListener(_onChange);
-      StartupLog.info('win: controller ok');
-      if (!_safeMode) {
-        controller.startDiscovery();
-      }
-      StartupLog.info('win: discovery requested');
+      if (!_safeMode) controller.startDiscovery();
+      StartupLog.info('win: ready');
     } catch (error, stack) {
       _fatal = error;
-      StartupLog.info('win: FATAL during init: $error');
+      StartupLog.info('win: FATAL init: $error');
       StartupLog.info('$stack');
     }
   }
@@ -61,7 +58,6 @@ final class _WinAppState extends State<WinApp> {
     _maybeAutoConnect();
   }
 
-  /// 记住上次选择的设备：它再次出现就自动连上（用户不需要每次点）。
   void _maybeAutoConnect() {
     if (_autoConnectTried || _controller.connected) return;
     final last = _controller.lastPeerId;
@@ -69,9 +65,7 @@ final class _WinAppState extends State<WinApp> {
     final peer = _controller.peers.where((p) => p.id == last).firstOrNull;
     if (peer == null) return;
     _autoConnectTried = true;
-    _controller.connectPeer(peer).then((ok) {
-      if (ok && mounted) setState(() => _showPanel = false);
-    });
+    _controller.connectPeer(peer);
   }
 
   @override
@@ -83,119 +77,238 @@ final class _WinAppState extends State<WinApp> {
 
   @override
   Widget build(BuildContext context) {
-    // 颜色键：与 windows/runner/main.cpp 的 RGB(1,2,3) 对应 → 这些像素 100% 透明。
-    if (_fatal != null) {
-      return MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
-        home: ColoredBox(
-          color: const Color(0xFF1C1C1E),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  '启动异常（窗口还在，说明渲染正常）',
-                  style: TextStyle(color: Colors.orangeAccent),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '$_fatal',
-                  style: const TextStyle(fontSize: 11, color: Colors.white70),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '日志：${StartupLog.path ?? "未创建"}\n把 startup.log 发回即可定位。',
-                  style: const TextStyle(fontSize: 11, color: Colors.white54),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-    final transparent = _controller.backgroundTransparent && !_safeMode;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorSchemeSeed: Colors.redAccent,
-        brightness: Brightness.dark,
-        useMaterial3: true,
-      ),
-      // Material 祖先：ListTile / IconButton / TextButton 都要 `Material.of(context)`；
-      // 直接挂在 ColoredBox 下会在 build 时抛 "Null check operator used on a null value"
-      // （1.0.5 的启动日志就是这么被刷了 1.8 MB）。type=transparency 不画底色，
-      // 背景仍由外层 ColoredBox + 原生颜色键决定。
-      home: Material(
-        type: MaterialType.transparency,
-        child: ColoredBox(
-          color: transparent
-              ? const Color(0xFF010203)
-              : const Color(0xE61C1C1E),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _header(),
-                if (_showPanel || !_controller.connected) _panel(),
-                _rows(),
-              ],
+      theme: WinTheme.data(),
+      home: _fatal != null
+          ? _FatalView(error: '$_fatal')
+          : Scaffold(
+              backgroundColor: WinColors.bg,
+              body: Column(
+                children: [
+                  _TopBar(
+                    controller: _controller,
+                    safeMode: _safeMode,
+                    onToggleSection: (section) =>
+                        setState(() => _section = section),
+                    section: _section,
+                  ),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        _NavRail(
+                          section: _section,
+                          onSelect: (section) =>
+                              setState(() => _section = section),
+                          onDrag: startWindowDrag,
+                        ),
+                        Expanded(child: _page()),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ),
-      ),
     );
   }
 
-  Widget _header() {
+  Widget _page() {
+    final c = _controller;
+    switch (_section) {
+      case _Section.connect:
+        return ConnectView(
+          adapterState: c.ble.adapterState,
+          bleBusy: c.ble.phase.name,
+          devices: [for (final d in c.bleDevices) d],
+          peers: c.peers,
+          error: c.error,
+          onScanBle: c.scanBle,
+          onConnectBle: c.connectBle,
+          onConnectPeer: (peer) async {
+            await c.connectPeer(peer);
+            if (mounted) setState(() => _section = _Section.room);
+          },
+          onConnectManual: c.connectManual,
+        );
+      case _Section.room:
+        return RoomView(
+          transport: c.transportLabel,
+          connected: c.connected,
+          members: c.members,
+          liveBpm: c.liveBpm,
+          seriesFor: c.seriesFor,
+          ownBpm: c.ownBpm,
+          ownSeries: c.ownSeries,
+          showBleRow: c.transport == WinTransport.ble,
+        );
+      case _Section.settings:
+        return SettingsView(
+          transparent: c.backgroundTransparent,
+          onToggleTransparent: c.toggleBackground,
+          logPath: StartupLog.path ?? '(未创建)',
+          onOpenLogs: () => c.openLogFolder(),
+          safeMode: _safeMode,
+          version: '1.0.8',
+        );
+    }
+  }
+}
+
+enum _Section { connect, room, settings }
+
+// ---------------------------------------------------------------- 设计令牌
+
+abstract final class WinColors {
+  static const bg = Color(0xFF121214);
+  static const surface = Color(0xFF1B1B1F);
+  static const surfaceHigh = Color(0xFF232329);
+  static const line = Color(0xFF2C2C33);
+  static const accent = Color(0xFFFF5252);
+  static const text = Color(0xFFF2F2F5);
+  static const textDim = Color(0xFF9A9AA5);
+  static const ok = Color(0xFF4ADE80);
+  static const warn = Color(0xFFFBBF24);
+}
+
+abstract final class WinTheme {
+  static ThemeData data() => ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.dark,
+    colorSchemeSeed: WinColors.accent,
+    scaffoldBackgroundColor: WinColors.bg,
+    fontFamily: 'Segoe UI',
+  );
+}
+
+TextStyle winText(
+  double size, {
+  Color color = WinColors.text,
+  FontWeight? weight,
+}) => TextStyle(fontSize: size, color: color, fontWeight: weight);
+
+// ---------------------------------------------------------------- 顶部状态条
+
+final class _TopBar extends StatelessWidget {
+  const _TopBar({
+    required this.controller,
+    required this.safeMode,
+    required this.section,
+    required this.onToggleSection,
+  });
+
+  final WinController controller;
+  final bool safeMode;
+  final _Section section;
+  final ValueChanged<_Section> onToggleSection;
+
+  @override
+  Widget build(BuildContext context) {
+    final connected = controller.connected;
     return GestureDetector(
       onPanStart: (_) => startWindowDrag(),
       child: Container(
-        color: _controller.backgroundTransparent
-            ? const Color(0xFF010203)
-            : Colors.transparent,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: const BoxDecoration(
+          color: WinColors.surface,
+          border: Border(bottom: BorderSide(color: WinColors.line)),
+        ),
         child: Row(
           children: [
-            const Icon(Icons.monitor_heart, size: 16, color: Color(0xFFFF5252)),
+            const Icon(Icons.monitor_heart, size: 18, color: WinColors.accent),
+            const SizedBox(width: 8),
+            Text('共享心率', style: winText(14, weight: FontWeight.w600)),
+            const SizedBox(width: 16),
+            _Dot(color: connected ? WinColors.ok : WinColors.textDim),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
-                _controller.transportLabel,
+                controller.transportLabel,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: _controller.connected
-                      ? Colors.greenAccent
-                      : Colors.white70,
+                style: winText(
+                  12,
+                  color: connected ? WinColors.text : WinColors.textDim,
                 ),
               ),
             ),
             const Spacer(),
-            if (_controller.connected)
-              TextButton(
-                onPressed: _controller.disconnectAll,
-                child: const Text('断开', style: TextStyle(fontSize: 12)),
+            if (safeMode)
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Text('安全模式', style: winText(12, color: WinColors.warn)),
               ),
-            IconButton(
-              tooltip: '背景透明/深色',
-              iconSize: 16,
-              onPressed: _controller.toggleBackground,
-              icon: Icon(
-                _controller.backgroundTransparent
-                    ? Icons.opacity
-                    : Icons.brightness_2_outlined,
-                color: Colors.white70,
-              ),
+            TextButton(
+              onPressed: () => onToggleSection(_Section.settings),
+              child: Text('设置', style: winText(12, color: WinColors.textDim)),
             ),
             IconButton(
-              tooltip: '连接设置',
+              tooltip: controller.backgroundTransparent
+                  ? '当前：背景透明（点一下变深色底）'
+                  : '当前：深色底（点一下变透明）',
               iconSize: 16,
-              onPressed: () => setState(() => _showPanel = !_showPanel),
-              icon: const Icon(Icons.settings_ethernet, color: Colors.white70),
+              onPressed: controller.toggleBackground,
+              icon: Icon(
+                controller.backgroundTransparent
+                    ? Icons.opacity
+                    : Icons.brightness_2_outlined,
+                color: WinColors.textDim,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+final class _Dot extends StatelessWidget {
+  const _Dot({required this.color});
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 8,
+    height: 8,
+    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+  );
+}
+
+// ---------------------------------------------------------------- 左侧导航
+
+final class _NavRail extends StatelessWidget {
+  const _NavRail({
+    required this.section,
+    required this.onSelect,
+    required this.onDrag,
+  });
+
+  final _Section section;
+  final ValueChanged<_Section> onSelect;
+  final VoidCallback onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onPanStart: (_) => onDrag(),
+      child: Container(
+        width: 168,
+        decoration: const BoxDecoration(
+          color: WinColors.surface,
+          border: Border(right: BorderSide(color: WinColors.line)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 8),
+            _item(Icons.bluetooth_searching, '连接', _Section.connect),
+            _item(Icons.groups_outlined, '房间', _Section.room),
+            _item(Icons.tune, '设置', _Section.settings),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '拖动标题栏移动窗口',
+                style: winText(11, color: WinColors.textDim),
+              ),
             ),
           ],
         ),
@@ -203,242 +316,198 @@ final class _WinAppState extends State<WinApp> {
     );
   }
 
-  Widget _panel() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _sectionTitle('手机投射（同一 Wi-Fi）'),
-        _lanList(),
-        _manualRow(),
-        if (!_safeMode) ...[
-          _sectionTitle('蓝牙直连（本机蓝牙）'),
-          _bleList(),
-        ] else
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-            child: Text(
-              '安全模式：蓝牙与透明都被跳过（HEARTRATE_SAFE_MODE=1）。'
-              '能用说明是这两块的问题，去掉该变量再试。',
-              style: const TextStyle(fontSize: 11, color: Colors.white54),
-            ),
-          ),
-        if (_controller.error != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
-            child: Text(
-              _controller.error!,
-              style: const TextStyle(fontSize: 11, color: Colors.orangeAccent),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _sectionTitle(String text) => Padding(
-    padding: const EdgeInsets.fromLTRB(10, 8, 10, 2),
-    child: Text(
-      text,
-      style: const TextStyle(fontSize: 11, color: Colors.white54),
-    ),
-  );
-
-  Widget _lanList() {
-    final peers = _controller.peers;
-    if (peers.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
-        child: Text(
-          _controller.scanning
-              ? '正在扫描同一 Wi-Fi 下的手机…'
-              : '没找到手机。检查：①手机与电脑连同一个 Wi-Fi；②手机设置里「投射到局域网」是开的；'
-                    '③Windows 防火墙允许本程序的"专用网络"；④路由器没开"AP 隔离"。'
-                    '实在不行在下面填手机 IP:端口 手动连。',
-          style: const TextStyle(fontSize: 11, color: Colors.white70),
-        ),
-      );
-    }
-    return Column(
-      children: [
-        for (final peer in peers)
-          ListTile(
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            title: Text(peer.name, style: const TextStyle(fontSize: 12)),
-            subtitle: Text(
-              '${peer.platform} · ${peer.members} 人在线',
-              style: const TextStyle(fontSize: 11),
-            ),
-            trailing: TextButton(
-              onPressed: () async {
-                final ok = await _controller.connectPeer(peer);
-                if (ok && mounted) setState(() => _showPanel = false);
-              },
-              child: const Text('连接'),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _manualRow() {
-    final controller = TextEditingController();
+  Widget _item(IconData icon, String label, _Section target) {
+    final selected = section == target;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: controller,
-              style: const TextStyle(fontSize: 12),
-              decoration: const InputDecoration(
-                isDense: true,
-                hintText: '手动：192.168.1.20:8770',
-                hintStyle: TextStyle(fontSize: 11),
-              ),
-              onSubmitted: (value) async {
-                final ok = await _controller.connectManual(value);
-                if (ok && mounted) setState(() => _showPanel = false);
-              },
-            ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => onSelect(target),
+        child: Container(
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: selected ? WinColors.surfaceHigh : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
           ),
-          TextButton(
-            onPressed: () async {
-              final ok = await _controller.connectManual(controller.text);
-              if (ok && mounted) setState(() => _showPanel = false);
-            },
-            child: const Text('连', style: TextStyle(fontSize: 12)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _bleList() {
-    final ble = _controller.ble;
-    final devices = ble.devices;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(10, 0, 10, 2),
           child: Row(
             children: [
-              Text(
-                ble.adapterState.isEmpty ? '蓝牙状态未知' : '蓝牙：${ble.adapterState}',
-                style: const TextStyle(fontSize: 11, color: Colors.white54),
+              Icon(
+                icon,
+                size: 16,
+                color: selected ? WinColors.accent : WinColors.textDim,
               ),
-              const Spacer(),
-              TextButton(
-                onPressed: _controller.scanBle,
-                child: const Text('扫描心率带', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 10),
+              Text(
+                label,
+                style: winText(
+                  14,
+                  color: selected ? WinColors.text : WinColors.textDim,
+                ),
               ),
             ],
           ),
         ),
-        if (devices.isEmpty)
-          const Padding(
-            padding: EdgeInsets.fromLTRB(10, 0, 10, 6),
-            child: Text(
-              '没有蓝牙心率设备：确认系统蓝牙已开、心率带在身上/在附近；'
-              '没有蓝牙就用上面的局域网投射。',
-              style: TextStyle(fontSize: 11, color: Colors.white70),
-            ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------- 连接页
+
+final class ConnectView extends StatelessWidget {
+  const ConnectView({
+    required this.adapterState,
+    required this.bleBusy,
+    required this.devices,
+    required this.peers,
+    required this.error,
+    required this.onScanBle,
+    required this.onConnectBle,
+    required this.onConnectPeer,
+    required this.onConnectManual,
+    super.key,
+  });
+
+  final String adapterState;
+  final String bleBusy;
+  final List<dynamic> devices;
+  final List<dynamic> peers;
+  final String? error;
+  final Future<void> Function() onScanBle;
+  final Future<bool> Function(String id) onConnectBle;
+  final Future<void> Function(dynamic peer) onConnectPeer;
+  final Future<bool> Function(String address) onConnectManual;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _SectionTitle(
+          '蓝牙心率带',
+          trailing: '适配器：${adapterState.isEmpty ? "未知" : adapterState}',
+        ),
+        _Card(
+          child: Column(
+            children: [
+              if (devices.isEmpty)
+                _EmptyState(
+                  icon: Icons.bluetooth_disabled,
+                  title: '未发现蓝牙设备',
+                  bullets: const [
+                    '确认系统蓝牙已开启（不是飞行模式）',
+                    '心率带可能被手机 App 占用：BLE 心率带通常只能同时连一台，先在手机上断开',
+                    '心率带可能在休眠：戴上或按一下机身按键唤醒',
+                    '仍扫不到可在 Windows 设置里先配对一次，再回来扫描',
+                  ],
+                  action: FilledButton.icon(
+                    onPressed: () => onScanBle(),
+                    icon: const Icon(Icons.search, size: 16),
+                    label: const Text('扫描（10 秒）'),
+                  ),
+                )
+              else
+                Column(
+                  children: [
+                    _TableHeader(),
+                    for (final device in devices)
+                      _BleRow(device: device, onConnect: onConnectBle),
+                  ],
+                ),
+            ],
           ),
-        for (final device in devices)
-          ListTile(
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            title: Text(
-              device.name.isEmpty ? device.id : device.name,
-              style: const TextStyle(fontSize: 12),
-            ),
-            subtitle: Text(
-              'RSSI ${device.rssi}',
-              style: const TextStyle(fontSize: 11),
-            ),
-            trailing: TextButton(
-              onPressed: () async {
-                final ok = await _controller.connectBle(device.id);
-                if (ok && mounted) setState(() => _showPanel = false);
-              },
-              child: const Text('连接'),
-            ),
+        ),
+        const SizedBox(height: 16),
+        _SectionTitle('局域网投射（手机）', trailing: '自动发现中'),
+        _Card(
+          child: peers.isEmpty
+              ? _EmptyState(
+                  icon: Icons.wifi_find,
+                  title: '未发现手机',
+                  bullets: const [
+                    '手机与电脑要在同一个 Wi-Fi（路由器没开 AP 隔离）',
+                    '手机设置里「投射到局域网」要开着（默认开）',
+                    'Windows 防火墙允许本程序的"专用网络"',
+                  ],
+                  action: FilledButton.icon(
+                    onPressed: () => onConnectManual(''),
+                    icon: const Icon(Icons.keyboard, size: 16),
+                    label: const Text('手动输入 IP:端口'),
+                  ),
+                )
+              : Column(
+                  children: [
+                    for (final peer in peers)
+                      ListTile(
+                        dense: true,
+                        title: Text(peer.name, style: winText(14)),
+                        subtitle: Text(
+                          '${peer.platform} · ${peer.members} 人在线',
+                          style: winText(12, color: WinColors.textDim),
+                        ),
+                        trailing: FilledButton(
+                          onPressed: () => onConnectPeer(peer),
+                          child: const Text('连接'),
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(error!, style: winText(12, color: WinColors.warn)),
           ),
       ],
     );
   }
+}
 
-  Widget _rows() {
-    final rows = <Widget>[];
-    if (_controller.transport == WinTransport.ble) {
-      rows.add(_row('蓝牙心率带', _controller.ownBpm, _controller.ownSeries, false));
-    }
-    for (final member in _controller.members) {
-      rows.add(
-        _row(
-          member.report.displayName,
-          _controller.liveBpm(member),
-          _controller.seriesFor(member.report.memberId),
-          !member.online,
-        ),
-      );
-    }
-    if (rows.isEmpty) {
-      if (!_controller.connected) return const SizedBox.shrink();
-      return const Padding(
-        padding: EdgeInsets.all(10),
-        child: Text(
-          '等待心率数据…',
-          style: TextStyle(fontSize: 11, color: Colors.white70),
-        ),
-      );
-    }
-    return Column(mainAxisSize: MainAxisSize.min, children: rows);
-  }
+final class _BleRow extends StatelessWidget {
+  const _BleRow({required this.device, required this.onConnect});
+  final dynamic device;
+  final Future<bool> Function(String id) onConnect;
 
-  Widget _row(String name, int? bpm, HeartRateSeries series, bool offline) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+  @override
+  Widget build(BuildContext context) {
+    final hrs = device.isHrsCandidate == true;
+    return Container(
+      height: 44,
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: WinColors.line)),
+      ),
       child: Row(
         children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 110),
+          Expanded(
+            flex: 3,
             child: Text(
-              name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12,
-                color: offline ? const Color(0xFFB0B0B0) : Colors.white,
-                shadows: const [
-                  Shadow(blurRadius: 3, color: Color(0xCC000000)),
-                ],
+              device.name.isEmpty ? device.id : device.name,
+              style: winText(14),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              hrs ? '心率带' : '其他 BLE',
+              style: winText(
+                12,
+                color: hrs ? WinColors.accent : WinColors.textDim,
               ),
             ),
           ),
-          const SizedBox(width: 6),
           SizedBox(
-            width: 38,
+            width: 64,
             child: Text(
-              offline ? '离线' : (bpm == null ? '--' : '$bpm'),
+              '${device.rssi}',
               textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: offline
-                    ? const Color(0xFF9E9E9E)
-                    : const Color(0xFFFF5252),
-                shadows: const [
-                  Shadow(blurRadius: 3, color: Color(0xCC000000)),
-                ],
-              ),
+              style: winText(12, color: WinColors.textDim),
             ),
           ),
-          const SizedBox(width: 6),
-          SizedBox(
-            width: 56,
-            height: 20,
-            child: CustomPaint(painter: _WinSparkline(series)),
+          const SizedBox(width: 12),
+          FilledButton(
+            onPressed: () => onConnect(device.id),
+            child: const Text('连接'),
           ),
         ],
       ),
@@ -446,9 +515,380 @@ final class _WinAppState extends State<WinApp> {
   }
 }
 
-/// 迷你折线：与首页/手机悬浮窗同一份 `normalizedPolyline`（缺测虚线规则一致）。
-final class _WinSparkline extends CustomPainter {
-  _WinSparkline(this.series);
+final class _TableHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 32,
+    child: Row(
+      children: [
+        Expanded(
+          flex: 3,
+          child: Text('名称', style: winText(12, color: WinColors.textDim)),
+        ),
+        Expanded(
+          flex: 2,
+          child: Text('类型', style: winText(12, color: WinColors.textDim)),
+        ),
+        SizedBox(
+          width: 64,
+          child: Text(
+            'RSSI',
+            textAlign: TextAlign.right,
+            style: winText(12, color: WinColors.textDim),
+          ),
+        ),
+        const SizedBox(width: 76),
+      ],
+    ),
+  );
+}
+
+// ---------------------------------------------------------------- 房间页
+
+final class RoomView extends StatelessWidget {
+  const RoomView({
+    required this.transport,
+    required this.connected,
+    required this.members,
+    required this.liveBpm,
+    required this.seriesFor,
+    required this.ownBpm,
+    required this.ownSeries,
+    required this.showBleRow,
+    super.key,
+  });
+
+  final String transport;
+  final bool connected;
+  final List<MemberState> members;
+  final int? Function(MemberState member) liveBpm;
+  final HeartRateSeries Function(String id) seriesFor;
+  final int? ownBpm;
+  final HeartRateSeries ownSeries;
+  final bool showBleRow;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!connected) {
+      return _EmptyState(
+        icon: Icons.link_off,
+        title: '还没有连上数据源',
+        bullets: const ['到「连接」页选一台手机（局域网）或心率带（蓝牙）'],
+        action: const SizedBox.shrink(),
+      );
+    }
+    final cards = <Widget>[];
+    if (showBleRow) {
+      cards.add(
+        _MemberCard(
+          name: '蓝牙心率带',
+          bpm: ownBpm,
+          series: ownSeries,
+          online: true,
+        ),
+      );
+    }
+    for (final member in members) {
+      cards.add(
+        _MemberCard(
+          name: member.report.displayName,
+          bpm: liveBpm(member),
+          series: seriesFor(member.report.memberId),
+          online: member.online,
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _SectionTitle('房间成员', trailing: transport),
+        if (cards.isEmpty)
+          _EmptyState(
+            icon: Icons.hourglass_empty,
+            title: '等待心率数据…',
+            bullets: const ['手机在房间里上报后，这里会出现成员卡片'],
+            action: const SizedBox.shrink(),
+          )
+        else
+          GridView.count(
+            crossAxisCount: 2,
+            childAspectRatio: 3.1,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            children: cards,
+          ),
+      ],
+    );
+  }
+}
+
+final class _MemberCard extends StatelessWidget {
+  const _MemberCard({
+    required this.name,
+    required this.bpm,
+    required this.series,
+    required this.online,
+  });
+
+  final String name;
+  final int? bpm;
+  final HeartRateSeries series;
+  final bool online;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: WinColors.surfaceHigh,
+              child: Text(
+                name.isEmpty ? '?' : name.substring(0, 1),
+                style: winText(14, color: WinColors.text),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: winText(14),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    online ? '在线' : '离线',
+                    style: winText(
+                      11,
+                      color: online ? WinColors.ok : WinColors.textDim,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              online ? (bpm?.toString() ?? '--') : '--',
+              style: winText(
+                28,
+                color: online ? WinColors.accent : WinColors.textDim,
+                weight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text('bpm', style: winText(11, color: WinColors.textDim)),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 96,
+              height: 36,
+              child: CustomPaint(painter: WinSparklinePainter(series)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------- 设置页
+
+final class SettingsView extends StatelessWidget {
+  const SettingsView({
+    required this.transparent,
+    required this.onToggleTransparent,
+    required this.logPath,
+    required this.onOpenLogs,
+    required this.safeMode,
+    required this.version,
+    super.key,
+  });
+
+  final bool transparent;
+  final VoidCallback onToggleTransparent;
+  final String logPath;
+  final Future<void> Function() onOpenLogs;
+  final bool safeMode;
+  final String version;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _SectionTitle('显示'),
+        _Card(
+          child: Column(
+            children: [
+              SwitchListTile(
+                value: transparent,
+                onChanged: (_) => onToggleTransparent(),
+                title: Text('背景全透明', style: winText(14)),
+                subtitle: Text(
+                  '关闭则用深色底；文字与折线始终不透明',
+                  style: winText(12, color: WinColors.textDim),
+                ),
+              ),
+              const Divider(height: 1, color: WinColors.line),
+              ListTile(
+                title: Text('安全模式', style: winText(14)),
+                subtitle: Text(
+                  safeMode
+                      ? '已开启（不透明窗口 + 不初始化蓝牙）'
+                      : '未开启（启动加 --safe-mode 可排查问题）',
+                  style: winText(12, color: WinColors.textDim),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _SectionTitle('诊断'),
+        _Card(
+          child: Column(
+            children: [
+              ListTile(
+                title: Text('日志目录', style: winText(14)),
+                subtitle: SelectableText(
+                  logPath,
+                  style: winText(12, color: WinColors.textDim),
+                ),
+                trailing: FilledButton(
+                  onPressed: () => onOpenLogs(),
+                  child: const Text('打开日志'),
+                ),
+              ),
+              const Divider(height: 1, color: WinColors.line),
+              ListTile(
+                title: Text('版本', style: winText(14)),
+                trailing: Text(
+                  version,
+                  style: winText(12, color: WinColors.textDim),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------- 通用件
+
+final class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text, {this.trailing});
+  final String text;
+  final String? trailing;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      children: [
+        Text(text, style: winText(16, weight: FontWeight.w600)),
+        const Spacer(),
+        if (trailing != null)
+          Text(trailing!, style: winText(12, color: WinColors.textDim)),
+      ],
+    ),
+  );
+}
+
+final class _Card extends StatelessWidget {
+  const _Card({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(
+      color: WinColors.surface,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: WinColors.line),
+    ),
+    child: child,
+  );
+}
+
+final class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.bullets,
+    required this.action,
+  });
+
+  final IconData icon;
+  final String title;
+  final List<String> bullets;
+  final Widget action;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(24),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 20, color: WinColors.textDim),
+            const SizedBox(width: 8),
+            Text(title, style: winText(14, weight: FontWeight.w600)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        for (final line in bullets)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              '· $line',
+              style: winText(12, color: WinColors.textDim),
+            ),
+          ),
+        const SizedBox(height: 8),
+        action,
+      ],
+    ),
+  );
+}
+
+final class _FatalView extends StatelessWidget {
+  const _FatalView({required this.error});
+  final String error;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: WinColors.bg,
+    body: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('启动异常（窗口还在，说明渲染正常）', style: winText(16, color: WinColors.warn)),
+          const SizedBox(height: 8),
+          SelectableText(error, style: winText(12, color: WinColors.textDim)),
+          const SizedBox(height: 8),
+          SelectableText(
+            '日志：${StartupLog.path ?? "未创建"}',
+            style: winText(12, color: WinColors.textDim),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// 迷你折线：与手机悬浮窗同一份 `normalizedPolyline`（≤8s 淡虚线、>8s 断开、#FF5252）。
+final class WinSparklinePainter extends CustomPainter {
+  WinSparklinePainter(this.series);
   final HeartRateSeries series;
 
   @override
@@ -459,14 +899,14 @@ final class _WinSparkline extends CustomPainter {
         Offset(0, size.height / 2),
         Offset(size.width, size.height / 2),
         Paint()
-          ..color = const Color(0x59FFFFFF)
+          ..color = WinColors.textDim.withValues(alpha: 0.35)
           ..strokeWidth = 1,
       );
       return;
     }
     Offset map(Offset p) => Offset(p.dx * size.width, p.dy * size.height);
     final solid = Paint()
-      ..color = const Color(0xFFFF5252)
+      ..color = WinColors.accent
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round;
@@ -479,9 +919,8 @@ final class _WinSparkline extends CustomPainter {
       }
     }
     canvas.drawPath(path, solid);
-
-    final bridgePaint = Paint()
-      ..color = const Color(0x73FF5252)
+    final bridge = Paint()
+      ..color = WinColors.accent.withValues(alpha: 0.45)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     for (final (from, to) in polyline.bridges) {
@@ -493,18 +932,18 @@ final class _WinSparkline extends CustomPainter {
       final step = delta / length;
       for (var pos = 0.0; pos < length; pos += 5) {
         final end = (pos + 3).clamp(0.0, length);
-        canvas.drawLine(a + step * pos, a + step * end, bridgePaint);
+        canvas.drawLine(a + step * pos, a + step * end, bridge);
       }
     }
     canvas.drawCircle(
       map(polyline.segments.last.last),
       2,
-      Paint()..color = const Color(0xFFFF5252),
+      Paint()..color = WinColors.accent,
     );
   }
 
   @override
-  bool shouldRepaint(_WinSparkline old) =>
+  bool shouldRepaint(WinSparklinePainter old) =>
       old.series.revision != series.revision;
 }
 
@@ -512,7 +951,7 @@ final class _WinSparkline extends CustomPainter {
 Future<void> runWinApp() async {
   WidgetsFlutterBinding.ensureInitialized();
   StartupLog.stage('win: runApp');
-  // 无边框/置顶/分层透明全部在 runner（main.cpp）里完成，Dart 侧不再调用任何
-  // 窗口管理插件——那个插件子类化 WndProc，正是 0xC000041D 的崩溃来源。
   runApp(const WinApp());
 }
+
+String winTransportHint() => Zh.lanTitle;
