@@ -91,7 +91,7 @@ void main() {
           onConnectManual: (_) async => true,
         ),
       ),
-      'connect',
+      'ui-connect',
     );
   });
 
@@ -116,7 +116,7 @@ void main() {
           showBleRow: false,
         ),
       ),
-      'room',
+      'ui-room',
     );
   });
 
@@ -134,7 +134,7 @@ void main() {
           version: '1.0.10',
         ),
       ),
-      'settings',
+      'ui-settings',
     );
   });
 
@@ -170,7 +170,109 @@ void main() {
           ),
         ),
       ),
-      'overlay',
+      'ui-overlay',
+    );
+  });
+
+  testWidgets('放大后截图（130%）', (tester) async {
+    await _shoot(
+      tester,
+      MediaQuery(
+        data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+        child: Scaffold(
+          backgroundColor: WinColors.bg,
+          body: ConnectView(
+            adapterState: 'on',
+            bleBusy: 'idle',
+            devices: const [_FakeDevice('HRS-1234', 'Polar H10', -52, true)],
+            peers: const [_FakePeer('MAWJ 的手机', 'android', 3)],
+            error: null,
+            onScanBle: () async {},
+            onConnectBle: (_) async => true,
+            onConnectPeer: (_) async {},
+            onConnectManual: (_) async => true,
+          ),
+        ),
+      ),
+      'ui-zoomed',
+    );
+  });
+
+  testWidgets('全透明精简态截图', (tester) async {
+    final series = _series();
+    const names = ['甲', '乙（长名字测试）', '丙'];
+    const bpms = [72, 96, -1];
+    await _shoot(
+      tester,
+      Scaffold(
+        backgroundColor: const Color(0xFF010203), // 原生颜色键色 = 透明
+        body: Align(
+          alignment: Alignment.topLeft,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 与 _CompactRow 同参数：名称 96 / 心率 48 右对齐 / 折线 72
+                for (var i = 0; i < names.length; i++)
+                  SizedBox(
+                    height: 22,
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 96,
+                          child: Text(
+                            names[i],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: bpms[i] < 0
+                                  ? WinColors.textDim
+                                  : Colors.white,
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 48,
+                          child: Text(
+                            bpms[i] < 0 ? '--' : '${bpms[i]}',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: bpms[i] < 0
+                                  ? WinColors.textDim
+                                  : WinColors.accent,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        SizedBox(
+                          width: 72,
+                          height: 18,
+                          child: CustomPaint(
+                            painter: WinSparklinePainter(
+                              bpms[i] < 0 ? HeartRateSeries() : series,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 4),
+                OutlinedButton.icon(
+                  onPressed: () {},
+                  icon: const Icon(Icons.link_off, size: 12),
+                  label: const Text('断开', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      'ui-transparent',
     );
   });
 }
