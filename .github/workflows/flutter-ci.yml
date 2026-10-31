@@ -316,6 +316,16 @@ jobs:
             if (-not (Select-String -Path $log -SimpleMatch $expect -Quiet)) {
               throw "[$name] 日志里没有预期的 '$expect'（模式没生效？）"
             }
+            # 渲染层错误：1.0.5 就是 Material 祖先缺失导致每帧抛 Null check，日志被刷到 1.8MB
+            if (Select-String -Path $log -Pattern 'FlutterError|Null check operator|Exception' -Quiet) {
+              Get-Content $log | Select-Object -Last 60 | ForEach-Object { Write-Host $_ }
+              throw "[$name] 日志里出现 Flutter 错误（渲染/异常）"
+            }
+            # 体积：8 秒的正常启动日志应 < 64KB（1.8MB 那种是每帧刷栈）
+            $size = (Get-Item $log).Length
+            Write-Host "startup.log size = $size bytes"
+            if ($size -gt 65536) { throw "[$name] startup.log 异常膨胀：$size bytes" }
+
             # 编码自检：日志必须能按 UTF-8 严格解码，且没有替换符/典型 mojibake
             $raw = [IO.File]::ReadAllText($log, [Text.Encoding]::UTF8)
             if ($raw.Contains([char]0xFFFD)) { throw "[$name] 日志里有 U+FFFD（编码坏了）" }

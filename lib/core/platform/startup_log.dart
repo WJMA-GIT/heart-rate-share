@@ -57,11 +57,27 @@ abstract final class StartupLog {
   }
 
   /// 接住 Dart 侧的未捕获异常：写同一份日志，并保留默认错误上报。
+  /// 同一条错误每帧都会重放：只记第一次完整栈，之后每 100 次记一条计数。
+  /// （1.0.5 的 startup.log 被 75 条同样的 Null-check 栈刷到 1.8 MB。）
+  static final Map<String, int> _seen = {};
+
   static void installHandlers() {
     final previous = FlutterError.onError;
     FlutterError.onError = (details) {
-      _write('dart: FlutterError ${details.exceptionAsString()}');
-      _write('${details.stack ?? ''}');
+      final signature = details.exceptionAsString();
+      final count = (_seen[signature] ?? 0) + 1;
+      _seen[signature] = count;
+      if (count == 1) {
+        _write('dart: FlutterError $signature');
+        final stack = '${details.stack ?? ''}';
+        _write(
+          stack.length > 4000
+              ? '${stack.substring(0, 4000)}…(truncated)'
+              : stack,
+        );
+      } else if (count % 100 == 0) {
+        _write('dart: FlutterError repeated $count times: $signature');
+      }
       previous?.call(details);
     };
     PlatformDispatcher.instance.onError = (error, stack) {

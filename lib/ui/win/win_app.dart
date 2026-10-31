@@ -124,17 +124,26 @@ final class _WinAppState extends State<WinApp> {
         brightness: Brightness.dark,
         useMaterial3: true,
       ),
-      home: ColoredBox(
-        color: transparent ? const Color(0xFF010203) : const Color(0xE61C1C1E),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _header(),
-              if (_showPanel || !_controller.connected) _panel(),
-              _rows(),
-            ],
+      // Material 祖先：ListTile / IconButton / TextButton 都要 `Material.of(context)`；
+      // 直接挂在 ColoredBox 下会在 build 时抛 "Null check operator used on a null value"
+      // （1.0.5 的启动日志就是这么被刷了 1.8 MB）。type=transparency 不画底色，
+      // 背景仍由外层 ColoredBox + 原生颜色键决定。
+      home: Material(
+        type: MaterialType.transparency,
+        child: ColoredBox(
+          color: transparent
+              ? const Color(0xFF010203)
+              : const Color(0xE61C1C1E),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _header(),
+                if (_showPanel || !_controller.connected) _panel(),
+                _rows(),
+              ],
+            ),
           ),
         ),
       ),
