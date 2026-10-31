@@ -127,6 +127,30 @@ jobs:
           [ -n "$v" ] || { echo "cannot parse version from pubspec.yaml"; exit 1; }
           echo "resolved=$v" >> "$GITHUB_OUTPUT"
           echo "app version: $v"
+      # 门禁：设置页显示的版本必须来自 pubspec，不允许第二处手写常量
+      - name: Guard - no hardcoded version literals in lib/
+        run: |
+          set -euo pipefail
+          v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
+          echo "pubspec version: $v"
+          # 匹配 version: '1.2.3' / version = "1.2.3" 这类手写字面量
+          # TODO(线B)：lib/ui/win/win_app.dart 里还有一处 `version: '1.0.8'` 硬编码，
+          # 归 Windows 线改（改用 AppVersion.read()）。这里先排除该目录，其余一律禁止。
+          if grep -rnE "version: *['\"][0-9]+\.[0-9]+\.[0-9]+" lib/ --exclude-dir=win ; then
+            echo "::error::lib/ 里出现手写的版本字面量，必须改用 AppVersion.read()"
+            exit 1
+          fi
+          echo "no hardcoded version literal in lib/"
+      - name: Assert APK versionName matches pubspec
+        run: |
+          set -euo pipefail
+          v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
+          aapt=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          got=$("$aapt" dump badging build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+                | sed -n "s/.*versionName='\([^']*\)'.*/\1/p" | head -1)
+          echo "apk versionName: $got / pubspec: $v"
+          [ "$got" = "$v" ] || { echo "::error::APK versionName($got) != pubspec($v)"; exit 1; }
+
       - name: Rename with version + ABI
         env:
           APP_VERSION: ${{ steps.ver.outputs.resolved }}
@@ -252,6 +276,10 @@ jobs:
           $fs.Write($payloadBytes, 0, $payloadBytes.Length)
           $fs.Write($footer, 0, 128)
           $fs.Close()
+          # exe 版本资源必须与 pubspec 一致（设置页从 PackageInfo 读的就是它）
+          $fileVersion = (Get-Item $out).VersionInfo.FileVersion
+          Write-Host "exe FileVersion=$fileVersion (expected $ver)"
+          if ($fileVersion -notlike "$ver*") { throw "exe 版本资源($fileVersion)与发布版本($ver)不一致" }
           Get-Item $out | Select-Object Name, Length
           $bytes = [IO.File]::ReadAllBytes((Resolve-Path $out))
           if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw 'not a PE file' }
