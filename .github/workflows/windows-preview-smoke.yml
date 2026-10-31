@@ -43,6 +43,10 @@ jobs:
       - name: Format gate (lib/win)
         shell: bash
         run: dart format --output=none --set-exit-if-changed lib/ui/win
+      # 分支上主 ci 的 quality 要等合并后才跑；这里把 analyze 也钉住，
+      # 让 Windows 线自己在推到 windows 分支时就能发现 Dart 侧问题。
+      - name: Analyze
+        run: flutter analyze
       - name: Build (release)
         run: flutter build windows --release
       - name: Preview smoke (--connected-preview)
