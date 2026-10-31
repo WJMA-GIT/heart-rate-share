@@ -330,9 +330,9 @@ jobs:
             Write-Host "[$name] OK"
           }
 
-          Try-Mode 'normal' 'mode: safe=0 opaque=0'
-          Try-Mode 'safe-mode' 'mode: safe=1 opaque=0'
-          Try-Mode 'opaque' 'mode: safe=0 opaque=1'
+          Try-Mode 'normal' 'mode safe=0 opaque=0'
+          Try-Mode 'safe-mode' 'mode safe=1 opaque=0'
+          Try-Mode 'opaque' 'mode safe=0 opaque=1'
           Write-Host 'single-file smoke OK (3 modes, Chinese path)'
 
       - uses: actions/upload-artifact@v4
