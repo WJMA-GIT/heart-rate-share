@@ -190,6 +190,10 @@ jobs:
             } else { Write-Warning 'CRT redist not found' }
           } else { Write-Warning 'vswhere not found' }
           Get-ChildItem $dest -Filter *.dll | Select-Object Name
+          $wm = Get-ChildItem $dest -Filter 'window_manager_plugin.dll' -ErrorAction SilentlyContinue
+          if ($wm) { throw 'window_manager_plugin.dll 仍在产物里（插件没删干净）' }
+          Write-Host 'DLL 清单（不应包含 window_manager_plugin.dll）：'
+          (Get-ChildItem $dest -Filter *.dll | Select-Object -ExpandProperty Name) -join ', '
       - name: Resolve app version from pubspec
         id: ver
         shell: bash
@@ -197,32 +201,84 @@ jobs:
           v=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
           [ -n "$v" ] || { echo "cannot parse version"; exit 1; }
           echo "resolved=$v" >> "$GITHUB_OUTPUT"
-      # 启动冒烟门禁：只验证"能编译"是不够的——1.0.2 就是编译通过、真机启动即崩
-      # （0xC000041D @ window_manager_plugin.dll）。这里真的把 exe 跑起来 8 秒。
-      - name: Startup smoke (run the exe for 8s)
+      # 启动冒烟门禁：这次真的跑**单文件 exe**（中文+空格路径），三种模式各跑一遍。
+      - name: Startup smoke (single-file exe, Chinese path, 3 modes)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = 'build/windows/x64/runner/Release/heartrate.exe'
-          $log = "$env:LOCALAPPDATA\heartrate\logs\startup.log"
-          Remove-Item $log -ErrorAction SilentlyContinue
-          $proc = Start-Process -FilePath $exe -PassThru `
-            -RedirectStandardOutput 'smoke-stdout.txt' -RedirectStandardError 'smoke-stderr.txt'
-          Start-Sleep -Seconds 8
-          $alive = -not $proc.HasExited
-          $exit = if ($proc.HasExited) { $proc.ExitCode } else { 'running' }
-          Write-Host "alive=$alive exit=$exit pid=$($proc.Id)"
-          if (Test-Path $log) {
-            Write-Host '--- startup.log ---'
+          $ver = '${{ steps.ver.outputs.resolved }}'
+          $exe = (Resolve-Path "heartrate-$ver-windows-x64.exe").Path
+          # 中文 + 空格路径（用户机器就是 D:\默认下载）
+          $cnDir = Join-Path $env:SystemDrive '默认下载 冒烟'
+          Remove-Item $cnDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $cnDir | Out-Null
+          $runPath = Join-Path $cnDir (Split-Path $exe -Leaf)
+          Copy-Item $exe $runPath -Force
+          Write-Host "run from: $runPath"
+
+          $logDir = Join-Path $env:LOCALAPPDATA 'heartrate\logs'
+          $appDir = Join-Path $env:LOCALAPPDATA "heartrate\app\$ver"
+
+          function Try-Mode([string]$name, [string]$expect) {
+            Write-Host "=== mode: $name ==="
+            Remove-Item $logDir -Recurse -Force -ErrorAction SilentlyContinue
+            Get-Process heartrate -ErrorAction SilentlyContinue | Stop-Process -Force
+            # 用环境变量而不是命令行参数：7z SFX 是否把参数透传给 RunProgram 不确定，
+            # 环境变量子进程一定会继承。
+            Remove-Item Env:HEARTRATE_SAFE_MODE -ErrorAction SilentlyContinue
+            Remove-Item Env:HEARTRATE_OPAQUE -ErrorAction SilentlyContinue
+            if ($name -eq 'safe-mode') { $env:HEARTRATE_SAFE_MODE = '1' }
+            if ($name -eq 'opaque') { $env:HEARTRATE_OPAQUE = '1' }
+            Start-Process -FilePath $runPath | Out-Null
+            $proc = $null
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Milliseconds 500
+              $proc = Get-Process -Name heartrate -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($proc) { break }
+            }
+            if (-not $proc) { throw "[$name] 单文件 exe 没有拉起 heartrate.exe" }
+            Start-Sleep -Seconds 8
+            $again = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+            if (-not $again) { throw "[$name] heartrate.exe 在 8 秒内退出" }
+            $log = Join-Path $logDir 'startup.log'
+            if (-not (Test-Path $log)) { throw "[$name] 没有 startup.log" }
             Get-Content $log | ForEach-Object { Write-Host $_ }
-          } else { Write-Host 'startup.log MISSING' }
-          if (Test-Path 'smoke-stderr.txt') { Write-Host '--- stderr ---'; Get-Content 'smoke-stderr.txt' }
-          if (-not $alive) { throw "exe 在 8 秒内退出了（exit=$exit）" }
-          if (-not (Select-String -Path $log -Pattern 'entering message loop' -Quiet)) {
-            throw 'startup.log 没有走到 "entering message loop"'
+            if (-not (Select-String -Path $log -Pattern 'stage: window shown' -Quiet)) {
+              throw "[$name] 日志没有走到 stage: window shown"
+            }
+            if (-not (Select-String -Path $log -SimpleMatch $expect -Quiet)) {
+              throw "[$name] 日志里没有预期的 '$expect'（模式没生效？）"
+            }
+            if (Test-Path (Join-Path $logDir 'crash.log')) {
+              Get-Content (Join-Path $logDir 'crash.log') | ForEach-Object { Write-Host $_ }
+              throw "[$name] 出现 crash.log"
+            }
+            Stop-Process -Id $proc.Id -Force
+            Write-Host "[$name] OK"
           }
-          Stop-Process -Id $proc.Id -Force
-          Write-Host 'startup smoke OK'
+
+          if (-not (Test-Path (Join-Path $appDir 'heartrate.exe'))) {
+            throw "自解压目录里没有 heartrate.exe：$appDir"
+          }
+          if (Test-Path (Join-Path $appDir 'build')) {
+            throw "自解压多了一层 build 目录（打包时带了前缀）"
+          }
+          if (Test-Path (Join-Path $appDir 'window_manager_plugin.dll')) {
+            throw '解压目录里仍有 window_manager_plugin.dll'
+          }
+
+          Try-Mode 'normal' 'mode: safe=0 opaque=0'
+          Try-Mode 'safe-mode' 'mode: safe=1 opaque=0'
+          Try-Mode 'opaque' 'mode: safe=0 opaque=1'
+          Write-Host 'single-file smoke OK (3 modes, Chinese path)'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: startup-log-${{ github.sha }}
+          path: ${{ env.LOCALAPPDATA }}\heartrate\logs\*
+          if-no-files-found: warn
+          retention-days: 14
 
       # 单文件 exe：7-Zip SFX（自解压）。双击 → 解到 %LOCALAPPDATA%\heartrate\app\<ver> → 启动。
       # 不是安装包：不写注册表、不要管理员、不弹 UAC；卸载 = 删那个目录。
@@ -277,7 +333,13 @@ jobs:
           $config = ";!@Install@!UTF-8!`r`nTitle=`"共享心率 $ver`"`r`nRunProgram=`"heartrate.exe`"`r`nGUIMode=`"2`"`r`nInstallPath=`"%LOCALAPPDATA%\heartrate\app\$ver`"`r`nOverwriteMode=`"2`"`r`n;!@InstallEnd@!`r`n"
           Set-Content -Path 'sfx-config.txt' -Value $config -Encoding UTF8
 
-          & $sevenZip a -t7z 'payload.7z' "$stage\*" -mx=9 | Out-Null
+          # 关键：在 stage 目录里打包，条目才是**根级**；否则会解出 build/win-stage/ 一层，
+          # RunProgram 找不到 heartrate.exe（1.0.4 就是这个毛病）
+          $payload = Join-Path (Get-Location).Path 'payload.7z'
+          Push-Location $stage
+          & $sevenZip a -t7z $payload '*' -mx=9 | Out-Null
+          Pop-Location
+          if (-not (Test-Path $payload)) { throw 'payload.7z not produced' }
 
           $out = "heartrate-$ver-windows-x64.exe"
           # SFX 模块 + 配置 + 载荷 = 一个可双击的 exe

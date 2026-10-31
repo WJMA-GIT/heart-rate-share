@@ -2,6 +2,8 @@
 
 #include <optional>
 
+#include "diagnostics.h"
+
 #include "flutter/generated_plugin_registrant.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -28,7 +30,9 @@ bool FlutterWindow::OnCreate() {
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
+    hrs::Log("stage: first frame");
     this->Show();
+    hrs::Log("stage: window shown");
   });
 
   // Flutter can complete the first frame before the "show window" callback is
