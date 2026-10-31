@@ -9,6 +9,12 @@ abstract final class StartupLog {
 
   static File? get file => _file;
 
+  /// 日志文件路径（给界面/错误提示用）。
+  static String? get path => _file?.path;
+
+  /// 阶段打点：每步一行，用户回传后一眼能看出卡在哪。
+  static void stage(String name) => _write('stage: $name');
+
   static void attach({required String platform}) {
     if (kIsWeb) return;
     if (!Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) return;

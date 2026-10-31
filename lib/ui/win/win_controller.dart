@@ -62,7 +62,7 @@ final class WinController extends ChangeNotifier {
     SharedPreferences? preferences,
   }) : _room =
            room ?? RoomClient(displayName: 'Windows', memberId: _pcMemberId()),
-       _ble = ble ?? HeartRateService(),
+       _injectedBle = ble,
        _log = logger ?? AppLogger.instance,
        _prefs = preferences {
     _subs.add(
@@ -73,13 +73,33 @@ final class WinController extends ChangeNotifier {
       }),
     );
     _subs.add(_room.states.listen((_) => notifyListeners()));
-    _subs.add(
-      _ble.snapshots.listen((snapshot) {
-        _bleSnapshot = snapshot;
-        notifyListeners();
-      }),
-    );
-    _subs.add(_ble.samples.listen(_onBleSample));
+  }
+
+  /// BLE 服务惰性创建：插件在 Windows 上初始化失败（无适配器/权限/后端不支持）
+  /// 只影响蓝牙这一条通路，绝不能把整个窗口带崩。
+  HeartRateService? ensureBle({bool force = false}) {
+    if (_ble != null) return _ble;
+    if (_bleFailed && !force) return null;
+    try {
+      final service = _injectedBle ?? HeartRateService();
+      _subs.add(
+        service.snapshots.listen((snapshot) {
+          _bleSnapshot = snapshot;
+          notifyListeners();
+        }),
+      );
+      _subs.add(service.samples.listen(_onBleSample));
+      _ble = service;
+      _bleFailed = false;
+      _log.info('win', 'ble service ready', code: 'win_ble_ready');
+      return service;
+    } catch (error, stack) {
+      _bleFailed = true;
+      _error = '蓝牙不可用：$error（可以只用局域网投射）';
+      _log.error('win', 'ble init failed', null, error, stack);
+      notifyListeners();
+      return null;
+    }
   }
 
   static const lastPeerKey = 'win.lastPeer';
@@ -90,7 +110,9 @@ final class WinController extends ChangeNotifier {
   }
 
   final RoomClient _room;
-  final HeartRateService _ble;
+  final HeartRateService? _injectedBle;
+  HeartRateService? _ble;
+  bool _bleFailed = false;
   final AppLogger _log;
   final SharedPreferences? _prefs;
   final List<StreamSubscription<Object?>> _subs = [];
@@ -238,7 +260,7 @@ final class WinController extends ChangeNotifier {
   // ------------------------------------------------------------------ 连接
 
   Future<bool> connectPeer(LanPeer peer) async {
-    await _ble.disconnect().catchError((_) {});
+    await _ble?.disconnect().catchError((_) {});
     _error = null;
     transport = WinTransport.lan;
     _connectedPeerName = peer.name;
@@ -276,8 +298,10 @@ final class WinController extends ChangeNotifier {
   Future<void> scanBle() async {
     _error = null;
     notifyListeners();
+    final ble = ensureBle();
+    if (ble == null) return;
     try {
-      await _ble.scan();
+      await ble.scan();
     } catch (error) {
       _error = '蓝牙扫描失败：$error（确认系统蓝牙已打开、设备已配对/在附近）';
       _log.warn('win', 'ble scan failed: $error', code: 'win_ble_scan_failed');
@@ -287,9 +311,11 @@ final class WinController extends ChangeNotifier {
 
   Future<bool> connectBle(String deviceId) async {
     _error = null;
+    final ble = ensureBle();
+    if (ble == null) return false;
     try {
       await _room.disconnect();
-      await _ble.connect(deviceId);
+      await ble.connect(deviceId);
       transport = WinTransport.ble;
       _connectedPeerName = null;
       notifyListeners();
@@ -315,7 +341,7 @@ final class WinController extends ChangeNotifier {
 
   Future<void> disconnectAll() async {
     await _room.disconnect().catchError((_) {});
-    await _ble.disconnect().catchError((_) {});
+    await _ble?.disconnect().catchError((_) {});
     _connectedPeerName = null;
     _series.clear();
     _lastSampleAt.clear();
@@ -352,7 +378,7 @@ final class WinController extends ChangeNotifier {
     _udp?.close();
     _udp = null;
     unawaited(_room.dispose());
-    unawaited(_ble.dispose());
+    unawaited(_ble?.dispose() ?? Future<void>.value());
     super.dispose();
   }
 }

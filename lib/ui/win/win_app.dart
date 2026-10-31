@@ -1,7 +1,9 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../core/platform/startup_log.dart';
 import '../widgets/heart_rate_chart.dart';
 import 'win_controller.dart';
 
@@ -18,16 +20,39 @@ final class WinApp extends StatefulWidget {
 }
 
 final class _WinAppState extends State<WinApp> {
-  late final WinController _controller = widget.controller ?? WinController();
-  late final bool _owns = widget.controller == null;
+  WinController? _controllerOrNull;
+  Object? _fatal;
+  bool _owns = false;
   bool _showPanel = true;
   bool _autoConnectTried = false;
+  bool _safeMode = false;
+
+  WinController get _controller => _controllerOrNull!;
 
   @override
   void initState() {
     super.initState();
-    _controller.addListener(_onChange);
-    _controller.startDiscovery();
+    // 先建窗口（runApp 已经跑起来了），再在 try/catch 里初始化数据层：
+    // 早先 WinController 在 runApp 之前构造，BLE 插件一抛异常就整个进程秒退。
+    _safeMode =
+        (const String.fromEnvironment('SAFE_MODE') == '1') ||
+        (Platform.environment['HEARTRATE_SAFE_MODE'] == '1');
+    StartupLog.info('win: init (safeMode=$_safeMode)');
+    try {
+      final controller = widget.controller ?? WinController();
+      _owns = widget.controller == null;
+      _controllerOrNull = controller;
+      controller.addListener(_onChange);
+      StartupLog.info('win: controller ok');
+      if (!_safeMode) {
+        controller.startDiscovery();
+      }
+      StartupLog.info('win: discovery requested');
+    } catch (error, stack) {
+      _fatal = error;
+      StartupLog.info('win: FATAL during init: $error');
+      StartupLog.info('$stack');
+    }
     _applyWindow();
   }
 
@@ -63,15 +88,47 @@ final class _WinAppState extends State<WinApp> {
 
   @override
   void dispose() {
-    _controller.removeListener(_onChange);
-    if (_owns) _controller.dispose();
+    _controllerOrNull?.removeListener(_onChange);
+    if (_owns) _controllerOrNull?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     // 颜色键：与 windows/runner/main.cpp 的 RGB(1,2,3) 对应 → 这些像素 100% 透明。
-    final transparent = _controller.backgroundTransparent;
+    if (_fatal != null) {
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
+        home: ColoredBox(
+          color: const Color(0xFF1C1C1E),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  '启动异常（窗口还在，说明渲染正常）',
+                  style: TextStyle(color: Colors.orangeAccent),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '$_fatal',
+                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '日志：${StartupLog.path ?? "未创建"}\n把 startup.log 发回即可定位。',
+                  style: const TextStyle(fontSize: 11, color: Colors.white54),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    final transparent = _controller.backgroundTransparent && !_safeMode;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -156,8 +213,18 @@ final class _WinAppState extends State<WinApp> {
         _sectionTitle('手机投射（同一 Wi-Fi）'),
         _lanList(),
         _manualRow(),
-        _sectionTitle('蓝牙直连（本机蓝牙）'),
-        _bleList(),
+        if (!_safeMode) ...[
+          _sectionTitle('蓝牙直连（本机蓝牙）'),
+          _bleList(),
+        ] else
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+            child: Text(
+              '安全模式：蓝牙与透明都被跳过（HEARTRATE_SAFE_MODE=1）。'
+              '能用说明是这两块的问题，去掉该变量再试。',
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+          ),
         if (_controller.error != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
@@ -450,9 +517,6 @@ Future<void> runWinApp() async {
   try {
     await windowManager.ensureInitialized();
   } catch (_) {}
-  SharedPreferences? preferences;
-  try {
-    preferences = await SharedPreferences.getInstance();
-  } catch (_) {}
-  runApp(WinApp(controller: WinController(preferences: preferences)));
+  StartupLog.stage('win: runApp');
+  runApp(const WinApp());
 }

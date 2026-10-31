@@ -19,14 +19,25 @@ final class FlutterBluePlusSource implements HeartRateSource {
   FlutterBluePlusSource({AppLogger? logger})
     : _log = logger ?? AppLogger.instance {
     // 原生 GATT 日志带上 133 之类的系统错误码，是断连复现时最关键的一条证据。
-    _nativeLogSubscription = FlutterBluePlus.logs.listen(
-      (message) => _log.debug('fbp', message),
-      onError: (Object error) => _log.warn(
+    // Windows 后端不保证实现这个事件通道：订阅失败只记一条，绝不把 App 带崩
+    // （早先这里直接 listen，Windows 上一次 MissingPluginException 就让进程秒退）。
+    try {
+      _nativeLogSubscription = FlutterBluePlus.logs.listen(
+        (message) => _log.debug('fbp', message),
+        onError: (Object error) => _log.warn(
+          'fbp',
+          'native log stream failed: $error',
+          code: 'fbp_log_error',
+        ),
+      );
+    } catch (error, stack) {
+      _log.warn(
         'fbp',
-        'native log stream failed: $error',
-        code: 'fbp_log_error',
-      ),
-    );
+        'native log stream unavailable: $error',
+        code: 'fbp_log_unavailable',
+      );
+      _log.debug('fbp', '$stack');
+    }
   }
 
   static final _hrsService = Guid('0000180d-0000-1000-8000-00805f9b34fb');

@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <string>
 
 #include "flutter_window.h"
@@ -100,6 +101,16 @@ void ApplyOverlayStyles(HWND hwnd) {
   AppendLog(L"startup.log", keyed ? "overlay: layered color-key ok" : "overlay: opaque");
 }
 
+bool HasFlag(const wchar_t* flag) {
+  return ::wcsstr(::GetCommandLineW(), flag) != nullptr;
+}
+
+bool EnvIsOne(const wchar_t* name) {
+  wchar_t value[8] = {0};
+  const DWORD len = ::GetEnvironmentVariableW(name, value, 8);
+  return len > 0 && value[0] == L'1';
+}
+
 }  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
@@ -115,7 +126,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   std::wstring dir(exe_path);
   const size_t slash = dir.find_last_of(L'\\');
   if (slash != std::wstring::npos) dir = dir.substr(0, slash);
-  const char* required[] = {"flutter_windows.dll", "data\\icudtl.dat", "data\\app.so"};
+  const char* required[] = {
+      "flutter_windows.dll", "data\\icudtl.dat", "data\\app.so",
+      // CRT 由 CI 一起打进包内；缺了它们进程在 loader 阶段就退（连日志都没有）。
+      "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"};
   for (const char* name : required) {
     const std::wstring full = dir + L"\\" + std::wstring(name, name + strlen(name));
     AppendLog(L"startup.log",
@@ -145,12 +159,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   UINT dpi = 96;
   if (hwnd != nullptr) dpi = ::GetDpiForWindow(hwnd);
   AppendLog(L"startup.log", "dpi=" + std::to_string(dpi));
-  // 排查用逃生门：设 HEARTRATE_OPAQUE=1 就完全不碰分层窗口。
-  wchar_t opaque[8] = {0};
-  const DWORD opaque_len = ::GetEnvironmentVariableW(L"HEARTRATE_OPAQUE", opaque, 8);
-  if (opaque_len > 0 && opaque[0] == L'1') {
-    AppendLog(L"startup.log", "overlay: HEARTRATE_OPAQUE=1, skip styles");
+  // 排查用逃生门（两个都认）：
+  //   --safe-mode / HEARTRATE_SAFE_MODE=1  完全普通窗口（不分层、不置顶、不无边框）
+  //   --opaque / HEARTRATE_OPAQUE=1        只关掉透明，保留无边框置顶
+  const bool safe_mode = HasFlag(L"--safe-mode") || EnvIsOne(L"HEARTRATE_SAFE_MODE");
+  const bool opaque_only = HasFlag(L"--opaque") || EnvIsOne(L"HEARTRATE_OPAQUE");
+  AppendLog(L"startup.log", std::string("mode: safe=") + (safe_mode ? "1" : "0") +
+                                 " opaque=" + (opaque_only ? "1" : "0"));
+  if (safe_mode || opaque_only) {
     ::ShowWindow(hwnd, SW_SHOWNORMAL);
+    AppendLog(L"startup.log", "overlay: skipped (safe/opaque mode)");
   } else {
     ApplyOverlayStyles(hwnd);
   }
