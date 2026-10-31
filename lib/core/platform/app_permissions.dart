@@ -17,7 +17,7 @@ final class PermissionState {
 
 /// 权限申请（Android）。走已有的 foreground 通道，不额外引依赖。
 ///
-/// 拒绝不是错误：只影响能力（通知 → 后台保活可见性；蓝牙 → 扫描心率带），
+/// 拒绝不是错误：只影响能力（通知 → 后台保活可见性；蓝牙 → 扫描蓝牙设备），
 /// 由界面给出降级说明与「去设置」入口，不静默失败也不反复弹。
 final class AppPermissions {
   static const _channel = MethodChannel(

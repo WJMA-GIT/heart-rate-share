@@ -38,3 +38,11 @@
   flutter test      # 全量
   ```
 - CI 的 format 门禁会先格式化再比对 `git diff`，文件名直接打在日志里（旧写法只说"1 file changed"）。
+
+## 发版前必查（两次踩坑固化）
+1. **回读远端 pubspec.yaml**：push 后必须 `gh api .../contents/pubspec.yaml?ref=main` 确认 `version:` 已是目标值。
+   只上传变更文件的推送脚本可能判定该文件"未变"，导致打出的包版本号落后一版。
+2. **版本号在同一 job 内解析**：CI 不要跨 job 传 `outputs` 取版本（曾出现 1.0.11/1.0.12 串号）；
+   每个用到版本的 job 自己从 `pubspec.yaml` 解析并打印。
+3. **版本锚 `​.fvmrc` 必须是合法 JSON**（`{"flutter":"3.47.8"}`）：裸文本会让
+   `subosito/flutter-action` 的 jq 解析失败，CI 8 秒红且 quality 从未执行（假红）。

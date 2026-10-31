@@ -29,7 +29,7 @@ void _sizeTo(WidgetTester tester, double width, double height) {
 ConnectView _connectView() => ConnectView(
   adapterState: 'on',
   bleBusy: 'idle',
-  devices: [_Device('心率带 A', -60)],
+  devices: [_Device('蓝牙设备 A', -60)],
   peers: const [],
   error: null,
   onScanBle: () async {},
@@ -75,7 +75,7 @@ void main() {
     _sizeTo(tester, 700, 600);
     await tester.pumpWidget(_host(_connectView()));
     expect(find.text('RSSI'), findsNothing);
-    expect(find.text('心率带 A'), findsOneWidget);
+    expect(find.text('蓝牙设备 A'), findsOneWidget);
 
     _sizeTo(tester, 1200, 800);
     await tester.pumpWidget(_host(_connectView()));

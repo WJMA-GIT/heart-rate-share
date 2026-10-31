@@ -90,7 +90,7 @@ remain a pre-production task to prevent stale clients joining the wrong room.
 | **2 分钟** `REMOVE_TIMEOUT_MS` | 成员 `lastSeen` 超过 2 分钟 | 把该成员从成员表移除（房间仍存在时才有意义） | 固定值 |
 
 **"无人"的口径是 `sockets.size === 0`（没有任何 WebSocket 连接），不是
-`online=false`。** 这很重要：一个房间里有人连着但心率带断了，成员会在 5 秒后
+`online=false`。** 这很重要：一个房间里有人连着但蓝牙设备断了，成员会在 5 秒后
 `online=false`，但房间**不会**因为"看起来没人"而被回收。
 
 三者的关系：

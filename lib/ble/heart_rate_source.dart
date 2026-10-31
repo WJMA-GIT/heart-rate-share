@@ -9,7 +9,7 @@ abstract interface class HeartRateSource {
   Stream<BleSnapshot> get snapshots;
 
   /// [onlyHrs] = true 时只保留广播里带 0x180D 的设备（Android 现状）；
-  /// Windows 传 false：全量列出、只标记候选，避免漏掉"连接后才暴露服务"的心率带。
+  /// Windows 传 false：全量列出、只标记候选，避免漏掉"连接后才暴露服务"的蓝牙设备。
   Future<void> startScan({
     Duration timeout = const Duration(seconds: 10),
     bool onlyHrs = true,

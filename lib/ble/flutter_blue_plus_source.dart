@@ -140,8 +140,8 @@ final class FlutterBluePlusSource implements HeartRateSource {
           final id = result.device.remoteId.str;
           final serviceUuids = result.advertisementData.serviceUuids;
           final hrs = serviceUuids.contains(_hrsService);
-          // onlyHrs=false（Windows）：**不过滤**，全部收下，只标记是否像心率带；
-          // 以前的写法在扫描和这里各过滤一次，很多心率带广播不带 0x180D 就永远扫不到。
+          // onlyHrs=false（Windows）：**不过滤**，全部收下，只标记是否像蓝牙设备；
+          // 以前的写法在扫描和这里各过滤一次，很多蓝牙设备广播不带 0x180D 就永远扫不到。
           if (!onlyHrs || hrs) {
             _devices[id] = result.device;
             _rssiById[id] = result.rssi;
@@ -171,7 +171,7 @@ final class FlutterBluePlusSource implements HeartRateSource {
     _subscriptions.add(scanSubscription);
     await FlutterBluePlus.startScan(
       // onlyHrs=false 时不要服务过滤：WinRT 后端对广播过滤支持不一致，
-      // 而且不少心率带只在连接后才暴露 0x180D。
+      // 而且不少蓝牙设备只在连接后才暴露 0x180D。
       withServices: onlyHrs ? [_hrsService] : const <Guid>[],
       timeout: timeout,
     );
@@ -457,7 +457,7 @@ final class FlutterBluePlusSource implements HeartRateSource {
   }
 
   void _onNotification(String deviceId, List<int> bytes) {
-    // 使能 CCCD 时部分心率带会先发一条 0 长度通知。以前它会抛
+    // 使能 CCCD 时部分蓝牙设备会先发一条 0 长度通知。以前它会抛
     // HrsFormatException 记成 ERROR（现场日志里那条 "Empty measurement"），
     // 现在直接丢弃并留痕，不污染错误日志。
     if (bytes.isEmpty) {

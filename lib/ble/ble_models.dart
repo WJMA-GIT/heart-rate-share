@@ -28,7 +28,7 @@ final class BleDeviceInfo {
   final int rssi;
 
   /// 广播里是否带 0x180D（心率服务）。Windows 全量扫描时用来排序：
-  /// 心率带排前面，但不是过滤条件（很多设备只在连接后才暴露服务）。
+  /// 蓝牙设备排前面，但不是过滤条件（很多设备只在连接后才暴露服务）。
   final bool isHrsCandidate;
   String get displayName => name.isEmpty ? '(unnamed HRS device)' : name;
 }

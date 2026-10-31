@@ -8,7 +8,7 @@ import '../core/config/app_config.dart';
 /// 会看到自己因为一次 BLE 抖动而离线。
 ///
 /// 因此退避上限取 [AppConfig.offlineAfter] 的一小部分：等待 0.5s、1s、1.5s、
-/// 2s 后封顶 2s。常见场景（心率带短暂丢包/系统挂起 GATT）一次尝试就能接回，
+/// 2s 后封顶 2s。常见场景（蓝牙设备短暂丢包/系统挂起 GATT）一次尝试就能接回，
 /// 总空窗 < 5s，房间状态不翻转。
 final class ReconnectPolicy {
   const ReconnectPolicy({
