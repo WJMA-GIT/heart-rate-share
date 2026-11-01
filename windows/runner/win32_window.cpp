@@ -346,15 +346,10 @@ Win32Window::MessageHandler(HWND hwnd,
 
       return 0;
     }
-    case WM_SIZE: {
-      RECT rect = GetClientArea();
-      if (child_content_ != nullptr) {
-        // Size and position the child window.
-        MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
-                   rect.bottom - rect.top, TRUE);
-      }
+    case WM_SIZE:
+      // 尺寸一变就把视图重新铺满客户区（含精简态改尺寸、DPI 切换后的重排）。
+      SyncChildToClient();
       return 0;
-    }
 
     case WM_ACTIVATE:
       if (child_content_ != nullptr) {
@@ -387,13 +382,20 @@ Win32Window* Win32Window::GetThisFromHandle(HWND const window) noexcept {
       GetWindowLongPtr(window, GWLP_USERDATA));
 }
 
+// Flutter 视图必须严格铺满客户区：WM_NCCALCSIZE 把客户区放大到整窗后，
+// 视图还按旧尺寸摆就会"UI 缩在中间一块、还能在窗口里移动"。
+void Win32Window::SyncChildToClient() {
+  if (child_content_ == nullptr || window_handle_ == nullptr) return;
+  RECT client = GetClientArea();
+  ::SetWindowPos(child_content_, nullptr, client.left, client.top,
+                 client.right - client.left, client.bottom - client.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+}
+
 void Win32Window::SetChildContent(HWND content) {
   child_content_ = content;
   SetParent(content, window_handle_);
-  RECT frame = GetClientArea();
-
-  MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
-             frame.bottom - frame.top, true);
+  SyncChildToClient();
 
   // 视图窗口盖满客户区，鼠标命中只会问它：不挂这个子类过程，缩放/拖拽带了
   // 就永远收不到 WM_NCHITTEST（这就是「保留 WS_THICKFRAME 也拉不动」的真相）。

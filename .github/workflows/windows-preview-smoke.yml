@@ -78,6 +78,8 @@ jobs:
             [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
             [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
             [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+            [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+            [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
             [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wparam, IntPtr lparam);
             public delegate bool EnumChildProc(IntPtr hwnd, IntPtr lparam);
             [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr lparam);
@@ -184,7 +186,19 @@ jobs:
           $btnY = $btn[1] + [int]($btn[3] / 2)
           $dragX = $drag[0] + [int]($drag[2] / 2)
           $dragY = $drag[1] + [int]($drag[3] / 2)
-          Write-Host "compact rects: drag=($($drag -join ',')) button=($($btn -join ','))"
+          $cli = New-Object HrsWin+RECT
+          [void][HrsWin]::GetClientRect($hwnd, [ref]$cli)
+          $cliW = $cli.Right - $cli.Left
+          $cliH = $cli.Bottom - $cli.Top
+          Write-Host "compact rects: drag=($($drag -join ',')) button=($($btn -join ',')) client=${cliW}x${cliH}"
+          $bx = $btn[0]
+          $by = $btn[1]
+          $bw = $btn[2]
+          $bh = $btn[3]
+          if ($bx -lt 0 -or $by -lt 0 -or ($bx + $bw) -gt $cliW -or ($by + $bh) -gt $cliH) {
+            throw "「断开」按钮超出客户区：button=($bx,$by,${bw}x${bh}) client=${cliW}x${cliH}"
+          }
+          Write-Host "断开 button fully inside client: right=$($bx + $bw) <= $cliW, bottom=$($by + $bh) <= $cliH"
           $hitButton = Hit-Test $target ($geo.Left + $btnX) ($geo.Top + $btnY)
           $hitDrag = Hit-Test $target ($geo.Left + $dragX) ($geo.Top + $dragY)
           Write-Host "WM_NCHITTEST compact: button=$hitButton drag=$hitDrag (expect 1 / 2)"
@@ -265,6 +279,64 @@ jobs:
           if (-not $windowOk) {
             throw 'WM_NCHITTEST 四边/四角/拖动区/控件区 返回值不对（窗口可能拉不动或按钮点不了）'
           }
+
+          # Flutter 视图必须严格铺满客户区；两个尺寸 + 缩放 1.3 各验一次。
+          function Assert-ViewFillsClient([IntPtr]$top, [string]$tag) {
+            for ($k = 0; $k -lt 8; $k++) {
+              $c = New-Object HrsWin+RECT
+              [void][HrsWin]::GetClientRect($top, [ref]$c)
+              $child = [HrsWin]::FirstChild($top)
+              $cr = New-Object HrsWin+RECT
+              [void][HrsWin]::GetWindowRect($child, [ref]$cr)
+              $cw = $c.Right - $c.Left
+              $ch = $c.Bottom - $c.Top
+              $vw = $cr.Right - $cr.Left
+              $vh = $cr.Bottom - $cr.Top
+              if ($cw -eq $vw -and $ch -eq $vh -and $cw -gt 0) {
+                Write-Host "view/client [$tag]: client=${cw}x${ch} view=${vw}x${vh} OK"
+                return
+              }
+              Start-Sleep -Milliseconds 300
+            }
+            throw "Flutter 视图没铺满客户区 [$tag]：client=${cw}x${ch} view=${vw}x${vh}"
+          }
+
+          function Resize-Top([IntPtr]$top, [int]$w, [int]$h) {
+            [void][HrsWin]::SetWindowPos($top, [IntPtr]::Zero, 0, 0, $w, $h, 0x0004)
+            Start-Sleep -Milliseconds 400
+          }
+
+          function Click-Client([IntPtr]$h, [int]$cx, [int]$cy) {
+            $lp = [IntPtr](($cy -shl 16) -bor ($cx -band 0xFFFF))
+            [void][HrsWin]::SendMessage($h, 0x0201, [IntPtr]1, $lp)
+            Start-Sleep -Milliseconds 120
+            [void][HrsWin]::SendMessage($h, 0x0202, [IntPtr]0, $lp)
+          }
+
+          Resize-Top $hwnd 960 640
+          Assert-ViewFillsClient $hwnd '960x640 scale=1.0'
+          Resize-Top $hwnd 1280 800
+          Assert-ViewFillsClient $hwnd '1280x800 scale=1.0'
+
+          # 缩放 1.3：点右上角胶囊的「+」三次（每次 0.1），再验一次视图/客户区。
+          $zoomOk = $false
+          for ($attempt = 0; $attempt -lt 40 -and -not $zoomOk; $attempt++) {
+            $t = Read-LogText $log
+            $m = [regex]::Matches($t, 'dart: win: scale=([\d.]+)')
+            if ($m.Count -eq 0) { Start-Sleep -Milliseconds 300; continue }
+            $scaleNow = [double]$m[$m.Count - 1].Groups[1].Value
+            if ($scaleNow -ge 1.29) { $zoomOk = $true; break }
+            $g2 = New-Object HrsWin+RECT
+            [void][HrsWin]::GetWindowRect($hwnd, [ref]$g2)
+            $addX = ($g2.Right - $g2.Left) - (45 + 6 * $scaleNow)
+            $addY = [int](34 * $scaleNow + 15)
+            Click-Client $target $addX $addY
+            Start-Sleep -Milliseconds 400
+          }
+          if (-not $zoomOk) { throw '点了「+」但缩放到不了 1.3（win: scale= 日志没到 1.3）' }
+          Write-Host "zoom -> $scaleNow (3 clicks of +)"
+          Resize-Top $hwnd 1280 800
+          Assert-ViewFillsClient $hwnd '1280x800 scale=1.3'
 
           Get-Process -Id $proc.Id | Stop-Process -Force
           Write-Host 'preview smoke OK'
