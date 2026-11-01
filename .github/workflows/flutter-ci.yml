@@ -549,7 +549,8 @@ jobs:
           mkdir -p pc-out
           gh run download "$id" --repo "$GITHUB_REPOSITORY" -n win-pc-exes -D pc-out
           ls -lh pc-out/
-          ver=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
+          # 本 job 没有 checkout（拿不到 pubspec），版本直接从 tag 名取。
+          ver="${GITHUB_REF_NAME#v}"
           # 统一改名：自包含 / 依赖运行时
           self=$(ls pc-out/*selfcontained*.exe | head -1)
           fd=$(ls pc-out/*framework-dependent*.exe | head -1)
