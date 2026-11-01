@@ -488,6 +488,28 @@ final class _WinAppState extends State<WinApp> {
 
 enum _Section { connect, room, settings }
 
+/// 主窗口最小尺寸（DIP，×UI 缩放）。
+const double _minWindowWidth = 720;
+const double _minWindowHeight = 480;
+
+/// 自适应阈值（都乘当前缩放）：设备表窄了先丢 RSSI 列，房间卡够宽才两列。
+const double _narrowLayoutWidth = 900;
+const double _wideLayoutWidth = 1000;
+
+/// 顶部拖拽带高度：和 windows/runner/win32_window.cpp 里上报的矩形一致。
+const double _dragStripDip = 28;
+
+/// 心率字号（DIP，24–96 步进 4）：默认 52。
+const double minBpmFontSize = 24;
+const double maxBpmFontSize = 96;
+const double bpmFontSizeStep = 4;
+const double defaultBpmFontSize = 52;
+
+double _clampBpmFontSize(double value) {
+  final stepped = (value / bpmFontSizeStep).round() * bpmFontSizeStep;
+  return stepped.clamp(minBpmFontSize, maxBpmFontSize).toDouble();
+}
+
 // ---------------------------------------------------------------- 设计令牌
 
 /// Windows 端浅色配色（照手机截图）。**只是本地常量**，不动 `AppColors`（安卓那份）。
@@ -753,86 +775,6 @@ final class _HeartCard extends StatelessWidget {
           ],
         ),
       ],
-    ),
-  );
-}
-
-// ------------------------------------------------------- 右上角窗口控件（无标题栏）
-
-final class _WindowControls extends StatelessWidget {
-  const _WindowControls({
-    required this.scale,
-    required this.onZoomIn,
-    required this.onZoomOut,
-    required this.onMinimize,
-    required this.onClose,
-  });
-
-  final double scale;
-  final VoidCallback onZoomIn;
-  final VoidCallback onZoomOut;
-  final VoidCallback onMinimize;
-  final VoidCallback onClose;
-
-  /// 浮在内容区右上角的一小条：缩放 −/＋、最小化、退出。
-  /// 没有任何标题栏；拖动靠原生顶部 28 DIP 的拖拽带（HTCAPTION）。
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: EdgeInsets.symmetric(horizontal: 6 * scale),
-    decoration: BoxDecoration(
-      color: WinColors.surface.withValues(alpha: 0.92),
-      borderRadius: BorderRadius.circular(999),
-      border: Border.all(color: WinColors.line),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _WinButton(
-          icon: Icons.remove,
-          tooltip: '缩小界面（Ctrl+滚轮）',
-          onTap: onZoomOut,
-        ),
-        _WinButton(icon: Icons.add, tooltip: '放大界面（Ctrl+滚轮）', onTap: onZoomIn),
-        _WinButton(icon: Icons.minimize, tooltip: '最小化', onTap: onMinimize),
-        _WinButton(
-          icon: Icons.power_settings_new,
-          tooltip: '退出',
-          onTap: onClose,
-          danger: true,
-        ),
-      ],
-    ),
-  );
-}
-
-/// 自绘窗口按钮（没有系统标题栏，最小化/退出只能自己做）。
-final class _WinButton extends StatelessWidget {
-  const _WinButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-    this.danger = false,
-  });
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) => Tooltip(
-    message: tooltip,
-    child: InkWell(
-      borderRadius: BorderRadius.circular(6),
-      onTap: onTap,
-      child: SizedBox(
-        width: 30,
-        height: 30,
-        child: Icon(
-          icon,
-          size: 14,
-          color: danger ? WinColors.accent : WinColors.textDim,
-        ),
-      ),
     ),
   );
 }
