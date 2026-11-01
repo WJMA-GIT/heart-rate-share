@@ -649,7 +649,10 @@ final class _BottomTabs extends StatelessWidget {
       borderRadius: BorderRadius.circular(999),
       onTap: () => onSelect(target),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 18 * scale, vertical: 8 * scale),
+        padding: EdgeInsets.symmetric(
+          horizontal: 18 * scale,
+          vertical: 8 * scale,
+        ),
         decoration: BoxDecoration(
           color: selected ? WinColors.accentSoft : Colors.transparent,
           borderRadius: BorderRadius.circular(999),
@@ -734,12 +737,18 @@ final class _HeartCard extends StatelessWidget {
             Positioned(
               right: 0,
               top: 0,
-              child: Text('最新', style: winText(11 * scale, color: WinColors.textDim)),
+              child: Text(
+                '最新',
+                style: winText(11 * scale, color: WinColors.textDim),
+              ),
             ),
             Positioned(
               left: 0,
               bottom: 0,
-              child: Text('-60s', style: winText(11 * scale, color: WinColors.textDim)),
+              child: Text(
+                '-60s',
+                style: winText(11 * scale, color: WinColors.textDim),
+              ),
             ),
           ],
         ),
