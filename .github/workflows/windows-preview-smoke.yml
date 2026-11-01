@@ -48,8 +48,8 @@ jobs:
             exit 0
           fi
           echo "::error::dart format 不一致，下面 diff 就是该怎么改"
-          diff -u lib/ui/win/win_app.dart \
-            <(dart format --output=show lib/ui/win/win_app.dart) || true
+          dart format lib/ui/win >/dev/null
+          git --no-pager diff -- lib/ui/win || true
           exit 1
       # 分支上主 ci 的 quality 要等合并后才跑；这里把 analyze 也钉住，
       # 让 Windows 线自己在推到 windows 分支时就能发现 Dart 侧问题。
@@ -118,49 +118,50 @@ jobs:
             try { return (Get-Content $path -Raw) } catch { return '' }
           }
 
-          $deadline = (Get-Date).AddSeconds(45)
+          # 预览启动就是「已连接」，第一帧即进精简态；先等它 + 等到「断开」按钮的矩形上报。
+          $deadline = (Get-Date).AddSeconds(30)
           $text = ''
           do {
-            Start-Sleep -Milliseconds 500
+            Start-Sleep -Milliseconds 200
             if (-not (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)) {
               throw 'heartrate.exe 在冒烟过程中退出了'
             }
             $text = Read-LogText $log
           } while ((Get-Date) -lt $deadline -and
                    -not ($text -match 'ui_mode: full -> compact' -and
-                         $text -match 'ui_mode: compact -> full'))
-
-          # 最后一行可能在上一轮读取之后才落盘：再等 1 秒重读一次再判定。
-          Start-Sleep -Seconds 1
-          $text = Read-LogText $log
+                         $text -match 'dart: hit: disconnect rect'))
           if (-not (Test-Path $log)) { throw '没有生成 startup.log' }
-          Get-Content $log | ForEach-Object { Write-Host $_ }
+          if ($text -notmatch 'ui_mode: full -> compact') {
+            throw '日志里没有 ui_mode: full -> compact（连上后没进精简态）'
+          }
+          if ($text -notmatch 'preview: connected-preview on') {
+            throw '预览开关没生效（Dart 侧没收到 --connected-preview）'
+          }
+          if ($text -notmatch 'mode safe=0 opaque=0 preview=1') {
+            throw '命令行 --connected-preview 没有被翻译成 HEARTRATE_PREVIEW（原生侧）'
+          }
 
-          if ($text -notmatch 'ui_mode: full -> compact') { throw '日志里没有 ui_mode: full -> compact（连上后没进精简态）' }
-          if ($text -notmatch 'ui_mode: compact -> full') { throw '日志里没有 ui_mode: compact -> full（断开后没回完整界面）' }
-          if ($text -match 'FlutterError|Null check operator') { throw '日志里出现 Flutter 错误（渲染/布局异常）' }
-          if ($text -notmatch 'preview: connected-preview on') { throw '预览开关没生效（Dart 侧没收到 --connected-preview）' }
-          # 原生侧把命令行开关翻译成环境变量这一步，单独断言：失败时一眼能定位是哪一侧。
-          if ($text -notmatch 'mode safe=0 opaque=0 preview=1') { throw '命令行 --connected-preview 没有被翻译成 HEARTRATE_PREVIEW（原生侧）' }
+          function Last-Rect([string]$body, [string]$name) {
+            $m = [regex]::Matches($body, "dart: hit: $name rect (\d+)/(\d+)/(\d+)/(\d+)")
+            if ($m.Count -eq 0) { return $null }
+            $g = $m[$m.Count - 1].Groups
+            return @([int]$g[1].Value, [int]$g[2].Value, [int]$g[3].Value, [int]$g[4].Value)
+          }
 
-          # 千字节级：正常启动的日志是几 KB，1.8MB 那种是每帧刷栈
-          $size = (Get-Item $log).Length
-          Write-Host "startup.log size = $size bytes"
-          if ($size -lt 1024) { throw "startup.log 太小（$size bytes），可能没跑到界面" }
-          if ($size -gt 65536) { throw "startup.log 异常膨胀：$size bytes" }
-
-          # 窗口层面 A：能缩放。无边框窗口没有系统拖拽区，缩放全靠自己回
-          # WM_NCHITTEST —— 直接给窗口发这条消息，断言四边/四角/内部各自的返回值。
-          # HTCLIENT=1 HTLEFT=10 HTRIGHT=11 HTTOP=12 HTTOPLEFT=13 HTTOPRIGHT=14
-          # HTBOTTOM=15 HTBOTTOMLEFT=16 HTBOTTOMRIGHT=17
-          $hwnd = [HrsWin]::Main([uint32]$proc.Id)
+          # 窗口是首帧之后才显示的，等它出现再取句柄。
+          $hwnd = [IntPtr]::Zero
+          for ($i = 0; $i -lt 60; $i++) {
+            $hwnd = [HrsWin]::Main([uint32]$proc.Id)
+            if ($hwnd -ne [IntPtr]::Zero) { break }
+            Start-Sleep -Milliseconds 250
+          }
           if ($hwnd -eq [IntPtr]::Zero) { throw '找不到主窗口' }
           $style = [HrsWin]::GetWindowLong($hwnd, -16)
           if (($style -band 0x00040000) -eq 0) { throw '窗口没有 WS_THICKFRAME' }
 
           # 命中测试要打给 Flutter 视图（子窗口）——那才是真实输入路径。
           $target = [HrsWin]::FirstChild($hwnd)
-          if ($target -eq [IntPtr]::Zero) { $target = $hwnd }
+          if ($target -eq [IntPtr]::Zero) { throw '找不到 Flutter 视图子窗口' }
           Write-Host "hit-test target hwnd = $target (top = $hwnd)"
 
           function Hit-Test([IntPtr]$h, [int]$x, [int]$y) {
@@ -168,8 +169,62 @@ jobs:
             return ([HrsWin]::SendMessage($h, 0x0084, [IntPtr]::Zero, $lp)).ToInt32()
           }
 
-          # 窗口层面 B：完整界面不小于最小尺寸 720x480；两个断言一起做（精简态下
-          # 窗口只有内容那么大、且按设计不可缩放，所以要轮询等它回到完整界面）。
+          # 等窗口把精简态尺寸调整完，再按上报的矩形去命中/点击。
+          Start-Sleep -Milliseconds 600
+
+          # 精简态：拖动把手必须回 HTCAPTION，其余（含「断开」按钮中心）必须回 HTCLIENT。
+          $btn = Last-Rect (Read-LogText $log) 'disconnect'
+          if ($btn -eq $null) { throw 'Dart 没有上报「断开」按钮矩形' }
+          $drag = Last-Rect (Read-LogText $log) 'drag'
+          if ($drag -eq $null) { throw 'Dart 没有上报拖动区矩形' }
+          # 客户区坐标（点调用）+ 屏幕坐标（WM_NCHITTEST 用）。
+          $geo = New-Object HrsWin+RECT
+          [void][HrsWin]::GetWindowRect($hwnd, [ref]$geo)
+          $btnX = $btn[0] + [int]($btn[2] / 2)
+          $btnY = $btn[1] + [int]($btn[3] / 2)
+          $dragX = $drag[0] + [int]($drag[2] / 2)
+          $dragY = $drag[1] + [int]($drag[3] / 2)
+          Write-Host "compact rects: drag=($($drag -join ',')) button=($($btn -join ','))"
+          $hitButton = Hit-Test $target ($geo.Left + $btnX) ($geo.Top + $btnY)
+          $hitDrag = Hit-Test $target ($geo.Left + $dragX) ($geo.Top + $dragY)
+          Write-Host "WM_NCHITTEST compact: button=$hitButton drag=$hitDrag (expect 1 / 2)"
+          if ($hitButton -ne 1) { throw "「断开」按钮中心的命中有问题（$hitButton），按钮点不动" }
+          if ($hitDrag -ne 2) { throw "拖动把手的命中不是 HTCAPTION（$hitDrag），拖不动窗口" }
+
+          # 真的点一下「断开」：必须在 3 秒内回到完整界面（等预览每 6 秒自动翻转不算通过）。
+          $before = ([regex]::Matches((Read-LogText $log), 'dart: ui_mode: compact -> full')).Count
+          $lp = [IntPtr](($btnY -shl 16) -bor ($btnX -band 0xFFFF))
+          Write-Host "click 断开 at ($btnX,$btnY) of hwnd $target"
+          [void][HrsWin]::SendMessage($target, 0x0201, [IntPtr]1, $lp)   # WM_LBUTTONDOWN
+          Start-Sleep -Milliseconds 120
+          [void][HrsWin]::SendMessage($target, 0x0202, [IntPtr]0, $lp)   # WM_LBUTTONUP
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $clickOk = $false
+          while ($sw.Elapsed.TotalSeconds -lt 3) {
+            Start-Sleep -Milliseconds 100
+            $after = ([regex]::Matches((Read-LogText $log), 'dart: ui_mode: compact -> full')).Count
+            if ($after -gt $before) {
+              Write-Host ("click -> ui_mode: compact -> full in {0:N2}s" -f $sw.Elapsed.TotalSeconds)
+              $clickOk = $true
+              break
+            }
+          }
+          if (-not $clickOk) { throw '点了「断开」3 秒内没有回到完整界面（点击没生效）' }
+
+          # 回到完整界面后再验缩放/拖动区/控件区；顺便把日志断言补齐。
+          Start-Sleep -Seconds 1
+          $text = Read-LogText $log
+          Get-Content $log | ForEach-Object { Write-Host $_ }
+          if ($text -match 'FlutterError|Null check operator') {
+            throw '日志里出现 Flutter 错误（渲染/布局异常）'
+          }
+          $size = (Get-Item $log).Length
+          Write-Host "startup.log size = $size bytes"
+          if ($size -gt 65536) { throw "startup.log 异常膨胀：$size bytes" }
+
+          # 窗口层面：四边四角能缩放、上报的拖动区回 HTCAPTION、控件区回 HTCLIENT。
+          # HTCLIENT=1 HTCAPTION=2 HTLEFT=10 HTRIGHT=11 HTTOP=12 HTTOPLEFT=13
+          # HTTOPRIGHT=14 HTBOTTOM=15 HTBOTTOMLEFT=16 HTBOTTOMRIGHT=17
           $windowOk = $false
           for ($i = 0; $i -lt 24; $i++) {
             $rect = New-Object HrsWin+RECT
@@ -177,6 +232,8 @@ jobs:
             $w = $rect.Right - $rect.Left
             $h = $rect.Bottom - $rect.Top
             if ($w -lt 700 -or $h -lt 450) { Start-Sleep -Milliseconds 500; continue }
+            $drag = Last-Rect (Read-LogText $log) 'drag'
+            if ($drag -eq $null) { Start-Sleep -Milliseconds 500; continue }
 
             $midX = [int](($rect.Left + $rect.Right) / 2)
             $midY = [int](($rect.Top + $rect.Bottom) / 2)
@@ -190,9 +247,8 @@ jobs:
               @('bottomleft',   ($rect.Left + 3),  ($rect.Bottom - 4),16),
               @('bottomright',  ($rect.Right - 4), ($rect.Bottom - 4),17),
               @('center',       $midX,             $midY,             1),
-              # 没有标题栏：顶部 28 DIP 的空白带必须回 HTCAPTION（拖窗），
-              # 右上角控件区必须回 HTCLIENT（按钮还得能点）。
-              @('dragstrip',    $midX,             ($rect.Top + 12),  2),
+              @('dragrect',     ($rect.Left + $drag[0] + [int]($drag[2] / 2)),
+                                ($rect.Top + $drag[1] + [int]($drag[3] / 2)), 2),
               @('controls',     ($rect.Right - 24),($rect.Top + 46),  1)
             )
             $report = @()
@@ -202,12 +258,12 @@ jobs:
               $report += "$($case[0])=$got"
               if ($got -ne $case[3]) { $allOk = $false }
             }
-            Write-Host ("WM_NCHITTEST [${w}x${h}]: " + ($report -join ', '))
+            Write-Host ("WM_NCHITTEST [${w}x${h}] drag=($($drag -join ',')): " + ($report -join ', '))
             if ($allOk) { $windowOk = $true; break }
             Start-Sleep -Milliseconds 500
           }
           if (-not $windowOk) {
-            throw 'WM_NCHITTEST 没有在四边/四角返回 HTLEFT/HTRIGHT/HTTOP/... 或窗口从没达到 720x480'
+            throw 'WM_NCHITTEST 四边/四角/拖动区/控件区 返回值不对（窗口可能拉不动或按钮点不了）'
           }
 
           Get-Process -Id $proc.Id | Stop-Process -Force
