@@ -3,7 +3,6 @@
 
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
-
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 
@@ -15,28 +14,20 @@
 // A window that does nothing but host a Flutter view.
 class FlutterWindow : public Win32Window {
  public:
-  // Creates a new FlutterWindow hosting a Flutter view running |project|.
   explicit FlutterWindow(const flutter::DartProject& project);
   virtual ~FlutterWindow();
 
-  // 由 main.cpp 在 Create() 之前注入：悬浮窗（Dart 通过通道驱动它）。
-  void set_overlay(hrs::OverlayWindow* overlay) { overlay_ = overlay; }
-
  protected:
-  // Win32Window:
   bool OnCreate() override;
   void OnDestroy() override;
   LRESULT MessageHandler(HWND window, UINT const message, WPARAM const wparam,
                          LPARAM const lparam) noexcept override;
 
  private:
-  // The project to run.
   flutter::DartProject project_;
-
-  // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
-
-  hrs::OverlayWindow* overlay_ = nullptr;
+  // 悬浮窗归窗口自己所有：在 OnCreate 里创建，通道回调只认这个实例。
+  hrs::OverlayWindow overlay_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
 };
 

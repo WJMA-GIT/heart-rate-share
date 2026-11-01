@@ -90,34 +90,9 @@ class Win32Window {
   // Update the window frame's theme to match the system theme.
   static void UpdateTheme(HWND const window);
 
-  // 把窗口撑到当前最小客户区（UI 放大后原地变大，不等到用户去拖边框）。
-  void EnforceMinClientSize();
-
-  // 透明精简态进出：进之前记下完整界面的矩形，退出时原样还原。
-  void ApplyCompact(bool compact);
-
-  // Flutter 视图铺满整个客户区（尺寸/DPI/精简态任何变化后都要同步一次）。
-  void SyncChildToClient();
-
-  // 无边框窗口的命中测试：八像素边框缩放 + Dart 上报的拖动区 + 其余交给 Flutter。
-  LRESULT HitTestWindow(LPARAM lparam);
-
-  // Flutter 视图窗口的子类过程：客户区被它整块盖住，鼠标命中只会问它，
-  // 所以缩放/拖拽的判定必须挂在它上面（不是顶层窗口）。
-  static LRESULT CALLBACK HitTestSubclass(HWND hwnd, UINT message,
-                                          WPARAM wparam, LPARAM lparam,
-                                          UINT_PTR id, DWORD_PTR ref);
-
   bool quit_on_close_ = false;
 
-  // 最小客户区（DIP）：Dart 侧按 0.8–1.6 的 UI 缩放推过来，默认 720×480。
-  int min_client_width_ = 720;
-  int min_client_height_ = 480;
-  bool compact_ = false;
-  RECT full_rect_{};
-  // 可拖动区（物理像素）：只由 Dart 上报，不在这里猜"空白区"。空 = 没有拖动区。
-  RECT drag_rect_{};
-  bool has_drag_rect_ = false;
+  // 上次退出时的最大化状态（尺寸/位置存在 window_state.cpp）。
   bool start_maximized_ = false;
 
   // window handle for top level window.
