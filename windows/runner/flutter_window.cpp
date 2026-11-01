@@ -50,9 +50,9 @@ bool FlutterWindow::OnCreate() {
   // 悬浮窗在这里创建（不是 main.cpp 注入）：成员对象，生命周期和本窗口一致，
   // 通道回调捕获 this 拿到的就是同一个实例。
   if (overlay_.Create(GetHandle())) {
-    Log("overlay: ready");
+    hrs::Log("overlay: ready");
   } else {
-    Log("overlay: create failed, 悬浮窗不可用（主界面不受影响）");
+    hrs::Log("overlay: create failed, 悬浮窗不可用（主界面不受影响）");
   }
 
   // Dart → 原生：setOverlay(rows/font) / showOverlay(bool)。
@@ -63,7 +63,7 @@ bool FlutterWindow::OnCreate() {
   channel_->SetMethodCallHandler(
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-        Log("channel", call.method_name() +
+        hrs::Log("channel", call.method_name() +
                            std::string(" overlay=") +
                            (overlay_.handle() != nullptr ? "ok" : "null"));
         if (call.method_name() == "showOverlay") {
