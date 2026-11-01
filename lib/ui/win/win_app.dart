@@ -74,6 +74,7 @@ final class _WinAppState extends State<WinApp> {
   Future<void> _bumpScale(double delta) async {
     final next = (_scale + delta).clamp(0.8, 1.6);
     setState(() => _scale = double.parse(next.toStringAsFixed(1)));
+    StartupLog.info('win: scale=${_scale.toStringAsFixed(1)}');
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_scaleKey, _scale);
