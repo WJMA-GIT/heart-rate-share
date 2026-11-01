@@ -11,6 +11,7 @@ import '../../core/update/update_installer.dart';
 import '../../debug/debug_panel.dart';
 import '../../room/room_client.dart';
 import '../app_state.dart';
+import '../../theme/theme_controller.dart';
 import '../version_tap.dart';
 import '../widgets/update_tile.dart';
 
@@ -87,6 +88,48 @@ final class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 悬浮窗开关：只在用户主动打开时申请权限；拒绝/不支持就降级为不显示。
+
+  Widget _appearanceTile() {
+    final mode = themeController.mode;
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Column(
+        children: [
+          const ListTile(
+            leading: Icon(Icons.brightness_6_outlined),
+            title: Text('外观'),
+            subtitle: Text('跟随系统 / 浅色 / 深色'),
+          ),
+          RadioGroup<ThemeMode>(
+            groupValue: mode,
+            onChanged: (value) {
+              if (value != null) {
+                themeController.setMode(value);
+                setState(() {});
+              }
+            },
+            child: const Column(
+              children: [
+                RadioListTile<ThemeMode>(
+                  value: ThemeMode.system,
+                  title: Text('跟随系统'),
+                ),
+                RadioListTile<ThemeMode>(
+                  value: ThemeMode.light,
+                  title: Text('浅色'),
+                ),
+                RadioListTile<ThemeMode>(
+                  value: ThemeMode.dark,
+                  title: Text('深色'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _toggleOverlay(bool value) async {
     final state = widget.state;
@@ -266,6 +309,7 @@ final class _SettingsPageState extends State<SettingsPage> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              _appearanceTile(),
               _permissionsTile(context),
               if (PlatformRoomOverlay.supported) _overlayTile(context),
               // 检查更新只在 Android 上有意义（安装器/签名校验都是平台能力）。

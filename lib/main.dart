@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/config/app_config.dart';
 import 'theme/app_theme.dart';
+import 'theme/theme_controller.dart';
 import 'core/l10n/strings_zh.dart';
 import 'core/logging/app_logger.dart';
 import 'core/platform/room_overlay.dart';
@@ -123,6 +124,7 @@ Future<void> main() async {
   );
   // 手机侧「投射到局域网」默认开启：启动即按偏好拉起（失败只降级，不影响其他功能）。
   unawaited(state.startLanProjection());
+  await themeController.load();
   runApp(HeartRateApp(state: state));
 }
 
@@ -176,6 +178,7 @@ final class _HeartRateAppState extends State<HeartRateApp>
   @override
   void initState() {
     super.initState();
+    themeController.addListener(_onThemeChanged);
     widget.state.addListener(_changed);
     // 断连复现时要能一眼看出当时是前台、息屏还是切了后台。
     WidgetsBinding.instance.addObserver(this);
@@ -200,7 +203,12 @@ final class _HeartRateAppState extends State<HeartRateApp>
     WidgetsBinding.instance.removeObserver(this);
     widget.state.removeListener(_changed);
     widget.state.dispose();
+    themeController.removeListener(_onThemeChanged);
     super.dispose();
+  }
+
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -215,7 +223,9 @@ final class _HeartRateAppState extends State<HeartRateApp>
       navigatorKey: _navigatorKey,
       title: AppConfig.displayName,
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.mobile(), // 与桌面共用一份色值（lib/theme/app_theme.dart）
+      theme: AppTheme.mobile(), // 浅色（与桌面共用一份色值）
+      darkTheme: mobileDarkTheme(), // 深色：同一套令牌，底 #121212 / 卡 #1C1C1E
+      themeMode: themeController.mode,
       home: Scaffold(
         appBar: AppBar(title: Text(titles[_index])),
         body: SafeArea(

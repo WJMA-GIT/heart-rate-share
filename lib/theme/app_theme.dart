@@ -58,8 +58,12 @@ abstract final class AppTextSize {
 
 abstract final class AppTheme {
   /// 手机端主题（main.dart 用它，保持现状不变）。
-  static ThemeData mobile() =>
-      ThemeData(colorSchemeSeed: AppColors.brand, useMaterial3: true);
+  static ThemeData mobile() => ThemeData(
+    useMaterial3: true,
+    // 主色钉死 #FF5252（只给 seed 会被 M3 色调映射成灰粉，与桌面/深色不一致）。
+    colorScheme: ColorScheme.fromSeed(seedColor: AppColors.brand)
+        .copyWith(primary: AppColors.brand, onPrimary: Colors.white),
+  );
 
   /// 桌面端主题：**同一套色值**，只是补上桌面需要的组件外观（按钮/卡片/输入框）。
   static ThemeData desktop() {
@@ -176,4 +180,41 @@ abstract final class AppTheme {
       ),
     );
   }
+}
+
+/// 深色令牌（深色模式下用；浅色仍走 Material 默认的 seed 派生色）。
+abstract final class AppColorsDark {
+  static const bg = Color(0xFF121212);
+  static const card = Color(0xFF1C1C1E);
+  static const line = Color(0xFF2C2C33);
+  static const text = Color(0xFFE0E0E0);
+  static const textDim = Color(0xFF9A9A9A);
+  static const brand = AppColors.brand; // #FF5252 主色两端一致
+}
+
+/// 手机端深色主题：与浅色共用 `AppColors/AppRadius/AppSpace/AppTextSize` 令牌。
+ThemeData mobileDarkTheme() {
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: AppColors.brand,
+        brightness: Brightness.dark,
+      ).copyWith(
+        primary: AppColors.brand,
+        onPrimary: Colors.white,
+        surface: AppColorsDark.card,
+        onSurface: AppColorsDark.text,
+      );
+  return ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.dark,
+    colorScheme: scheme,
+    scaffoldBackgroundColor: AppColorsDark.bg,
+    canvasColor: AppColorsDark.bg,
+    dividerColor: AppColorsDark.line,
+    snackBarTheme: const SnackBarThemeData(
+      backgroundColor: Color(0xFF2A2A2E),
+      contentTextStyle: TextStyle(color: AppColorsDark.text),
+    ),
+    dialogTheme: DialogThemeData(backgroundColor: AppColorsDark.card),
+  );
 }
