@@ -19,8 +19,8 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- 压缩/原生库自解压只在 self-contained 下合法，由 publish 命令行按形态传参，
+         不能焊在 csproj 里（否则 framework-dependent 形态会 NETSDK1176）。 -->
     <DebugType>none</DebugType>
     <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
   </PropertyGroup>
