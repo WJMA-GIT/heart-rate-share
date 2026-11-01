@@ -87,8 +87,11 @@ void OverlayWindow::SetRows(std::vector<OverlayRow> rows, float font_dip) {
 
 void OverlayWindow::Show() {
   if (hwnd_ == nullptr) return;
+  Log("overlay: show begin");
   ResizeToContent();
+  Log("overlay: resized");
   Render();
+  Log("overlay: rendered");
   ::SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
   ::ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
@@ -249,8 +252,9 @@ void OverlayWindow::Render() {
   blend.BlendOp = AC_SRC_OVER;
   blend.SourceConstantAlpha = 255;
   blend.AlphaFormat = AC_SRC_ALPHA;
-  ::UpdateLayeredWindow(hwnd_, screen, &dst, &size, memory, &src, 0, &blend,
-                        ULW_ALPHA);
+  const BOOL updated = ::UpdateLayeredWindow(hwnd_, screen, &dst, &size, memory,
+                                             &src, 0, &blend, ULW_ALPHA);
+  Log(updated ? "overlay: ulw ok" : "overlay: ulw failed");
 
   ::SelectObject(memory, old);
   ::DeleteObject(bitmap);
