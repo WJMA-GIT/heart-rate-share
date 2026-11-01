@@ -177,13 +177,16 @@ jobs:
           if ($btn -eq $null) { throw 'Dart 没有上报「断开」按钮矩形' }
           $drag = Last-Rect (Read-LogText $log) 'drag'
           if ($drag -eq $null) { throw 'Dart 没有上报拖动区矩形' }
+          # 客户区坐标（点调用）+ 屏幕坐标（WM_NCHITTEST 用）。
+          $geo = New-Object HrsWin+RECT
+          [void][HrsWin]::GetWindowRect($hwnd, [ref]$geo)
           $btnX = $btn[0] + [int]($btn[2] / 2)
           $btnY = $btn[1] + [int]($btn[3] / 2)
           $dragX = $drag[0] + [int]($drag[2] / 2)
           $dragY = $drag[1] + [int]($drag[3] / 2)
           Write-Host "compact rects: drag=($($drag -join ',')) button=($($btn -join ','))"
-          $hitButton = Hit-Test $target $btnX $btnY
-          $hitDrag = Hit-Test $target $dragX $dragY
+          $hitButton = Hit-Test $target ($geo.Left + $btnX) ($geo.Top + $btnY)
+          $hitDrag = Hit-Test $target ($geo.Left + $dragX) ($geo.Top + $dragY)
           Write-Host "WM_NCHITTEST compact: button=$hitButton drag=$hitDrag (expect 1 / 2)"
           if ($hitButton -ne 1) { throw "「断开」按钮中心的命中有问题（$hitButton），按钮点不动" }
           if ($hitDrag -ne 2) { throw "拖动把手的命中不是 HTCAPTION（$hitDrag），拖不动窗口" }
