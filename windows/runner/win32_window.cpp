@@ -3,6 +3,7 @@
 #include <dwmapi.h>
 #include <flutter_windows.h>
 
+#include "diagnostics.h"
 #include "resource.h"
 #include "window_state.h"
 
@@ -192,7 +193,7 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_DESTROY:
-      hrs::SaveWindowRect(window);
+      hrs::SaveWindowRect(hwnd);
       window_handle_ = nullptr;
       Destroy();
       if (quit_on_close_) {
