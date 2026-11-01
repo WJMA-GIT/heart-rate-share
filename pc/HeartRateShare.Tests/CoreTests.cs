@@ -49,7 +49,7 @@ public class HeartRateFlagsTests
     [Fact]
     public void Uint8WithoutRr()
     {
-        Assert.True(HeartRateMeasurement.TryParse(new byte[] { 0x00, 72 }, out var bpm, out var rr));
+        Assert.True(HeartRateMeasurement.TryDecode(new byte[] { 0x00, 72 }, out var bpm, out var rr));
         Assert.Equal(72, bpm);
         Assert.Empty(rr);
     }
@@ -59,7 +59,7 @@ public class HeartRateFlagsTests
     {
         // flags: bit0=uint16, bit4=RR；bpm=180(0x00B4)，两个 RR=300/400ms
         var data = new byte[] { 0x11, 0xB4, 0x00, 0x2C, 0x01, 0x90, 0x01 };
-        Assert.True(HeartRateMeasurement.TryParse(data, out var bpm, out var rr));
+        Assert.True(HeartRateMeasurement.TryDecode(data, out var bpm, out var rr));
         Assert.Equal(180, bpm);
         Assert.Equal(new List<int> { 300, 400 }, rr);
     }
@@ -67,16 +67,16 @@ public class HeartRateFlagsTests
     [Fact]
     public void RejectsImpossibleBpm()
     {
-        Assert.False(HeartRateMeasurement.TryParse(new byte[] { 0x00, 0 }, out _, out _));
-        Assert.False(HeartRateMeasurement.TryParse(new byte[] { 0x00, 255 }, out _, out _));
-        Assert.False(HeartRateMeasurement.TryParse(new byte[] { 0x00 }, out _, out _));
+        Assert.False(HeartRateMeasurement.TryDecode(new byte[] { 0x00, 0 }, out _, out _));
+        Assert.False(HeartRateMeasurement.TryDecode(new byte[] { 0x00, 255 }, out _, out _));
+        Assert.False(HeartRateMeasurement.TryDecode(new byte[] { 0x00 }, out _, out _));
     }
 
     [Fact]
     public void DropsBogusRr()
     {
         var data = new byte[] { 0x10, 0x40, 0x00, 0x00, 0xFF, 0xFF };
-        Assert.True(HeartRateMeasurement.TryParse(data, out var bpm, out var rr));
+        Assert.True(HeartRateMeasurement.TryDecode(data, out var bpm, out var rr));
         Assert.Equal(64, bpm);
         Assert.Empty(rr);   // 0 和 65535 都不是有效 RR
     }

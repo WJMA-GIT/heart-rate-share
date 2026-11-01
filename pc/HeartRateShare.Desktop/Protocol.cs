@@ -63,7 +63,7 @@ public static class Protocol
 /// 0x2A37 心率测量：flags 决定 uint8/uint16，以及后面是否跟 RR。
 public static class HeartRateMeasurement
 {
-    public static bool TryParse(ReadOnlySpan<byte> data, out int bpm, out List<int> rrMs)
+    public static bool TryDecode(ReadOnlySpan<byte> data, out int bpm, out List<int> rrMs)
     {
         bpm = 0;
         rrMs = [];

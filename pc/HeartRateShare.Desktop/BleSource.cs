@@ -107,7 +107,7 @@ public sealed class BleSource : IHeartRateSource
         var reader = DataReader.FromBuffer(args.CharacteristicValue);
         var buffer = new byte[reader.UnconsumedBufferLength];
         reader.ReadBytes(buffer);
-        if (!HeartRateMeasurement.TryParse(buffer, out var bpm, out _)) return;
+        if (!HeartRateMeasurement.TryDecode(buffer, out var bpm, out _)) return;
         _lastSampleAt = DateTime.UtcNow;
         MembersChanged?.Invoke([new MemberRow("ble-own", "蓝牙设备", bpm, true)]);
     }
