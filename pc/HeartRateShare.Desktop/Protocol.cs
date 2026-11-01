@@ -145,7 +145,7 @@ public sealed class MemberTable
                 }
                 break;
             case "memberDelta":
-                if (root.TryGetProperty("member", out var member)) Upsert(member);
+                if (root.TryGetProperty("member", out var delta)) Upsert(delta);
                 break;
             case "heartRate":
                 Upsert(root);

@@ -14,5 +14,6 @@
     <!-- 只引用协议/解析这些纯逻辑文件，避免把 WPF 拉进测试进程 -->
     <Compile Include="../HeartRateShare.Desktop/Protocol.cs" Link="Protocol.cs" />
     <Compile Include="../HeartRateShare.Desktop/RoomConnection.cs" Link="RoomConnection.cs" />
+    <Compile Include="../HeartRateShare.Desktop/Sources.cs" Link="Sources.cs" />
   </ItemGroup>
 </Project>
