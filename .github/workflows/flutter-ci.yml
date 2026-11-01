@@ -522,44 +522,59 @@ jobs:
 
   # ------------------------------------------------------- 发布到 GitHub Release
   release:
-    needs: [android, windows, ios]
+    needs: [android]
     if: always() && startsWith(github.ref, 'refs/tags/v') && needs.android.result == 'success'
     runs-on: ubuntu-latest
     steps:
+      # Windows 资产来自独立的 PC 工作流（C# WPF 双形态），这里只负责取件 + 发布。
       - uses: actions/download-artifact@v4
         with:
           pattern: apk-release-*
           path: assets
           merge-multiple: true
-      # 若将来补齐 windows/ 并构建成功，一并作为资产上传
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          pattern: windows-*
-          path: assets
-          merge-multiple: true
-      - name: Unwrap windows artifact (artifact 是 zip 套 zip)
+      - name: Download PC exes from windows-pc runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          for z in assets/windows-*.zip; do
-            [ -e "$z" ] || continue
-            echo "unwrapping $z"
-            unzip -o -q "$z" -d assets/
-            rm -f "$z"
-          done
+          mkdir -p assets
+          # 优先取同一 commit 的那次 windows-pc；没有就取最近一次成功的。
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/windows-pc.yml/runs?head_sha=$GITHUB_SHA&per_page=1" --jq '.workflow_runs[0].id // empty')
+          if [ -z "$id" ]; then
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/windows-pc.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].id // empty')
+          fi
+          echo "windows-pc run: $id"
+          [ -n "$id" ] || { echo "::error::找不到 windows-pc 构建（PC 双形态未产出）"; exit 1; }
+          gh run download "$id" -n win-pc-exes -D pc-out
+          ls -lh pc-out/
+          ver=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
+          # 统一改名：自包含 / 依赖运行时
+          self=$(ls pc-out/*selfcontained*.exe | head -1)
+          fd=$(ls pc-out/*framework-dependent*.exe | head -1)
+          cp "$self" "assets/heartrate-pc-$ver-win-x64-selfcontained.exe"
+          cp "$fd" "assets/heartrate-pc-$ver-win-x64-framework-dependent.exe"
           ls -lh assets/
-
-      - name: Show assets
-        run: ls -lh assets/
+      - name: Drop stale Flutter Windows assets (record digests first)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets[]|select(.name|test("windows-x64"))|"\(.name) \(.size) \(.digest // "no-digest")"' || true
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets[]|select(.name|test("windows-x64"))|.id' 2>/dev/null || true); do
+            echo "deleting stale asset id=$id"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"
+          done
       - name: Create / update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
+          NOTES=$(cat pc/RELEASE-NOTES.md 2>/dev/null || echo "")
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-                 --title "共享心率 $TAG" --generate-notes \
-                 --notes "Windows 构建号 $armBuild（第一次运行前建议先删除 %LOCALAPPDATA%\\heartrate 以清掉旧解压目录）。资产：arm64 APK（可覆盖安装，签名不变）+ Windows 单文件 exe（双击直开，自解到 %LOCALAPPDATA%\\heartrate\\app\\<版本>，无安装/无注册表/无管理员）（无截图资产：UI 以真机验收为准）。"
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "共享心率 $TAG" --generate-notes
           gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$NOTES"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | .name + "  " + (.size|tostring) + " bytes"'
