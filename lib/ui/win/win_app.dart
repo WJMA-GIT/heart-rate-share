@@ -149,7 +149,9 @@ final class _WinAppState extends State<WinApp> {
     // 全透明精简态：宽度按内容、高度按行数（8 行封顶）。
     final width = metrics.width * _scale;
     final height = metrics.height(rows) * _scale;
-    _pushDragRect(Rect.fromLTWH(0, 0, metrics.handleWidth * _scale, height));
+    _pushDragRect(
+      Rect.fromLTWH(0, 0, _CompactMetrics.handleWidth * _scale, height),
+    );
     setCompactWindow(true);
     setWindowMinSize(width, height);
     setWindowClientSize(width, height);
