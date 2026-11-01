@@ -158,7 +158,9 @@ final class _WinAppState extends State<WinApp> {
       return;
     }
     _lastOverlayPush = now;
-    channel.invokeMethod<void>('setOverlay', _overlayPayload()).catchError((_) {});
+    channel
+        .invokeMethod<void>('setOverlay', _overlayPayload())
+        .catchError((_) {});
   }
 
   /// (name, bpm, 归一化折线点)：归一化在 Dart 侧算好，原生只负责画。
