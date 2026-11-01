@@ -1,0 +1,135 @@
+name: windows-pc
+
+# C#/.NET 8 + WPF 桌面客户端（pc/）：单文件 exe 构建 + 冒烟 + 截图。
+# 与 Flutter 的 windows job 互不影响：这里只碰 pc/**。
+"on":
+  push:
+    branches: [main, windows]
+    paths:
+      - 'pc/**'
+      - '.github/workflows/windows-pc.yml'
+  pull_request:
+    paths:
+      - 'pc/**'
+      - '.github/workflows/windows-pc.yml'
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  pc-single-file:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Publish single-file exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish pc/HeartRateShare.Desktop -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true -o pc-out
+          $exe = Join-Path (Get-Location) 'pc-out/HeartRateShare.exe'
+          if (-not (Test-Path $exe)) { throw 'publish 没有产出 HeartRateShare.exe' }
+          $item = Get-Item $exe
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          Write-Host ("exe = {0}" -f $exe)
+          Write-Host ("size = {0} bytes ({1:N1} MB)" -f $item.Length, ($item.Length / 1MB))
+          Write-Host ("sha256 = {0}" -f $hash)
+          Write-Host ("version = {0}" -f $item.VersionInfo.FileVersion)
+
+      - name: Smoke (launch + first/second start timing + screenshots)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.Drawing
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public class Win {
+            [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+            [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+            [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+          }
+          "@
+
+          $exe = Join-Path (Get-Location) 'pc-out/HeartRateShare.exe'
+          $tempNet = Join-Path $env:TEMP '.net'
+
+          function Start-Measure([string]$tag) {
+            Remove-Item $tempNet -Recurse -Force -ErrorAction SilentlyContinue
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $proc = Start-Process -FilePath $exe -ArgumentList '--mock' -PassThru
+            $hwnd = [IntPtr]::Zero
+            for ($i = 0; $i -lt 400; $i++) {
+              Start-Sleep -Milliseconds 50
+              $proc.Refresh()
+              if ($proc.HasExited) { throw "[$tag] 进程提前退出，code=$($proc.ExitCode)" }
+              if ($proc.MainWindowHandle -ne [IntPtr]::Zero) { $hwnd = $proc.MainWindowHandle; break }
+            }
+            $sw.Stop()
+            if ($hwnd -eq [IntPtr]::Zero) { throw "[$tag] 没有出现主窗口" }
+            Write-Host ("[{0}] window in {1} ms" -f $tag, $sw.ElapsedMilliseconds)
+            Start-Sleep -Seconds 3
+            $extracted = Test-Path $tempNet
+            Write-Host ("[{0}] %TEMP%\.net 解压目录: {1}" -f $tag, $(if ($extracted) { '存在 -> ' + $tempNet } else { '不存在' }))
+            return @{ Proc = $proc; Hwnd = $hwnd }
+          }
+
+          $first = Start-Measure 'first-start'
+          $proc = $first.Proc
+          $hwnd = $first.Hwnd
+
+          function Save-Shot([IntPtr]$h, [string]$path) {
+            [void][Win]::SetForegroundWindow($h)
+            $r = New-Object Win+RECT
+            [void][Win]::GetWindowRect($h, [ref]$r)
+            $w = $r.Right - $r.Left
+            $hh = $r.Bottom - $r.Top
+            if ($w -le 0 -or $hh -le 0) { throw "窗口尺寸异常 $w x $hh" }
+            $bmp = New-Object System.Drawing.Bitmap($w, $hh)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $hdc = $g.GetHdc()
+            $ok = [Win]::PrintWindow($h, $hdc, 2)
+            $g.ReleaseHdc($hdc)
+            $g.Dispose()
+            $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+            # 自查：整张图只有一种颜色就说明没抓到内容
+            $distinct = @{}
+            for ($x = 0; $x -lt $w; $x += 17) {
+              for ($y = 0; $y -lt $hh; $y += 17) { $distinct[$bmp.GetPixel($x, $y).ToArgb()] = 1 }
+            }
+            $bmp.Dispose()
+            Write-Host ("shot {0}: {1} x {2}, printwindow={3}, distinct-sample={4}" -f $path, $w, $hh, $ok, $distinct.Count)
+            if ($distinct.Count -lt 5) { throw "$path 看起来是空白图（distinct=$($distinct.Count)）" }
+          }
+
+          Save-Shot $hwnd 'pc-main.png'
+          Write-Host '--- startup log ---'
+          $log = Join-Path $env:LOCALAPPDATA 'HeartRateShare\logs\app.log'
+          if (Test-Path $log) { Get-Content $log | Select-Object -Last 30 } else { Write-Host '(no log file)' }
+
+          Stop-Process -Id $proc.Id -Force
+          Start-Sleep -Milliseconds 500
+          $second = Start-Measure 'second-start'
+          Stop-Process -Id $second.Proc.Id -Force
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: win-pc-exe
+          path: pc-out/HeartRateShare.exe
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: win-pc-shots
+          path: pc-*.png
+          if-no-files-found: warn
+          retention-days: 14
