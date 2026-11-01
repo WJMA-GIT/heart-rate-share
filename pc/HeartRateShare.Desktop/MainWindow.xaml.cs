@@ -112,7 +112,7 @@ public partial class MainWindow : Window
         var steps = 4;
         for (var i = 0; i <= steps; i++)
         {
-            var value = min + (max - min) * i / steps;
+            var value = min + (max - min) * (double)i / steps;
             var label = new TextBlock
             {
                 Text = ((int)Math.Round(value)).ToString(),

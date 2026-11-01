@@ -89,7 +89,7 @@ public partial class OverlayWindow : Window
         }
     }
 
-    private static void DrawSpark(Canvas canvas, Member member)
+    private void DrawSpark(Canvas canvas, Member member)
     {
         canvas.SizeChanged += (_, _) => Paint(canvas, member);
     }
