@@ -545,7 +545,9 @@ jobs:
           fi
           echo "windows-pc run: $id"
           [ -n "$id" ] || { echo "::error::找不到 windows-pc 构建（PC 双形态未产出）"; exit 1; }
-          gh run download "$id" -n win-pc-exes -D pc-out
+          # 本 job 没有 checkout，gh 无法从 git remote 推断仓库，必须显式 --repo。
+          mkdir -p pc-out
+          gh run download "$id" --repo "$GITHUB_REPOSITORY" -n win-pc-exes -D pc-out
           ls -lh pc-out/
           ver=$(sed -n 's/^version: *\([0-9A-Za-z.\-]*\)+.*/\1/p' pubspec.yaml)
           # 统一改名：自包含 / 依赖运行时
