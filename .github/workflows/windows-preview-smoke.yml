@@ -48,8 +48,8 @@ jobs:
             exit 0
           fi
           echo "::error::dart format 不一致，下面 diff 就是该怎么改"
-          diff -u lib/ui/win/win_app.dart \
-            <(dart format --output=show lib/ui/win/win_app.dart) || true
+          dart format lib/ui/win >/dev/null
+          git --no-pager diff -- lib/ui/win || true
           exit 1
       # 分支上主 ci 的 quality 要等合并后才跑；这里把 analyze 也钉住，
       # 让 Windows 线自己在推到 windows 分支时就能发现 Dart 侧问题。
