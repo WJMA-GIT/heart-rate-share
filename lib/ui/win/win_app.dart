@@ -316,10 +316,15 @@ final class HomeView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('启动异常（窗口正常，只是数据层起不来）',
-                  style: winText(20, weight: FontWeight.w600)),
+              Text(
+                '启动异常（窗口正常，只是数据层起不来）',
+                style: winText(20, weight: FontWeight.w600),
+              ),
               const SizedBox(height: 12),
-              SelectableText('$fatal', style: winText(13, color: WinColors.dim)),
+              SelectableText(
+                '$fatal',
+                style: winText(13, color: WinColors.dim),
+              ),
             ],
           ),
         ),
@@ -394,7 +399,11 @@ final class _Tabs extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: selected ? WinColors.accent : WinColors.dim),
+            Icon(
+              icon,
+              size: 18,
+              color: selected ? WinColors.accent : WinColors.dim,
+            ),
             const SizedBox(width: 6),
             Text(
               label,
@@ -454,7 +463,11 @@ final class _HeartPage extends StatelessWidget {
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  Icon(Icons.favorite, size: bpmFont * 1.6, color: const Color(0x14FF5252)),
+                  Icon(
+                    Icons.favorite,
+                    size: bpmFont * 1.6,
+                    color: const Color(0x14FF5252),
+                  ),
                   Text(
                     _bpm?.toString() ?? '--',
                     style: winText(bpmFont * 1.6, weight: FontWeight.w700),
@@ -557,7 +570,9 @@ final class _BleCard extends StatelessWidget {
               _Row(
                 title: device.name.isEmpty ? '(未命名)' : device.name,
                 subtitle: '${device.id} · ${device.rssi} dBm',
-                action: controller.connected && controller.transport == WinTransport.ble
+                action:
+                    controller.connected &&
+                        controller.transport == WinTransport.ble
                     ? const _Badge('已连接')
                     : TextButton(
                         onPressed: () => controller.connectBle(device.id),
@@ -715,7 +730,10 @@ final class _RoomPage extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 12),
             child: _Card(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 child: Row(
                   children: [
                     CircleAvatar(
@@ -741,7 +759,9 @@ final class _RoomPage extends StatelessWidget {
                             member.online ? '在线' : '离线',
                             style: winText(
                               12,
-                              color: member.online ? WinColors.ok : WinColors.dim,
+                              color: member.online
+                                  ? WinColors.ok
+                                  : WinColors.dim,
                             ),
                           ),
                         ],
@@ -798,7 +818,10 @@ final class _SettingsPage extends StatelessWidget {
               value: showChart,
               onChanged: onShowChart,
               title: Text('显示折线图', style: winText(15)),
-              subtitle: Text('关闭后主界面只保留心率数字', style: winText(12, color: WinColors.dim)),
+              subtitle: Text(
+                '关闭后主界面只保留心率数字',
+                style: winText(12, color: WinColors.dim),
+              ),
             ),
             const Divider(height: 1, color: Color(0xFFF0EAEA)),
             ListTile(
@@ -811,15 +834,20 @@ final class _SettingsPage extends StatelessWidget {
                 label: '${bpmFont.round()}',
                 onChanged: onBpmFont,
               ),
-              trailing: Text('${bpmFont.round()} px', style: winText(12, color: WinColors.dim)),
+              trailing: Text(
+                '${bpmFont.round()} px',
+                style: winText(12, color: WinColors.dim),
+              ),
             ),
             const Divider(height: 1, color: Color(0xFFF0EAEA)),
             SwitchListTile(
               value: controller.bleDebug,
               onChanged: (_) => controller.toggleBleDebug(),
               title: Text('显示全部蓝牙设备', style: winText(15)),
-              subtitle: Text('排查用：默认只列广播带 0x180D 的心率设备',
-                  style: winText(12, color: WinColors.dim)),
+              subtitle: Text(
+                '排查用：默认只列广播带 0x180D 的心率设备',
+                style: winText(12, color: WinColors.dim),
+              ),
             ),
           ],
         ),
@@ -892,7 +920,11 @@ final class _CardTitle extends StatelessWidget {
 }
 
 final class _Row extends StatelessWidget {
-  const _Row({required this.title, required this.subtitle, required this.action});
+  const _Row({
+    required this.title,
+    required this.subtitle,
+    required this.action,
+  });
 
   final String title;
   final String subtitle;
@@ -907,7 +939,12 @@ final class _Row extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: winText(15), maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text(
+                title,
+                style: winText(15),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
               const SizedBox(height: 2),
               Text(subtitle, style: winText(12, color: WinColors.dim)),
             ],
