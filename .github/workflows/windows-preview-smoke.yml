@@ -209,6 +209,8 @@ jobs:
           }
 
           $text = Read-LogText $log
+          # 失败时也能看到现场：先把日志整份打出来。
+          Get-Content $log | ForEach-Object { Write-Host $_ }
           if ($text -notmatch 'window: style caption=1 thickframe=1 layered=0 topmost=0 transparent=0') {
             throw '启动日志里没有 window: style caption=1 ... 这行（主窗口不是标准窗口）'
           }
