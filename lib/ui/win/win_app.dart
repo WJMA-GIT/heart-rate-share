@@ -99,7 +99,7 @@ final class _WinAppState extends State<WinApp> {
     setWindowDragRect(rect.left, rect.top, rect.width, rect.height);
   }
 
-  /// 构建标识：CI 用 --dart-define=BUILD_ID=<sha8> 注入；本地构建显示 dev。
+  /// 构建标识：CI 用 --dart-define=BUILD_ID=sha8 注入；本地构建显示 dev。
   static const _buildId = String.fromEnvironment('BUILD_ID');
 
   /// 版本号只读一次（全应用唯一入口 `AppVersion`），不要放进 build 里反复异步读。
