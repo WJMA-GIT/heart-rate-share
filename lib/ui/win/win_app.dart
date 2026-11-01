@@ -781,7 +781,7 @@ final class _CompactViewState extends State<_CompactView> {
       origin.dy.round(),
       box.size.width.round(),
       box.size.height.round(),
-    ].join(' ');
+    ].join('/');
     if (rect == _lastButtonRect) return;
     _lastButtonRect = rect;
     StartupLog.info('hit: disconnect rect $rect');
