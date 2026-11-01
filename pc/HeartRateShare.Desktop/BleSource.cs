@@ -10,8 +10,8 @@ public sealed record BleDevice(ulong Address, string Name, short Rssi, bool IsHe
 /// 蓝牙直连：看广播（0x180D 过滤展示）→ 连 GATT → 订阅 0x2A37 → 1 Hz 出数。
 public sealed class BleSource : IHeartRateSource
 {
-    private static readonly Guid HeartRateService = new("0000180d-0000-1000-8000-00805f9b34fb");
-    private static readonly Guid HeartRateMeasurement = new("00002a37-0000-1000-8000-00805f9b34fb");
+    private static readonly Guid HeartRateServiceUuid = new("0000180d-0000-1000-8000-00805f9b34fb");
+    private static readonly Guid HeartRateMeasurementUuid = new("00002a37-0000-1000-8000-00805f9b34fb");
 
     private readonly Dictionary<ulong, BleDevice> _devices = [];
     private BluetoothLEAdvertisementWatcher? _watcher;
@@ -39,7 +39,7 @@ public sealed class BleSource : IHeartRateSource
             };
             watcher.Received += (_, args) =>
             {
-                var isHeartRate = args.Advertisement.ServiceUuids.Contains(HeartRateService);
+                var isHeartRate = args.Advertisement.ServiceUuids.Contains(HeartRateServiceUuid);
                 var name = args.Advertisement.LocalName ?? string.Empty;
                 _devices[args.BluetoothAddress] = new BleDevice(
                     args.BluetoothAddress, name, args.RawSignalStrengthInDBm, isHeartRate);
@@ -70,13 +70,13 @@ public sealed class BleSource : IHeartRateSource
                 Failed?.Invoke("连接失败：设备不在范围内");
                 return;
             }
-            var services = await _device.GetGattServicesForUuidAsync(HeartRateService);
+            var services = await _device.GetGattServicesForUuidAsync(HeartRateServiceUuid);
             if (services.Status != GattCommunicationStatus.Success || services.Services.Count == 0)
             {
                 Failed?.Invoke("连接失败：设备没有心率服务（可能被手机占用）");
                 return;
             }
-            var characteristics = await services.Services[0].GetCharacteristicsForUuidAsync(HeartRateMeasurement);
+            var characteristics = await services.Services[0].GetCharacteristicsForUuidAsync(HeartRateMeasurementUuid);
             if (characteristics.Status != GattCommunicationStatus.Success ||
                 characteristics.Characteristics.Count == 0)
             {
