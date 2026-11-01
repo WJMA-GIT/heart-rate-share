@@ -81,6 +81,7 @@ public static class HeartRateMeasurement
         else
         {
             bpm = data[1];
+            offset = 2;   // uint8 时 RR 从第 3 个字节开始
         }
         if (bpm is <= 0 or > 250) return false;   // 物理上不可能，按坏帧丢掉
         if (hasRr)

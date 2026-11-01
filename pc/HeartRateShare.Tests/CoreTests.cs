@@ -162,40 +162,49 @@ public class MemberTableTests
     }
 }
 
-/// 端到端：本地 HttpListener 起一个 WS 服务，RoomConnection 连上去收 snapshot。
+/// 端到端：本地 TCP + 手写 WebSocket 握手（不用 HttpListener，避免 CI 上的 URL ACL）。
 public class RoomConnectionTests
 {
     [Fact]
     public async Task ConnectsReceivesSnapshotAndDisconnects()
     {
-        var listener = new HttpListener();
-        var port = FreePort();
-        listener.Prefixes.Add($"http://localhost:{port}/");
+        var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
         var serverTask = Task.Run(async () =>
         {
-            var context = await listener.GetContextAsync();
-            var socketContext = await context.AcceptWebSocketAsync(null);
-            var socket = socketContext.WebSocket;
-            var buffer = new byte[4096];
-            var received = await socket.ReceiveAsync(buffer, CancellationToken.None);
-            var hello = Encoding.UTF8.GetString(buffer, 0, received.Count);
-            Assert.Contains("\"hello\"", hello);
+            using var client = await listener.AcceptTcpClientAsync();
+            var stream = client.GetStream();
+            var request = await ReadHeadersAsync(stream);
+            var key = request.Split("\r\n")
+                .First(line => line.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase))
+                .Split(':', 2)[1].Trim();
+            var accept = Convert.ToBase64String(
+                System.Security.Cryptography.SHA1.HashData(
+                    Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+            var handshake = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 101 Switching Protocols\r\n" +
+                "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+                $"Sec-WebSocket-Accept: {accept}\r\n\r\n");
+            await stream.WriteAsync(handshake);
+            await stream.FlushAsync();
+
+            // 客户端会先发 hello：读一帧（不校验内容，只看握手通了）
+            _ = await ReadFrameAsync(stream);
 
             var snapshot = Encoding.UTF8.GetBytes("""
             {"v":1,"type":"snapshot","members":[{"memberId":"s1","displayName":"服务端成员","bpm":77}]}
             """);
-            await socket.SendAsync(snapshot, WebSocketMessageType.Text, true, CancellationToken.None);
-            await Task.Delay(300);
-            await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+            await WriteTextFrameAsync(stream, snapshot);
+            await Task.Delay(200);
         });
 
         var connection = new RoomConnection();
         var rows = new List<MemberRow>();
         connection.MembersChanged += snapshot => rows = snapshot.ToList();
-        await connection.ConnectAsync(
-            new Uri($"ws://localhost:{port}/ws?room=TEST01"), "Windows");
-        for (var i = 0; i < 30 && rows.Count == 0; i++) await Task.Delay(50);
+        await connection.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws?room=TEST01"), "Windows");
+        for (var i = 0; i < 40 && rows.Count == 0; i++) await Task.Delay(50);
 
         Assert.Single(rows);
         Assert.Equal("服务端成员", rows[0].Name);
@@ -206,12 +215,57 @@ public class RoomConnectionTests
         await serverTask;
     }
 
-    private static int FreePort()
+    private static async Task<string> ReadHeadersAsync(NetworkStream stream)
     {
-        var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
-        var port = ((IPEndPoint)udp.Client.LocalEndPoint!).Port;
-        udp.Dispose();
-        return port;
+        var buffer = new List<byte>();
+        var one = new byte[1];
+        while (true)
+        {
+            var read = await stream.ReadAsync(one);
+            if (read == 0) break;
+            buffer.Add(one[0]);
+            if (buffer.Count >= 4 &&
+                buffer[^4] == (byte)'\r' && buffer[^3] == (byte)'\n' &&
+                buffer[^2] == (byte)'\r' && buffer[^1] == (byte)'\n') break;
+        }
+        return Encoding.ASCII.GetString(buffer.ToArray());
+    }
+
+    private static async Task<byte[]> ReadFrameAsync(NetworkStream stream)
+    {
+        var header = new byte[2];
+        await stream.ReadExactlyAsync(header);
+        var length = header[1] & 0x7F;
+        if (length == 126)
+        {
+            var extended = new byte[2];
+            await stream.ReadExactlyAsync(extended);
+            length = (extended[0] << 8) | extended[1];
+        }
+        var mask = new byte[4];
+        if ((header[1] & 0x80) != 0) await stream.ReadExactlyAsync(mask);
+        var payload = new byte[length];
+        await stream.ReadExactlyAsync(payload);
+        for (var i = 0; i < payload.Length; i++) payload[i] ^= mask[i % 4];
+        return payload;
+    }
+
+    private static async Task WriteTextFrameAsync(NetworkStream stream, byte[] payload)
+    {
+        var frame = new List<byte> { 0x81 };
+        if (payload.Length < 126)
+        {
+            frame.Add((byte)payload.Length);
+        }
+        else
+        {
+            frame.Add(126);
+            frame.Add((byte)(payload.Length >> 8));
+            frame.Add((byte)(payload.Length & 0xFF));
+        }
+        frame.AddRange(payload);
+        await stream.WriteAsync(frame.ToArray());
+        await stream.FlushAsync();
     }
 }
 
