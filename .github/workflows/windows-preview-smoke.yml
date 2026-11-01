@@ -72,6 +72,17 @@ jobs:
             [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
             [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
             [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wparam, IntPtr lparam);
+            public delegate bool EnumChildProc(IntPtr hwnd, IntPtr lparam);
+            [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr lparam);
+            // Flutter 的视图窗口盖满客户区，真实鼠标命中问的是它（不是顶层窗口）。
+            public static IntPtr FirstChild(IntPtr parent) {
+              IntPtr found = IntPtr.Zero;
+              EnumChildWindows(parent, delegate(IntPtr hwnd, IntPtr lparam) {
+                found = hwnd;
+                return false;
+              }, IntPtr.Zero);
+              return found;
+            }
             [StructLayout(LayoutKind.Sequential)]
             public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
             public static IntPtr Main(uint pid) {
@@ -140,6 +151,11 @@ jobs:
           $style = [HrsWin]::GetWindowLong($hwnd, -16)
           if (($style -band 0x00040000) -eq 0) { throw '窗口没有 WS_THICKFRAME' }
 
+          # 命中测试要打给 Flutter 视图（子窗口）——那才是真实输入路径。
+          $target = [HrsWin]::FirstChild($hwnd)
+          if ($target -eq [IntPtr]::Zero) { $target = $hwnd }
+          Write-Host "hit-test target hwnd = $target (top = $hwnd)"
+
           function Hit-Test([IntPtr]$h, [int]$x, [int]$y) {
             $lp = [IntPtr](($y -shl 16) -bor ($x -band 0xFFFF))
             return ([HrsWin]::SendMessage($h, 0x0084, [IntPtr]::Zero, $lp)).ToInt32()
@@ -166,12 +182,16 @@ jobs:
               @('topright',     ($rect.Right - 4), ($rect.Top + 3),   14),
               @('bottomleft',   ($rect.Left + 3),  ($rect.Bottom - 4),16),
               @('bottomright',  ($rect.Right - 4), ($rect.Bottom - 4),17),
-              @('center',       $midX,             $midY,             1)
+              @('center',       $midX,             $midY,             1),
+              # 没有标题栏：顶部 28 DIP 的空白带必须回 HTCAPTION（拖窗），
+              # 右上角控件区必须回 HTCLIENT（按钮还得能点）。
+              @('dragstrip',    $midX,             ($rect.Top + 12),  2),
+              @('controls',     ($rect.Right - 24),($rect.Top + 46),  1)
             )
             $report = @()
             $allOk = $true
             foreach ($case in $probe) {
-              $got = Hit-Test $hwnd $case[1] $case[2]
+              $got = Hit-Test $target $case[1] $case[2]
               $report += "$($case[0])=$got"
               if ($got -ne $case[3]) { $allOk = $false }
             }

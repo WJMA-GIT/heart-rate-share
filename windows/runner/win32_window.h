@@ -96,6 +96,15 @@ class Win32Window {
   // 透明精简态进出：进之前记下完整界面的矩形，退出时原样还原。
   void ApplyCompact(bool compact);
 
+  // 无边框窗口的命中测试：八像素边框缩放 + 顶部拖拽带 + 其余交给 Flutter。
+  LRESULT HitTestWindow(LPARAM lparam);
+
+  // Flutter 视图窗口的子类过程：客户区被它整块盖住，鼠标命中只会问它，
+  // 所以缩放/拖拽的判定必须挂在它上面（不是顶层窗口）。
+  static LRESULT CALLBACK HitTestSubclass(HWND hwnd, UINT message,
+                                          WPARAM wparam, LPARAM lparam,
+                                          UINT_PTR id, DWORD_PTR ref);
+
   bool quit_on_close_ = false;
 
   // 最小客户区（DIP）：Dart 侧按 0.8–1.6 的 UI 缩放推过来，默认 720×480。
