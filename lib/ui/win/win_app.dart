@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
@@ -90,7 +91,7 @@ final class _WinAppState extends State<WinApp> {
   void _onChange() {
     if (!mounted) return;
     setState(() {});
-    _syncOverlay();
+    unawaited(_syncOverlay());
   }
 
   Future<void> _loadPreferences() async {
@@ -136,35 +137,33 @@ final class _WinAppState extends State<WinApp> {
   }
 
   /// 悬浮窗：连接才显示；数据每秒最多推一次。
-  void _syncOverlay() {
+  Future<void> _syncOverlay() async {
     final channel = _overlayChannel;
     if (channel == null) return;
-    final connected = _controller.connected;
-    if (!connected) {
-      if (_overlayShown) {
-        _overlayShown = false;
-        channel.invokeMethod<void>('showOverlay', false).catchError((_) {});
+    final connected = _controllerOrNull?.connected ?? false;
+    try {
+      if (!connected) {
+        if (_overlayShown) {
+          _overlayShown = false;
+          await channel.invokeMethod<void>('showOverlay', false);
+        }
+        return;
       }
-      return;
+      if (!_overlayShown) {
+        _overlayShown = true;
+        StartupLog.info('overlay: show requested');
+        await channel.invokeMethod<void>('showOverlay', true);
+      }
+      final now = DateTime.now();
+      final last = _lastOverlayPush;
+      if (last != null && now.difference(last) < const Duration(seconds: 1)) {
+        return;
+      }
+      _lastOverlayPush = now;
+      await channel.invokeMethod<void>('setOverlay', _overlayPayload());
+    } catch (error) {
+      StartupLog.info('overlay: channel failed: $error');
     }
-    if (!_overlayShown) {
-      _overlayShown = true;
-      StartupLog.info('overlay: show requested');
-      channel.invokeMethod<void>('showOverlay', true).catchError((error) {
-        StartupLog.info('overlay: showOverlay failed: $error');
-      });
-    }
-    final now = DateTime.now();
-    final last = _lastOverlayPush;
-    if (last != null && now.difference(last) < const Duration(seconds: 1)) {
-      return;
-    }
-    _lastOverlayPush = now;
-    channel
-        .invokeMethod<void>('setOverlay', _overlayPayload())
-        .catchError((Object error) {
-          StartupLog.info('overlay: setOverlay failed: $error');
-        });
   }
 
   Map<String, Object?> _overlayPayload() {
@@ -223,7 +222,7 @@ final class _WinAppState extends State<WinApp> {
 
   @override
   Widget build(BuildContext context) {
-    _syncOverlay();
+    unawaited(_syncOverlay());
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: WinTheme.data(),
