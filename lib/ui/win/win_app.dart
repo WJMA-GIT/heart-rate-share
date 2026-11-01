@@ -43,7 +43,7 @@ final class _WinAppState extends State<WinApp> {
   String _version = '—';
   double _bpmFont = _defaultBpmFont;
   bool _showChart = true;
-  _Section _section = _Section.heart;
+  WinSection _section = WinSection.heart;
 
   MethodChannel? _overlayChannel;
   bool _overlayShown = false;
@@ -68,7 +68,7 @@ final class _WinAppState extends State<WinApp> {
         ..setMethodCallHandler((call) async {
           if (call.method == 'overlayDisconnect') {
             StartupLog.info('overlay: disconnect from overlay window');
-            await _controller?.disconnectAll();
+            await _controller.disconnectAll();
             if (mounted) setState(() {});
           }
           return null;
@@ -139,7 +139,7 @@ final class _WinAppState extends State<WinApp> {
   void _syncOverlay() {
     final channel = _overlayChannel;
     if (channel == null) return;
-    final connected = _controller?.connected ?? false;
+    final connected = _controller.connected;
     if (!connected) {
       if (_overlayShown) {
         _overlayShown = false;
@@ -211,8 +211,8 @@ final class _WinAppState extends State<WinApp> {
   @override
   void dispose() {
     _overlayChannel?.setMethodCallHandler(null);
-    _controller?.removeListener(_onChange);
-    if (_owns) _controller?.dispose();
+    _controller.removeListener(_onChange);
+    if (_owns) _controller.dispose();
     super.dispose();
   }
 
@@ -238,7 +238,7 @@ final class _WinAppState extends State<WinApp> {
   }
 }
 
-enum _Section { heart, room, settings }
+enum WinSection { heart, room, settings }
 
 // ---------------------------------------------------------------- 设计令牌
 
@@ -298,8 +298,8 @@ final class HomeView extends StatelessWidget {
 
   final WinController controller;
   final Object? fatal;
-  final _Section section;
-  final ValueChanged<_Section> onSection;
+  final WinSection section;
+  final ValueChanged<WinSection> onSection;
   final String version;
   final double bpmFont;
   final bool showChart;
@@ -342,15 +342,15 @@ final class HomeView extends StatelessWidget {
 
   Widget _page() {
     switch (section) {
-      case _Section.heart:
+      case WinSection.heart:
         return _HeartPage(
           controller: controller,
           bpmFont: bpmFont,
           showChart: showChart,
         );
-      case _Section.room:
+      case WinSection.room:
         return _RoomPage(controller: controller, bpmFont: bpmFont);
-      case _Section.settings:
+      case WinSection.settings:
         return _SettingsPage(
           controller: controller,
           version: version,
@@ -367,8 +367,8 @@ final class HomeView extends StatelessWidget {
 final class _Tabs extends StatelessWidget {
   const _Tabs({required this.section, required this.onSelect});
 
-  final _Section section;
-  final ValueChanged<_Section> onSelect;
+  final WinSection section;
+  final ValueChanged<WinSection> onSelect;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -377,16 +377,16 @@ final class _Tabs extends StatelessWidget {
     child: Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _tab(Icons.favorite, '心率', _Section.heart),
+        _tab(Icons.favorite, '心率', WinSection.heart),
         const SizedBox(width: 12),
-        _tab(Icons.groups_outlined, '房间', _Section.room),
+        _tab(Icons.groups_outlined, '房间', WinSection.room),
         const SizedBox(width: 12),
-        _tab(Icons.tune, '设置', _Section.settings),
+        _tab(Icons.tune, '设置', WinSection.settings),
       ],
     ),
   );
 
-  Widget _tab(IconData icon, String label, _Section target) {
+  Widget _tab(IconData icon, String label, WinSection target) {
     final selected = section == target;
     return InkWell(
       borderRadius: BorderRadius.circular(999),
