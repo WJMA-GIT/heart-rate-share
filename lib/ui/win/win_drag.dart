@@ -64,11 +64,12 @@ void setWindowClientSize(double width, double height) =>
 
 /// 可拖动区（DIP，相对窗口左上角）：只有这块返回 HTCAPTION。
 /// 必须显式给：按"空白区"猜会把按钮一起判成拖动区，点击就全丢。
-void setWindowDragRect(double x, double y, double width, double height) => _post(
-  _wmAppDragRect,
-  (y.round() << 16) | (x.round() & 0xFFFF),
-  (height.round() << 16) | (width.round() & 0xFFFF),
-);
+void setWindowDragRect(double x, double y, double width, double height) =>
+    _post(
+      _wmAppDragRect,
+      (y.round() << 16) | (x.round() & 0xFFFF),
+      (height.round() << 16) | (width.round() & 0xFFFF),
+    );
 
 void _post(int message, int wparam, int lparam) {
   if (!Platform.isWindows) return;
