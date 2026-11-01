@@ -172,7 +172,10 @@ void CleanOlderVersions(const std::wstring& appRoot, const std::wstring& keep) {
     if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
       const std::wstring name = data.cFileName;
       if (name == L"." || name == L".." || name == keep || name == newestOther) continue;
-      if (name.size() != 8) continue;
+      // 老版本按版本名建的目录（如 1.0.15）也一起清掉：那里放的是上次的旧构建，
+      // 留着只会让人以为"更新了却没变"。
+      const bool legacy = name[0] >= L'0' && name[0] <= L'9' && name.find(L'.') != std::wstring::npos;
+      if (name.size() != 8 && !legacy) continue;
       std::wstring cmd = L"cmd.exe /c rmdir /s /q \"" + appRoot + L"\\" + name + L"\"";
       RunAndWait(cmd);
     }
