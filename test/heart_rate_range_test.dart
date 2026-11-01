@@ -23,6 +23,57 @@ double _yRange(List<int> bpms) {
 }
 
 void main() {
+  group('曲线随采样更新（用户报「还是直线、刻度不动」）', () {
+    test('60 → 65 → 72 → 85：点数增加、x 严格递增、量程与刻度跟着变', () {
+      final series = HeartRateSeries();
+      final base = DateTime.utc(2026, 11, 3, 8);
+      final tickSnapshots = <List<int>>[];
+      for (final (i, bpm) in [60, 65, 72, 85].indexed) {
+        series.add(
+          HeartRatePoint(
+            at: base.add(Duration(seconds: i)),
+            bpm: bpm,
+          ),
+        );
+        final polyline = normalizedPolyline(series);
+        final lastPoint = polyline.segments.last.last;
+        if (i > 0) {
+          // x 必须推进（否则所有点压在同一 x 上 = 一条竖线/直线）
+          expect(lastPoint.dx, greaterThan(0));
+        }
+        tickSnapshots.add(heartRateTicks(series.range));
+      }
+      expect(series.points.length, 4, reason: '点数必须增加（数据要真的进来）');
+      expect(series.range.high, greaterThanOrEqualTo(85));
+      expect(
+        tickSnapshots.first,
+        isNot(equals(tickSnapshots.last)),
+        reason: '刻度必须随着量程变化',
+      );
+    });
+
+    test('未来时间戳的脏采样不会把后续采样全部吞掉', () {
+      final series = HeartRateSeries();
+      final base = DateTime.utc(2026, 11, 3, 9);
+      series.add(HeartRatePoint(at: base, bpm: 60));
+      // 一条"来自未来"的脏点（设备时钟偏差）：旧实现会把后面所有正常采样都判为"更早"丢掉
+      series.add(
+        HeartRatePoint(at: base.add(const Duration(days: 2)), bpm: 70),
+      );
+      for (var i = 1; i <= 5; i++) {
+        series.add(
+          HeartRatePoint(
+            at: base.add(Duration(seconds: i)),
+            bpm: 60 + i * 3,
+          ),
+        );
+      }
+      expect(series.points.length, greaterThan(3), reason: '脏点之后正常采样仍必须能进入序列');
+      expect(series.points.last.bpm, 75);
+      expect(series.range.high, greaterThanOrEqualTo(75));
+    });
+  });
+
   group('连续爬升不裁切（用户报的「超过 60 就变直线」）', () {
     test('60 → 75 → 90：每个采样都在绘制区内，右端持续前进', () {
       final series = HeartRateSeries();

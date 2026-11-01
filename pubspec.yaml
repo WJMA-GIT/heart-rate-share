@@ -1,7 +1,7 @@
 name: heartrate
 description: Local-network heart-rate sharing MVP.
 publish_to: none
-version: 1.0.15+1000115
+version: 1.0.15+1000116
 
 environment:
   sdk: ">=3.13.0 <4.0.0"

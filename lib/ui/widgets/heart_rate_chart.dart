@@ -67,13 +67,38 @@ final class HeartRateSeries {
   void addSample(HeartRateSample sample) =>
       add(HeartRatePoint(at: sample.receivedAt, bpm: sample.bpm));
 
+  /// 容忍的时间倒挂：设备时钟抖动/通知乱序常在 1–2 秒级。
+  static const clockTolerance = Duration(seconds: 5);
+
   void add(HeartRatePoint point) {
+    final now = DateTime.now();
+    var at = point.at;
+    // 未来时间（设备时钟偏差/脏数据）会**永久毒化**曲线：后面所有正常采样都"比它早"而被丢，
+    // 结果就是一条不动的直线、刻度也不变（用户实测现象）。这里把未来时间夹回 now。
+    if (at.isAfter(now.add(clockTolerance))) {
+      at = now;
+    }
     final last = latest;
-    // 时间往回走的点直接丢弃：曲线只能按真实时间前进，不能倒着画。
-    if (last != null && point.at.isBefore(last.at)) return;
-    _points.add(point);
-    _trim(point.at);
+    if (last != null && at.isBefore(last.at)) {
+      // 小幅倒挂：夹到 last+1ms 保留（否则乱序点会被吞掉，曲线看起来不更新）；
+      // 大幅回退（> tolerance）才丢弃。
+      if (last.at.difference(at) > clockTolerance) return;
+      at = last.at.add(const Duration(milliseconds: 1));
+    }
+    _points.add(HeartRatePoint(at: at, bpm: point.bpm));
+    _trim(at);
     _revision++;
+  }
+
+  /// 调试自检：最近采样时间 / 点数 / 当前量程（默认不显示，`chartDiagnostics` 供日志或调试面板）。
+  String get chartDiagnostics {
+    final last = latest;
+    final range = rangeState;
+    final time = last == null
+        ? '-'
+        : last.at.toIso8601String().substring(11, 19);
+    return 'chart_sample bpm=${last?.bpm ?? '-'} t=$time n=${_points.length} '
+        'range=${range == null ? '-' : '${range.low.round()}-${range.high.round()}'}';
   }
 
   void clear() {

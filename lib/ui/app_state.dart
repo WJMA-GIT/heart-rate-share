@@ -183,8 +183,21 @@ final class AppState extends ChangeNotifier {
     return null;
   }
 
+  DateTime? _lastChartDiag;
+
   void _onSample(HeartRateSample value) {
     series.addSample(value);
+    // 数据是否真的进了绘制：每 10 秒最多一条，不刷屏。
+    final now = DateTime.now();
+    if (_lastChartDiag == null ||
+        now.difference(_lastChartDiag!) >= const Duration(seconds: 10)) {
+      _lastChartDiag = now;
+      AppLogger.instance.info(
+        'chart',
+        series.chartDiagnostics,
+        code: 'chart_sample',
+      );
+    }
     _publishToLan(value);
     room.report(
       bpm: value.bpm,

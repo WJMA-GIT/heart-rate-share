@@ -69,9 +69,14 @@ void main() {
     final series = HeartRateSeries();
     series.add(_point(base, 60));
     series.add(_point(base.add(const Duration(seconds: 2)), 70));
+    // 小幅倒挂（≤5s，通知乱序/时钟抖动）现在会保留并夹到 monotonic：
+    // 旧行为是丢弃，但实测"曲线不更新"正是因为乱序点被吞掉。
     series.add(_point(base.add(const Duration(seconds: 1)), 65));
-    expect(series.points.map((p) => p.bpm), [60, 70]);
-    expect(series.latest!.bpm, 70);
+    expect(series.points.map((p) => p.bpm), [60, 70, 65]);
+    expect(series.latest!.bpm, 65);
+    // 大幅回退（>5s）仍然丢弃，避免历史数据把曲线拽回去。
+    series.add(_point(base.subtract(const Duration(seconds: 30)), 40));
+    expect(series.points.map((p) => p.bpm), [60, 70, 65]);
   });
 
   test('revision 只在写入/清空时变化，避免无谓重绘', () {
