@@ -229,37 +229,46 @@ final class _WinAppState extends State<WinApp> {
                   // 窄于阈值（×缩放）就把导航折叠成图标，宽度让给内容。
                   final iconOnly =
                       constraints.maxWidth < _narrowLayoutWidth * _scale;
-                  return Stack(
-                    children: [
-                      // Positioned.fill：让 Row 拿到确定的宽高（_NavRail 里有 Spacer）。
-                      Positioned.fill(
-                        child: Row(
-                          children: [
-                            _NavRail(
-                              section: _section,
-                              iconOnly: iconOnly,
-                              onSelect: (section) =>
-                                  setState(() => _section = section),
-                              onDrag: startWindowDrag,
-                            ),
-                            Expanded(child: _page()),
-                          ],
+                  // Ctrl+滚轮调缩放（原来挂在 _TopBar 上，标题栏删掉后挪到整页）。
+                  return Listener(
+                    onPointerSignal: (event) {
+                      if (event is PointerScrollEvent &&
+                          HardwareKeyboard.instance.isControlPressed) {
+                        _bumpScale(event.scrollDelta.dy < 0 ? 0.1 : -0.1);
+                      }
+                    },
+                    child: Stack(
+                      children: [
+                        // Positioned.fill：Row 要拿到确定宽高（_NavRail 里有 Spacer）。
+                        Positioned.fill(
+                          child: Row(
+                            children: [
+                              _NavRail(
+                                section: _section,
+                                iconOnly: iconOnly,
+                                onSelect: (section) =>
+                                    setState(() => _section = section),
+                                onDrag: startWindowDrag,
+                              ),
+                              Expanded(child: _page()),
+                            ],
+                          ),
                         ),
-                      ),
-                      // 没有标题栏：退出/缩放浮在内容区右上角，顶部那条 28 DIP
-                      // 留给原生的拖拽带（win32_window.cpp: kDragStripDip）。
-                      Positioned(
-                        top: (_dragStripDip + 6) * _scale,
-                        right: 8 * _scale,
-                        child: _WindowControls(
-                          scale: _scale,
-                          onZoomIn: () => _bumpScale(0.1),
-                          onZoomOut: () => _bumpScale(-0.1),
-                          onMinimize: minimizeWindow,
-                          onClose: closeWindow,
+                        // 没有标题栏：退出/缩放浮在内容区右上角，顶部 28 DIP
+                        // 留给原生的拖拽带（win32_window.cpp: kDragStripDip）。
+                        Positioned(
+                          top: (_dragStripDip + 6) * _scale,
+                          right: 8 * _scale,
+                          child: _WindowControls(
+                            scale: _scale,
+                            onZoomIn: () => _bumpScale(0.1),
+                            onZoomOut: () => _bumpScale(-0.1),
+                            onMinimize: minimizeWindow,
+                            onClose: closeWindow,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   );
                 },
               ),
