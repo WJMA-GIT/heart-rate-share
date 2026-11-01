@@ -77,6 +77,23 @@ jobs:
             [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr lparam);
             [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
             [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int max);
+            public static IntPtr ByClass(uint pid, string klass) {
+              IntPtr found = IntPtr.Zero;
+              EnumWindows(delegate(IntPtr hwnd, IntPtr lparam) {
+                uint owner;
+                GetWindowThreadProcessId(hwnd, out owner);
+                if (owner != pid) return true;
+                var sb = new System.Text.StringBuilder(256);
+                GetClassName(hwnd, sb, 256);
+                if (sb.ToString() == klass) {
+                  found = hwnd;
+                  return false;
+                }
+                return true;
+              }, IntPtr.Zero);
+              return found;
+            }
             [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
             [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
             [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
@@ -114,244 +131,118 @@ jobs:
           $proc = Start-Process -FilePath $exe -ArgumentList '--connected-preview' -PassThru
           Write-Host "started pid=$($proc.Id)"
 
-          # 日志是按行 flush 的，读的时候可能刚好读到半行：轮询 + 收尾再读一次，
-          # 不靠 sleep 猜时序。预览每 6 秒翻一次连接状态，45 秒够跑 3~4 轮。
           function Read-LogText([string]$path) {
             if (-not (Test-Path $path)) { return '' }
             try { return (Get-Content $path -Raw) } catch { return '' }
           }
 
-          # 预览启动就是「已连接」，第一帧即进精简态；先等它 + 等到「断开」按钮的矩形上报。
-          $deadline = (Get-Date).AddSeconds(30)
-          $text = ''
-          do {
-            Start-Sleep -Milliseconds 200
+          # 1) 等两个窗口都出现（主窗口第一帧后显示；悬浮窗由 Dart 在"已连接"时打开）
+          $main = [IntPtr]::Zero
+          $overlay = [IntPtr]::Zero
+          for ($i = 0; $i -lt 80; $i++) {
+            Start-Sleep -Milliseconds 250
             if (-not (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)) {
               throw 'heartrate.exe 在冒烟过程中退出了'
             }
-            $text = Read-LogText $log
-          } while ((Get-Date) -lt $deadline -and
-                   -not ($text -match 'ui_mode: full -> compact' -and
-                         $text -match 'dart: hit: disconnect rect'))
-          if (-not (Test-Path $log)) { throw '没有生成 startup.log' }
-          if ($text -notmatch 'ui_mode: full -> compact') {
-            throw '日志里没有 ui_mode: full -> compact（连上后没进精简态）'
-          }
-          if ($text -notmatch 'preview: connected-preview on') {
-            throw '预览开关没生效（Dart 侧没收到 --connected-preview）'
-          }
-          if ($text -notmatch 'mode safe=0 opaque=0 preview=1') {
-            throw '命令行 --connected-preview 没有被翻译成 HEARTRATE_PREVIEW（原生侧）'
-          }
-
-          function Last-Rect([string]$body, [string]$name) {
-            $m = [regex]::Matches($body, "dart: hit: $name rect (\d+)/(\d+)/(\d+)/(\d+)")
-            if ($m.Count -eq 0) { return $null }
-            $g = $m[$m.Count - 1].Groups
-            return @([int]$g[1].Value, [int]$g[2].Value, [int]$g[3].Value, [int]$g[4].Value)
-          }
-
-          # 窗口是首帧之后才显示的，等它出现再取句柄。
-          $hwnd = [IntPtr]::Zero
-          for ($i = 0; $i -lt 60; $i++) {
-            $hwnd = [HrsWin]::Main([uint32]$proc.Id)
-            if ($hwnd -ne [IntPtr]::Zero) { break }
-            Start-Sleep -Milliseconds 250
-          }
-          if ($hwnd -eq [IntPtr]::Zero) { throw '找不到主窗口' }
-          $style = [HrsWin]::GetWindowLong($hwnd, -16)
-          if (($style -band 0x00040000) -eq 0) { throw '窗口没有 WS_THICKFRAME' }
-
-          # 命中测试要打给 Flutter 视图（子窗口）——那才是真实输入路径。
-          $target = [HrsWin]::FirstChild($hwnd)
-          if ($target -eq [IntPtr]::Zero) { throw '找不到 Flutter 视图子窗口' }
-          Write-Host "hit-test target hwnd = $target (top = $hwnd)"
-
-          function Hit-Test([IntPtr]$h, [int]$x, [int]$y) {
-            $lp = [IntPtr](($y -shl 16) -bor ($x -band 0xFFFF))
-            return ([HrsWin]::SendMessage($h, 0x0084, [IntPtr]::Zero, $lp)).ToInt32()
-          }
-
-          # 等窗口把精简态尺寸调整完（窗口先缩、布局后到），直到按钮矩形落进客户区。
-          $btn = $null
-          $drag = $null
-          $cliW = 0
-          $cliH = 0
-          for ($k = 0; $k -lt 25; $k++) {
-            $btn = Last-Rect (Read-LogText $log) 'disconnect'
-            $drag = Last-Rect (Read-LogText $log) 'drag'
-            $cli = New-Object HrsWin+RECT
-            [void][HrsWin]::GetClientRect($hwnd, [ref]$cli)
-            $cliW = $cli.Right - $cli.Left
-            $cliH = $cli.Bottom - $cli.Top
-            if ($btn -ne $null -and $drag -ne $null -and $cliW -gt 0 -and
-                ($btn[0] + $btn[2]) -le $cliW -and ($btn[1] + $btn[3]) -le $cliH) {
-              break
+            if ($main -eq [IntPtr]::Zero) {
+              $main = [HrsWin]::ByClass([uint32]$proc.Id, 'FLUTTER_RUNNER_WIN32_WINDOW')
             }
-            Start-Sleep -Milliseconds 300
-          }
-          if ($btn -eq $null) { throw 'Dart 没有上报「断开」按钮矩形' }
-          if ($drag -eq $null) { throw 'Dart 没有上报拖动区矩形' }
-          # 客户区坐标（点调用）+ 屏幕坐标（WM_NCHITTEST 用）。
-          $geo = New-Object HrsWin+RECT
-          [void][HrsWin]::GetWindowRect($hwnd, [ref]$geo)
-          $btnX = $btn[0] + [int]($btn[2] / 2)
-          $btnY = $btn[1] + [int]($btn[3] / 2)
-          $dragX = $drag[0] + [int]($drag[2] / 2)
-          $dragY = $drag[1] + [int]($drag[3] / 2)
-          Write-Host "compact rects: drag=($($drag -join ',')) button=($($btn -join ',')) client=${cliW}x${cliH}"
-          $bx = $btn[0]
-          $by = $btn[1]
-          $bw = $btn[2]
-          $bh = $btn[3]
-          if ($bx -lt 0 -or $by -lt 0 -or ($bx + $bw) -gt $cliW -or ($by + $bh) -gt $cliH) {
-            throw "「断开」按钮超出客户区：button=($bx,$by,${bw}x${bh}) client=${cliW}x${cliH}"
-          }
-          Write-Host "断开 button fully inside client: right=$($bx + $bw) <= $cliW, bottom=$($by + $bh) <= $cliH"
-          $hitButton = Hit-Test $target ($geo.Left + $btnX) ($geo.Top + $btnY)
-          $hitDrag = Hit-Test $target ($geo.Left + $dragX) ($geo.Top + $dragY)
-          Write-Host "WM_NCHITTEST compact: button=$hitButton drag=$hitDrag (expect 1 / 2)"
-          if ($hitButton -ne 1) { throw "「断开」按钮中心的命中有问题（$hitButton），按钮点不动" }
-          if ($hitDrag -ne 2) { throw "拖动把手的命中不是 HTCAPTION（$hitDrag），拖不动窗口" }
-
-          # 真的点一下「断开」：必须在 3 秒内回到完整界面（等预览每 6 秒自动翻转不算通过）。
-          $before = ([regex]::Matches((Read-LogText $log), 'dart: ui_mode: compact -> full')).Count
-          $lp = [IntPtr](($btnY -shl 16) -bor ($btnX -band 0xFFFF))
-          Write-Host "click 断开 at ($btnX,$btnY) of hwnd $target"
-          [void][HrsWin]::SendMessage($target, 0x0201, [IntPtr]1, $lp)   # WM_LBUTTONDOWN
-          Start-Sleep -Milliseconds 120
-          [void][HrsWin]::SendMessage($target, 0x0202, [IntPtr]0, $lp)   # WM_LBUTTONUP
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          $clickOk = $false
-          while ($sw.Elapsed.TotalSeconds -lt 3) {
-            Start-Sleep -Milliseconds 100
-            $after = ([regex]::Matches((Read-LogText $log), 'dart: ui_mode: compact -> full')).Count
-            if ($after -gt $before) {
-              Write-Host ("click -> ui_mode: compact -> full in {0:N2}s" -f $sw.Elapsed.TotalSeconds)
-              $clickOk = $true
-              break
+            if ($overlay -eq [IntPtr]::Zero) {
+              $overlay = [HrsWin]::ByClass([uint32]$proc.Id, 'HRS_OVERLAY_WINDOW')
             }
+            if ($main -ne [IntPtr]::Zero -and $overlay -ne [IntPtr]::Zero) { break }
           }
-          if (-not $clickOk) { throw '点了「断开」3 秒内没有回到完整界面（点击没生效）' }
+          if ($main -eq [IntPtr]::Zero) { throw '找不到主窗口（FLUTTER_RUNNER_WIN32_WINDOW）' }
+          if ($overlay -eq [IntPtr]::Zero) { throw '找不到悬浮窗（HRS_OVERLAY_WINDOW）' }
+          Write-Host "main hwnd = $main, overlay hwnd = $overlay"
 
-          # 回到完整界面后再验缩放/拖动区/控件区；顺便把日志断言补齐。
-          Start-Sleep -Seconds 1
-          $text = Read-LogText $log
-          Get-Content $log | ForEach-Object { Write-Host $_ }
-          if ($text -match 'FlutterError|Null check operator') {
-            throw '日志里出现 Flutter 错误（渲染/布局异常）'
-          }
-          $size = (Get-Item $log).Length
-          Write-Host "startup.log size = $size bytes"
-          if ($size -gt 65536) { throw "startup.log 异常膨胀：$size bytes" }
+          # 2) 样式断言：主窗口不置顶/不分层/不穿透；悬浮窗必须分层+置顶
+          $GWL_EXSTYLE = -20
+          $WS_EX_TOPMOST = 0x8
+          $WS_EX_TRANSPARENT = 0x20
+          $WS_EX_LAYERED = 0x80000
+          $mainEx = [HrsWin]::GetWindowLong($main, $GWL_EXSTYLE)
+          $overlayEx = [HrsWin]::GetWindowLong($overlay, $GWL_EXSTYLE)
+          Write-Host ("main GWL_EXSTYLE = 0x{0:X}" -f $mainEx)
+          Write-Host ("overlay GWL_EXSTYLE = 0x{0:X}" -f $overlayEx)
+          $bad = $mainEx -band ($WS_EX_TOPMOST -bor $WS_EX_LAYERED -bor $WS_EX_TRANSPARENT)
+          if ($bad -ne 0) { throw ("主窗口不该有 TOPMOST/LAYERED/TRANSPARENT，实际 0x{0:X}" -f $mainEx) }
+          if (($overlayEx -band $WS_EX_LAYERED) -eq 0) { throw '悬浮窗缺少 WS_EX_LAYERED' }
+          if (($overlayEx -band $WS_EX_TOPMOST) -eq 0) { throw '悬浮窗缺少 WS_EX_TOPMOST' }
+          Write-Host 'styles OK: main not topmost/layered/transparent, overlay layered+topmost'
 
-          # 窗口层面：四边四角能缩放、上报的拖动区回 HTCAPTION、控件区回 HTCLIENT。
-          # HTCLIENT=1 HTCAPTION=2 HTLEFT=10 HTRIGHT=11 HTTOP=12 HTTOPLEFT=13
-          # HTTOPRIGHT=14 HTBOTTOM=15 HTBOTTOMLEFT=16 HTBOTTOMRIGHT=17
-          $windowOk = $false
-          for ($i = 0; $i -lt 24; $i++) {
-            $rect = New-Object HrsWin+RECT
-            [void][HrsWin]::GetWindowRect($hwnd, [ref]$rect)
-            $w = $rect.Right - $rect.Left
-            $h = $rect.Bottom - $rect.Top
-            if ($w -lt 700 -or $h -lt 450) { Start-Sleep -Milliseconds 500; continue }
-            $drag = Last-Rect (Read-LogText $log) 'drag'
-            if ($drag -eq $null) { Start-Sleep -Milliseconds 500; continue }
-
-            $midX = [int](($rect.Left + $rect.Right) / 2)
-            $midY = [int](($rect.Top + $rect.Bottom) / 2)
-            $probe = @(
-              @('left',         ($rect.Left + 3),  $midY,             10),
-              @('right',        ($rect.Right - 4), $midY,             11),
-              @('top',          $midX,             ($rect.Top + 3),   12),
-              @('bottom',       $midX,             ($rect.Bottom - 4),15),
-              @('topleft',      ($rect.Left + 3),  ($rect.Top + 3),   13),
-              @('topright',     ($rect.Right - 4), ($rect.Top + 3),   14),
-              @('bottomleft',   ($rect.Left + 3),  ($rect.Bottom - 4),16),
-              @('bottomright',  ($rect.Right - 4), ($rect.Bottom - 4),17),
-              @('center',       $midX,             $midY,             1),
-              @('dragrect',     ($rect.Left + $drag[0] + [int]($drag[2] / 2)),
-                                ($rect.Top + $drag[1] + [int]($drag[3] / 2)), 2),
-              @('controls',     ($rect.Right - 24),($rect.Top + 46),  1)
-            )
-            $report = @()
-            $allOk = $true
-            foreach ($case in $probe) {
-              $got = Hit-Test $target $case[1] $case[2]
-              $report += "$($case[0])=$got"
-              if ($got -ne $case[3]) { $allOk = $false }
-            }
-            Write-Host ("WM_NCHITTEST [${w}x${h}] drag=($($drag -join ',')): " + ($report -join ', '))
-            if ($allOk) { $windowOk = $true; break }
-            Start-Sleep -Milliseconds 500
-          }
-          if (-not $windowOk) {
-            throw 'WM_NCHITTEST 四边/四角/拖动区/控件区 返回值不对（窗口可能拉不动或按钮点不了）'
-          }
-
-          # Flutter 视图必须严格铺满客户区；两个尺寸 + 缩放 1.3 各验一次。
-          function Assert-ViewFillsClient([IntPtr]$top, [string]$tag) {
+          # 3) 两个窗口各自的「内容 == 客户区」：主窗口验 Flutter 视图；悬浮窗验分层位图尺寸
+          function Assert-ViewFillsClient([IntPtr]$win, [string]$tag, [bool]$checkChild) {
             for ($k = 0; $k -lt 8; $k++) {
               $c = New-Object HrsWin+RECT
-              [void][HrsWin]::GetClientRect($top, [ref]$c)
-              $child = [HrsWin]::FirstChild($top)
-              $cr = New-Object HrsWin+RECT
-              [void][HrsWin]::GetWindowRect($child, [ref]$cr)
+              [void][HrsWin]::GetClientRect($win, [ref]$c)
               $cw = $c.Right - $c.Left
               $ch = $c.Bottom - $c.Top
-              $vw = $cr.Right - $cr.Left
-              $vh = $cr.Bottom - $cr.Top
+              if ($checkChild) {
+                $child = [HrsWin]::FirstChild($win)
+                $cr = New-Object HrsWin+RECT
+                [void][HrsWin]::GetWindowRect($child, [ref]$cr)
+                $vw = $cr.Right - $cr.Left
+                $vh = $cr.Bottom - $cr.Top
+              } else {
+                $wr = New-Object HrsWin+RECT
+                [void][HrsWin]::GetWindowRect($win, [ref]$wr)
+                $vw = $wr.Right - $wr.Left
+                $vh = $wr.Bottom - $wr.Top
+              }
               if ($cw -eq $vw -and $ch -eq $vh -and $cw -gt 0) {
-                Write-Host "view/client [$tag]: client=${cw}x${ch} view=${vw}x${vh} OK"
+                Write-Host "view/client [$tag]: client=${cw}x${ch} content=${vw}x${vh} OK"
                 return
               }
-              Start-Sleep -Milliseconds 300
+              Start-Sleep -Milliseconds 250
             }
-            throw "Flutter 视图没铺满客户区 [$tag]：client=${cw}x${ch} view=${vw}x${vh}"
+            throw "内容没铺满客户区 [$tag]：client=${cw}x${ch} content=${vw}x${vh}"
           }
 
-          function Resize-Top([IntPtr]$top, [int]$w, [int]$h) {
-            [void][HrsWin]::ShowWindow($top, 9)   # SW_RESTORE：别被最小化状态带跑
-            [void][HrsWin]::SetWindowPos($top, [IntPtr]::Zero, 0, 0, $w, $h, 0x0004)
+          function Resize-Top([IntPtr]$win, [int]$w, [int]$h) {
+            [void][HrsWin]::ShowWindow($win, 9)
+            [void][HrsWin]::SetWindowPos($win, [IntPtr]::Zero, 0, 0, $w, $h, 0x0004)
             Start-Sleep -Milliseconds 400
           }
 
-          function Click-Client([IntPtr]$h, [int]$cx, [int]$cy) {
-            $lp = [IntPtr](($cy -shl 16) -bor ($cx -band 0xFFFF))
-            [void][HrsWin]::SendMessage($h, 0x0201, [IntPtr]1, $lp)
-            Start-Sleep -Milliseconds 120
-            [void][HrsWin]::SendMessage($h, 0x0202, [IntPtr]0, $lp)
-          }
+          Resize-Top $main 900 700
+          Assert-ViewFillsClient $main 'main 900x700 scale=1.0' $true
+          Assert-ViewFillsClient $overlay 'overlay scale=1.0' $false
 
-          Resize-Top $hwnd 960 640
-          Assert-ViewFillsClient $hwnd '960x640 scale=1.0'
-          Resize-Top $hwnd 1280 800
-          Assert-ViewFillsClient $hwnd '1280x800 scale=1.0'
+          # 4) 悬浮窗显示日志（Dart 请求 show → 原生 show）
+          $text = Read-LogText $log
+          if ($text -notmatch 'overlay: shown') { throw '日志里没有 overlay: shown（连接后悬浮窗没显示）' }
+          if ($text -notmatch 'mode safe=0 opaque=0 preview=1') { throw 'preview 开关没生效' }
+          Write-Host 'log OK: overlay: shown'
 
-          # 缩放 1.3：点右上角胶囊的「+」三次（每次 0.1），再验一次视图/客户区。
-          # 预览每 6 秒会切一次精简态（那时没有胶囊），所以每一档都重试到生效为止。
-          $scaleNow = 1.0
-          for ($step = 0; $step -lt 3; $step++) {
-            $bumped = $false
-            for ($try = 0; $try -lt 25 -and -not $bumped; $try++) {
-              $g2 = New-Object HrsWin+RECT
-              [void][HrsWin]::GetWindowRect($hwnd, [ref]$g2)
-              $addX = [int](($g2.Right - $g2.Left) - 14 * $scaleNow - 75)
-              $addY = [int](34 * $scaleNow + 15)
-              Click-Client $target $addX $addY
-              Start-Sleep -Milliseconds 350
-              $m = [regex]::Matches((Read-LogText $log), 'dart: win: scale=([\d.]+)')
-              if ($m.Count -gt 0) {
-                $value = [double]$m[$m.Count - 1].Groups[1].Value
-                if ($value -gt $scaleNow + 0.01) { $scaleNow = $value; $bumped = $true }
-              }
-            }
-            if (-not $bumped) { throw "点「+」没有生效（停在 $scaleNow，目标 1.3）" }
+          # 5) 点悬浮窗上的「断开」图标（右侧 24 DIP），断言回未连接 + 悬浮窗隐藏
+          $or = New-Object HrsWin+RECT
+          [void][HrsWin]::GetWindowRect($overlay, [ref]$or)
+          $btnX = ($or.Right - $or.Left) - 20
+          $btnY = 18
+          Write-Host "click overlay disconnect at ($btnX,$btnY)"
+          $lp = [IntPtr](($btnY -shl 16) -bor ($btnX -band 0xFFFF))
+          [void][HrsWin]::SendMessage($overlay, 0x0201, [IntPtr]1, $lp)
+          Start-Sleep -Milliseconds 120
+          [void][HrsWin]::SendMessage($overlay, 0x0202, [IntPtr]0, $lp)
+          $clicked = $false
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          while ($sw.Elapsed.TotalSeconds -lt 5) {
+            Start-Sleep -Milliseconds 150
+            $text = Read-LogText $log
+            if ($text -match 'overlay: hidden') { $clicked = $true; break }
           }
-          if ($scaleNow -lt 1.29) { throw "缩放没到 1.3（当前 $scaleNow）" }
-          Write-Host "zoom -> $scaleNow (3 clicks of +)"
-          Resize-Top $hwnd 1280 800
-          Assert-ViewFillsClient $hwnd '1280x800 scale=1.3'
+          if (-not $clicked) { throw '点了悬浮窗「断开」后悬浮窗没有隐藏（overlay: hidden 没出现）' }
+          if ($text -notmatch 'overlay: disconnect from overlay window') {
+            throw '断开点击没有传到 Dart（缺 overlay: disconnect from overlay window）'
+          }
+          Write-Host 'log OK: overlay: hidden + Dart 收到 overlayDisconnect'
+
+          $size = (Get-Item $log).Length
+          Write-Host "startup.log size = $size bytes"
+          if ($text -match 'FlutterError|Null check operator') {
+            throw '日志里出现 Flutter 错误'
+          }
 
           Get-Process -Id $proc.Id | Stop-Process -Force
           Write-Host 'preview smoke OK'

@@ -12,6 +12,7 @@ add_executable(${BINARY_NAME} WIN32
   "utils.cpp"
   "win32_window.cpp"
   "window_state.cpp"
+  "overlay_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
   "Runner.rc"
   "runner.exe.manifest"
@@ -37,6 +38,8 @@ target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 # commctrl：SetWindowSubclass / DefSubclassProc（无边框窗口的命中测试）
 target_link_libraries(${BINARY_NAME} PRIVATE "comctl32.lib")
+# GDI+：悬浮窗逐像素 alpha 自绘（抗锯齿文字/折线）
+target_link_libraries(${BINARY_NAME} PRIVATE "gdiplus.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.

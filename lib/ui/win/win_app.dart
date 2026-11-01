@@ -8,7 +8,6 @@ import '../../core/l10n/strings_zh.dart';
 import '../../core/platform/app_version.dart';
 import '../../core/platform/startup_log.dart';
 import '../../theme/app_theme.dart';
-import '../../theme/overlay_metrics.dart';
 import '../../room/protocol.dart';
 import '../widgets/heart_rate_chart.dart';
 
@@ -44,9 +43,13 @@ final class _WinAppState extends State<WinApp> {
   _Section _section = _Section.connect;
   double _scale = 1.0;
 
-  /// 当前界面形态（`full` / `compact`）：只用来打切换日志，顺带防重复推窗口消息。
-  String _uiMode = 'full';
+  /// 窗口/悬浮窗尺寸签名的去重标记。
   String _pushedMetrics = '';
+
+  /// Dart ↔ 原生（悬浮窗）：setOverlay / showOverlay，原生回调 overlayDisconnect。
+  MethodChannel? _overlayChannel;
+  bool _overlayShown = false;
+  DateTime? _lastOverlayPush;
 
   /// 设置页显示的版本号：启动读一次（PackageInfo → exe 版本资源），不再手写死。
   String _version = '—';
@@ -123,48 +126,88 @@ final class _WinAppState extends State<WinApp> {
 
   WinController get _controller => _controllerOrNull!;
 
-  /// 窗口形态跟着「连接状态 + 缩放」走：最小尺寸、精简态内容尺寸、切换日志。
-  /// 用签名去重，只有真的变了才发一次 Win32 消息（每帧都发会把消息队列灌满）。
+  /// 主窗口只做两件事：最小尺寸跟着缩放走、把悬浮窗要显示的行推过去。
+  /// （连接后不再把主窗口变成全透明条带——那是独立悬浮窗的活。）
   void _syncWindow(bool connected) {
-    final mode = connected ? 'compact' : 'full';
-    final rows = _compactRowCount();
-    final signature = '$mode/${_scale.toStringAsFixed(1)}/$rows/$_bpmFontSize';
-    if (mode != _uiMode) {
-      StartupLog.info('ui_mode: $_uiMode -> $mode');
-      _uiMode = mode;
-      _pushedMetrics = '';
+    final signature = '${_scale.toStringAsFixed(1)}/${_bpmFontSize.toInt()}';
+    if (signature != _pushedMetrics) {
+      _pushedMetrics = signature;
+      setWindowMinSize(_minWindowWidth * _scale, _minWindowHeight * _scale);
     }
-    if (signature == _pushedMetrics) return;
-    _pushedMetrics = signature;
-    final metrics = _CompactMetrics(_bpmFontSize);
-    if (!connected) {
-      setCompactWindow(false);
-      // 最小尺寸跟着字号走：字号调大后 720×480 也放不下大数字。
-      final minWidth = metrics.width > _minWindowWidth
-          ? metrics.width
-          : _minWindowWidth;
-      final minHeight = _minWindowHeight;
-      setWindowMinSize(minWidth * _scale, minHeight * _scale);
-      return;
-    }
-    // 全透明精简态：宽度按内容、高度按行数（8 行封顶）。
-    final width = metrics.width * _scale;
-    final height = metrics.height(rows) * _scale;
-    _pushDragRect(
-      Rect.fromLTWH(0, 0, _CompactMetrics.handleWidth * _scale, height),
-    );
-    setCompactWindow(true);
-    setWindowMinSize(width, height);
-    setWindowClientSize(width, height);
+    _syncOverlay(connected);
   }
 
-  /// 精简态要几行：蓝牙一行 + 房间成员，8 行封顶（多出来的人靠滚轮看）。
-  int _compactRowCount() {
+  /// 悬浮窗：连接才显示；数据每秒最多推一次，避免把 MethodChannel 刷满。
+  void _syncOverlay(bool connected) {
+    final channel = _overlayChannel;
+    if (channel == null) return;
+    if (!connected) {
+      if (_overlayShown) {
+        _overlayShown = false;
+        channel.invokeMethod<void>('showOverlay', false).catchError((_) {});
+      }
+      return;
+    }
+    if (!_overlayShown) {
+      _overlayShown = true;
+      channel.invokeMethod<void>('showOverlay', true).catchError((_) {});
+    }
+    final now = DateTime.now();
+    final last = _lastOverlayPush;
+    if (last != null && now.difference(last) < const Duration(seconds: 1)) {
+      return;
+    }
+    _lastOverlayPush = now;
+    channel.invokeMethod<void>('setOverlay', _overlayPayload()).catchError((_) {});
+  }
+
+  /// (name, bpm, 归一化折线点)：归一化在 Dart 侧算好，原生只负责画。
+  Map<String, Object?> _overlayPayload() {
     final controller = _controllerOrNull;
-    if (controller == null) return 0;
-    final extra = controller.transport == WinTransport.ble ? 1 : 0;
-    final rows = extra + controller.members.length;
-    return rows > _CompactMetrics.maxRows ? _CompactMetrics.maxRows : rows;
+    final rows = <Map<String, Object?>>[];
+    if (controller != null) {
+      if (controller.transport == WinTransport.ble) {
+        rows.add(
+          _overlayRow('蓝牙设备', controller.ownBpm, controller.ownSeries, true),
+        );
+      }
+      for (final member in controller.members) {
+        rows.add(
+          _overlayRow(
+            member.report.displayName,
+            member.online ? member.report.bpm : null,
+            controller.seriesFor(member.report.memberId),
+            member.online,
+          ),
+        );
+      }
+    }
+    return {'font': _bpmFontSize, 'rows': rows};
+  }
+
+  Map<String, Object?> _overlayRow(
+    String name,
+    int? bpm,
+    HeartRateSeries series,
+    bool online,
+  ) {
+    final polyline = normalizedPolyline(series);
+    final ys = <double>[];
+    final gaps = <int>[];
+    for (var index = 0; index < polyline.segments.length; index++) {
+      final segment = polyline.segments[index];
+      for (var point = 0; point < segment.length; point++) {
+        ys.add(segment[point].dy.clamp(0.0, 1.0));
+        gaps.add(point == 0 && index > 0 ? 1 : 0);
+      }
+    }
+    return {
+      'name': name,
+      'bpm': online ? (bpm?.toString() ?? '--') : '--',
+      'online': online,
+      'ys': ys,
+      'gaps': gaps,
+    };
   }
 
   @override
@@ -178,6 +221,15 @@ final class _WinAppState extends State<WinApp> {
       _owns = widget.controller == null;
       _controllerOrNull = controller;
       controller.addListener(_onChange);
+      _overlayChannel = const MethodChannel('hrs/win')
+        ..setMethodCallHandler((call) async {
+          if (call.method == 'overlayDisconnect') {
+            StartupLog.info('overlay: disconnect from overlay window');
+            await _controllerOrNull?.disconnectAll();
+            if (mounted) setState(() {});
+          }
+          return null;
+        });
       _loadScale();
       _loadVersion();
       _loadBpmFontSize();
@@ -212,6 +264,7 @@ final class _WinAppState extends State<WinApp> {
 
   @override
   void dispose() {
+    _overlayChannel?.setMethodCallHandler(null);
     _controllerOrNull?.removeListener(_onChange);
     if (_owns) _controllerOrNull?.dispose();
     super.dispose();
@@ -233,17 +286,6 @@ final class _WinAppState extends State<WinApp> {
       ),
       home: _fatal != null
           ? _FatalView(error: '$_fatal')
-          // 连上就只留心率行（游戏内挂机不能有干扰）；断开自动回完整界面。
-          : connected
-          ? _CompactView(
-              controller: _controller,
-              scale: _scale,
-              bpmFont: _bpmFontSize,
-              onDisconnect: () async {
-                await _controller.disconnectAll();
-                if (mounted) setState(() {});
-              },
-            )
           : Scaffold(
               backgroundColor: WinColors.bg,
               body: LayoutBuilder(
@@ -587,278 +629,6 @@ const double _dragStripDip = 28;
 double _clampBpmFontSize(double value) {
   final stepped = (value / bpmFontSizeStep).round() * bpmFontSizeStep;
   return stepped.clamp(minBpmFontSize, maxBpmFontSize).toDouble();
-}
-
-/// 精简态尺寸：宽度按内容、高度按行数。列宽/行高跟着**心率字号**走
-/// （字号可调到 96，列宽不联动就会把数字挤折行）；名称/折线列仍用
-/// `OverlayMetrics` 的共享宽度，不另立一套。
-final class _CompactMetrics {
-  const _CompactMetrics(this.bpmFont);
-
-  final double bpmFont;
-
-  static const double padding = 8;
-  static const double verticalPadding = 6;
-  static const double gap = 6;
-
-  /// 左侧拖拽把手（只用来拖窗，不参与内容列宽）。
-  static const double handleWidth = 16;
-  static const double nameWidth = OverlayMetrics.nameWidth;
-  static const double chartWidth = OverlayMetrics.chartWidth;
-  static const int maxRows = 8;
-
-  /// 行高至少是字号的一点四倍，否则大字会贴边；不小于共享行高。
-  double get rowHeight => bpmFont * 1.4 > OverlayMetrics.rowHeight
-      ? bpmFont * 1.4
-      : OverlayMetrics.rowHeight;
-
-  /// 三位数字要放得下（等宽估算 0.62 em），不小于共享列宽。
-  double get bpmWidth => bpmFont * 1.86 > OverlayMetrics.bpmWidth
-      ? bpmFont * 1.86
-      : OverlayMetrics.bpmWidth;
-
-  /// 断开按钮：不超过行高的 80%，也不超过 36；footer 是它 + 间距。
-  double get buttonHeight => rowHeight * 0.8 > 36 ? 36 : rowHeight * 0.8;
-
-  /// 图标 + 「断开」两个字 + 左右内边距都放得下，否则 label 被裁。
-  double get buttonWidth => 96;
-  double get footer => buttonHeight + 8;
-
-  /// 内容列（把手 + 名称 + 心率 + 间距 + 折线），按钮比它窄时以它为准。
-  double get _rowWidth => nameWidth + bpmWidth + gap + chartWidth;
-
-  double get width =>
-      handleWidth +
-      (buttonWidth > _rowWidth ? buttonWidth : _rowWidth) +
-      padding * 2;
-
-  double height(int rows) =>
-      rowHeight * (rows < 1 ? 1 : rows) + footer + verticalPadding * 2;
-}
-
-/// 连接成功后的全透明精简态：只有「名称 | 心率大字 | 迷你折线 | 断开」。
-/// 背景用颜色键色（原生 LWA_COLORKEY 抠掉），内容不透明；整块可拖动。
-final class _CompactView extends StatefulWidget {
-  const _CompactView({
-    required this.controller,
-    required this.scale,
-    required this.bpmFont,
-    required this.onDisconnect,
-  });
-
-  final WinController controller;
-  final double scale;
-  final double bpmFont;
-  final Future<void> Function() onDisconnect;
-
-  @override
-  State<_CompactView> createState() => _CompactViewState();
-}
-
-final class _CompactViewState extends State<_CompactView> {
-  final _disconnectKey = GlobalKey();
-  String _lastButtonRect = '';
-
-  WinController get controller => widget.controller;
-  double get scale => widget.scale;
-  double get bpmFont => widget.bpmFont;
-  Future<void> Function() get onDisconnect => widget.onDisconnect;
-
-  @override
-  Widget build(BuildContext context) {
-    final metrics = _CompactMetrics(bpmFont);
-    // 冒烟要按真实布局去点「断开」，所以把它的矩形报进 startup.log。
-    WidgetsBinding.instance.addPostFrameCallback((_) => _reportButtonRect());
-    final rows = <Widget>[];
-    if (controller.transport == WinTransport.ble) {
-      rows.add(
-        _CompactRow(
-          name: '蓝牙设备',
-          bpm: controller.ownBpm,
-          series: controller.ownSeries,
-          scale: scale,
-          metrics: metrics,
-          online: true,
-        ),
-      );
-    }
-    for (final member in controller.members) {
-      rows.add(
-        _CompactRow(
-          name: member.report.displayName,
-          bpm: member.online ? member.report.bpm : null,
-          series: controller.seriesFor(member.report.memberId),
-          scale: scale,
-          metrics: metrics,
-          online: member.online,
-        ),
-      );
-    }
-    final maxListHeight = metrics.rowHeight * _CompactMetrics.maxRows * scale;
-    // 断开：不超过行高 80%（也不超过 36），和行等高对齐，不再是大胶囊。
-    final buttonHeight = metrics.buttonHeight * scale;
-    return GestureDetector(
-      onPanStart: (_) => startWindowDrag(),
-      behavior: HitTestBehavior.translucent,
-      child: ColoredBox(
-        // 与原生颜色键一致：这一色被抠成全透明，内容照常不透明。
-        color: const Color(0xFF010203),
-        // 用户手动把窗口拉小时整块可滚，不至于变成黄色溢出条。
-        child: SingleChildScrollView(
-          padding: EdgeInsets.symmetric(
-            horizontal: _CompactMetrics.padding * scale,
-            vertical: _CompactMetrics.verticalPadding * scale,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 拖动区：左侧留一条不可见的窄栏（原生按上报矩形判 HTCAPTION）。
-                  // 这里不画任何把手图标——两排点阵在 12px 下就是用户看到的"两条双实线"。
-                  SizedBox(
-                    width: _CompactMetrics.handleWidth * scale,
-                    height: maxListHeight > metrics.rowHeight * scale
-                        ? metrics.rowHeight * scale
-                        : maxListHeight,
-                  ),
-                  Expanded(
-                    child: ConstrainedBox(
-                      // 8 行封顶：人再多也只占这么高，滚轮在这里滚，不拖整窗。
-                      constraints: BoxConstraints(maxHeight: maxListHeight),
-                      child: SingleChildScrollView(
-                        child: Column(children: rows),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              SizedBox(height: 4 * scale),
-              Align(
-                alignment: Alignment.centerRight,
-                child: SizedBox(
-                  key: _disconnectKey,
-                  width: metrics.buttonWidth * scale,
-                  height: buttonHeight,
-                  child: TextButton.icon(
-                    onPressed: onDisconnect,
-                    style: TextButton.styleFrom(
-                      // 不透明底：色键透明区上的透明按钮会被系统判成穿透，点不到。
-                      backgroundColor: WinColors.surface,
-                      padding: EdgeInsets.symmetric(horizontal: 8 * scale),
-                      minimumSize: Size(0, buttonHeight),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.compact,
-                      side: const BorderSide(color: WinColors.line),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    icon: Icon(
-                      Icons.link_off,
-                      size: buttonHeight * 0.5,
-                      color: WinColors.textDim,
-                    ),
-                    label: Text(
-                      '断开',
-                      style: winText(
-                        buttonHeight * 0.42,
-                        color: WinColors.textDim,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _reportButtonRect() {
-    if (!mounted) return;
-    final box = _disconnectKey.currentContext?.findRenderObject();
-    if (box is! RenderBox || !box.hasSize) return;
-    final origin = box.localToGlobal(Offset.zero);
-    final rect = [
-      origin.dx.round(),
-      origin.dy.round(),
-      box.size.width.round(),
-      box.size.height.round(),
-    ].join('/');
-    if (rect == _lastButtonRect) return;
-    _lastButtonRect = rect;
-    StartupLog.info('hit: disconnect rect $rect');
-  }
-}
-
-/// 三列固定宽：名称 / 心率右对齐 / 折线（宽度都来自 `_CompactMetrics`，
-/// 窗口就是按它算出来的）。名字再长也不挤动数值。
-final class _CompactRow extends StatelessWidget {
-  const _CompactRow({
-    required this.name,
-    required this.bpm,
-    required this.series,
-    required this.scale,
-    required this.metrics,
-    required this.online,
-  });
-
-  final String name;
-  final int? bpm;
-  final HeartRateSeries series;
-  final double scale;
-  final _CompactMetrics metrics;
-  final bool online;
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-    height: metrics.rowHeight * scale,
-    child: Row(
-      // 名称、数字、折线一律垂直居中，数字不贴顶。
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        SizedBox(
-          width: _CompactMetrics.nameWidth * scale,
-          child: Tooltip(
-            message: name,
-            child: Text(
-              name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: winText(
-                AppTextSize.caption,
-                color: online ? Colors.white : WinColors.textDim,
-              ),
-            ),
-          ),
-        ),
-        SizedBox(
-          width: metrics.bpmWidth * scale,
-          child: Text(
-            online ? (bpm?.toString() ?? '--') : '--',
-            textAlign: TextAlign.right,
-            maxLines: 1,
-            softWrap: false,
-            style: winText(
-              metrics.bpmFont * scale,
-              color: online ? WinColors.accent : WinColors.textDim,
-              weight: FontWeight.bold,
-            ).copyWith(height: 1.1),
-          ),
-        ),
-        SizedBox(width: _CompactMetrics.gap * scale),
-        SizedBox(
-          width: _CompactMetrics.chartWidth * scale,
-          height: metrics.rowHeight * 0.62 * scale,
-          child: CustomPaint(painter: WinSparklinePainter(series)),
-        ),
-      ],
-    ),
-  );
 }
 
 // ---------------------------------------------------------------- 连接页
