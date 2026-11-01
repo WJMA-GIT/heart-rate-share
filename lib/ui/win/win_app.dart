@@ -109,8 +109,7 @@ final class _WinAppState extends State<WinApp> {
   void _syncWindow(bool connected) {
     final mode = connected ? 'compact' : 'full';
     final rows = _compactRowCount();
-    final signature =
-        '$mode/${_scale.toStringAsFixed(1)}/$rows/$_bpmFontSize';
+    final signature = '$mode/${_scale.toStringAsFixed(1)}/$rows/$_bpmFontSize';
     if (mode != _uiMode) {
       StartupLog.info('ui_mode: $_uiMode -> $mode');
       _uiMode = mode;
@@ -122,8 +121,9 @@ final class _WinAppState extends State<WinApp> {
     if (!connected) {
       setCompactWindow(false);
       // 最小尺寸跟着字号走：字号调大后 720×480 也放不下大数字。
-      final minWidth =
-          metrics.width > _minWindowWidth ? metrics.width : _minWindowWidth;
+      final minWidth = metrics.width > _minWindowWidth
+          ? metrics.width
+          : _minWindowWidth;
       final minHeight = _minWindowHeight;
       setWindowMinSize(minWidth * _scale, minHeight * _scale);
       return;
@@ -381,16 +381,8 @@ final class _WindowControls extends StatelessWidget {
           tooltip: '缩小界面（Ctrl+滚轮）',
           onTap: onZoomOut,
         ),
-        _WinButton(
-          icon: Icons.add,
-          tooltip: '放大界面（Ctrl+滚轮）',
-          onTap: onZoomIn,
-        ),
-        _WinButton(
-          icon: Icons.minimize,
-          tooltip: '最小化',
-          onTap: onMinimize,
-        ),
+        _WinButton(icon: Icons.add, tooltip: '放大界面（Ctrl+滚轮）', onTap: onZoomIn),
+        _WinButton(icon: Icons.minimize, tooltip: '最小化', onTap: onMinimize),
         _WinButton(
           icon: Icons.power_settings_new,
           tooltip: '退出',
@@ -1316,9 +1308,9 @@ final class SettingsView extends StatelessWidget {
                   value: bpmFont,
                   min: minBpmFontSize,
                   max: maxBpmFontSize,
-                  divisions: ((maxBpmFontSize - minBpmFontSize) /
-                          bpmFontSizeStep)
-                      .round(),
+                  divisions:
+                      ((maxBpmFontSize - minBpmFontSize) / bpmFontSizeStep)
+                          .round(),
                   label: '${bpmFont.round()}',
                   onChanged: onBpmFontChanged,
                 ),
