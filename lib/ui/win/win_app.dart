@@ -74,6 +74,7 @@ final class _WinAppState extends State<WinApp> {
   Future<void> _bumpScale(double delta) async {
     final next = (_scale + delta).clamp(0.8, 1.6);
     setState(() => _scale = double.parse(next.toStringAsFixed(1)));
+    StartupLog.info('win: scale=${_scale.toStringAsFixed(1)}');
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_scaleKey, _scale);
@@ -384,7 +385,13 @@ TextStyle winText(
   double size, {
   Color color = WinColors.text,
   FontWeight? weight,
-}) => TextStyle(fontSize: size, color: color, fontWeight: weight);
+}) => TextStyle(
+  fontSize: size,
+  color: color,
+  fontWeight: weight,
+  // 名称/心率下面无论如何都不能出现实线：主题与字体回退都不许改这一条。
+  decoration: TextDecoration.none,
+);
 
 // ------------------------------------------------------- 右上角窗口控件（无标题栏）
 
@@ -612,11 +619,18 @@ final class _CompactMetrics {
 
   /// 断开按钮：不超过行高的 80%，也不超过 36；footer 是它 + 间距。
   double get buttonHeight => rowHeight * 0.8 > 36 ? 36 : rowHeight * 0.8;
-  double get buttonWidth => 64;
+
+  /// 图标 + 「断开」两个字 + 左右内边距都放得下，否则 label 被裁。
+  double get buttonWidth => 96;
   double get footer => buttonHeight + 8;
 
+  /// 内容列（把手 + 名称 + 心率 + 间距 + 折线），按钮比它窄时以它为准。
+  double get _rowWidth => nameWidth + bpmWidth + gap + chartWidth;
+
   double get width =>
-      handleWidth + nameWidth + bpmWidth + gap + chartWidth + padding * 2;
+      handleWidth +
+      (buttonWidth > _rowWidth ? buttonWidth : _rowWidth) +
+      padding * 2;
 
   double height(int rows) =>
       rowHeight * (rows < 1 ? 1 : rows) + footer + verticalPadding * 2;
@@ -702,20 +716,13 @@ final class _CompactViewState extends State<_CompactView> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 拖拽把手：只有这一列是拖动区（原生按上报矩形判 HTCAPTION）。
+                  // 拖动区：左侧留一条不可见的窄栏（原生按上报矩形判 HTCAPTION）。
+                  // 这里不画任何把手图标——两排点阵在 12px 下就是用户看到的"两条双实线"。
                   SizedBox(
                     width: _CompactMetrics.handleWidth * scale,
                     height: maxListHeight > metrics.rowHeight * scale
                         ? metrics.rowHeight * scale
                         : maxListHeight,
-                    child: Align(
-                      alignment: Alignment.topCenter,
-                      child: Icon(
-                        Icons.drag_indicator,
-                        size: 12 * scale,
-                        color: WinColors.textDim,
-                      ),
-                    ),
                   ),
                   Expanded(
                     child: ConstrainedBox(

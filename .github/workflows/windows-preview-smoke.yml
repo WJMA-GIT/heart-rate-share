@@ -78,6 +78,9 @@ jobs:
             [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
             [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
             [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+            [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+            [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+            [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int cmd);
             [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wparam, IntPtr lparam);
             public delegate bool EnumChildProc(IntPtr hwnd, IntPtr lparam);
             [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr lparam);
@@ -169,13 +172,25 @@ jobs:
             return ([HrsWin]::SendMessage($h, 0x0084, [IntPtr]::Zero, $lp)).ToInt32()
           }
 
-          # 等窗口把精简态尺寸调整完，再按上报的矩形去命中/点击。
-          Start-Sleep -Milliseconds 600
-
-          # 精简态：拖动把手必须回 HTCAPTION，其余（含「断开」按钮中心）必须回 HTCLIENT。
-          $btn = Last-Rect (Read-LogText $log) 'disconnect'
+          # 等窗口把精简态尺寸调整完（窗口先缩、布局后到），直到按钮矩形落进客户区。
+          $btn = $null
+          $drag = $null
+          $cliW = 0
+          $cliH = 0
+          for ($k = 0; $k -lt 25; $k++) {
+            $btn = Last-Rect (Read-LogText $log) 'disconnect'
+            $drag = Last-Rect (Read-LogText $log) 'drag'
+            $cli = New-Object HrsWin+RECT
+            [void][HrsWin]::GetClientRect($hwnd, [ref]$cli)
+            $cliW = $cli.Right - $cli.Left
+            $cliH = $cli.Bottom - $cli.Top
+            if ($btn -ne $null -and $drag -ne $null -and $cliW -gt 0 -and
+                ($btn[0] + $btn[2]) -le $cliW -and ($btn[1] + $btn[3]) -le $cliH) {
+              break
+            }
+            Start-Sleep -Milliseconds 300
+          }
           if ($btn -eq $null) { throw 'Dart 没有上报「断开」按钮矩形' }
-          $drag = Last-Rect (Read-LogText $log) 'drag'
           if ($drag -eq $null) { throw 'Dart 没有上报拖动区矩形' }
           # 客户区坐标（点调用）+ 屏幕坐标（WM_NCHITTEST 用）。
           $geo = New-Object HrsWin+RECT
@@ -184,7 +199,15 @@ jobs:
           $btnY = $btn[1] + [int]($btn[3] / 2)
           $dragX = $drag[0] + [int]($drag[2] / 2)
           $dragY = $drag[1] + [int]($drag[3] / 2)
-          Write-Host "compact rects: drag=($($drag -join ',')) button=($($btn -join ','))"
+          Write-Host "compact rects: drag=($($drag -join ',')) button=($($btn -join ',')) client=${cliW}x${cliH}"
+          $bx = $btn[0]
+          $by = $btn[1]
+          $bw = $btn[2]
+          $bh = $btn[3]
+          if ($bx -lt 0 -or $by -lt 0 -or ($bx + $bw) -gt $cliW -or ($by + $bh) -gt $cliH) {
+            throw "「断开」按钮超出客户区：button=($bx,$by,${bw}x${bh}) client=${cliW}x${cliH}"
+          }
+          Write-Host "断开 button fully inside client: right=$($bx + $bw) <= $cliW, bottom=$($by + $bh) <= $cliH"
           $hitButton = Hit-Test $target ($geo.Left + $btnX) ($geo.Top + $btnY)
           $hitDrag = Hit-Test $target ($geo.Left + $dragX) ($geo.Top + $dragY)
           Write-Host "WM_NCHITTEST compact: button=$hitButton drag=$hitDrag (expect 1 / 2)"
@@ -265,6 +288,70 @@ jobs:
           if (-not $windowOk) {
             throw 'WM_NCHITTEST 四边/四角/拖动区/控件区 返回值不对（窗口可能拉不动或按钮点不了）'
           }
+
+          # Flutter 视图必须严格铺满客户区；两个尺寸 + 缩放 1.3 各验一次。
+          function Assert-ViewFillsClient([IntPtr]$top, [string]$tag) {
+            for ($k = 0; $k -lt 8; $k++) {
+              $c = New-Object HrsWin+RECT
+              [void][HrsWin]::GetClientRect($top, [ref]$c)
+              $child = [HrsWin]::FirstChild($top)
+              $cr = New-Object HrsWin+RECT
+              [void][HrsWin]::GetWindowRect($child, [ref]$cr)
+              $cw = $c.Right - $c.Left
+              $ch = $c.Bottom - $c.Top
+              $vw = $cr.Right - $cr.Left
+              $vh = $cr.Bottom - $cr.Top
+              if ($cw -eq $vw -and $ch -eq $vh -and $cw -gt 0) {
+                Write-Host "view/client [$tag]: client=${cw}x${ch} view=${vw}x${vh} OK"
+                return
+              }
+              Start-Sleep -Milliseconds 300
+            }
+            throw "Flutter 视图没铺满客户区 [$tag]：client=${cw}x${ch} view=${vw}x${vh}"
+          }
+
+          function Resize-Top([IntPtr]$top, [int]$w, [int]$h) {
+            [void][HrsWin]::ShowWindow($top, 9)   # SW_RESTORE：别被最小化状态带跑
+            [void][HrsWin]::SetWindowPos($top, [IntPtr]::Zero, 0, 0, $w, $h, 0x0004)
+            Start-Sleep -Milliseconds 400
+          }
+
+          function Click-Client([IntPtr]$h, [int]$cx, [int]$cy) {
+            $lp = [IntPtr](($cy -shl 16) -bor ($cx -band 0xFFFF))
+            [void][HrsWin]::SendMessage($h, 0x0201, [IntPtr]1, $lp)
+            Start-Sleep -Milliseconds 120
+            [void][HrsWin]::SendMessage($h, 0x0202, [IntPtr]0, $lp)
+          }
+
+          Resize-Top $hwnd 960 640
+          Assert-ViewFillsClient $hwnd '960x640 scale=1.0'
+          Resize-Top $hwnd 1280 800
+          Assert-ViewFillsClient $hwnd '1280x800 scale=1.0'
+
+          # 缩放 1.3：点右上角胶囊的「+」三次（每次 0.1），再验一次视图/客户区。
+          # 预览每 6 秒会切一次精简态（那时没有胶囊），所以每一档都重试到生效为止。
+          $scaleNow = 1.0
+          for ($step = 0; $step -lt 3; $step++) {
+            $bumped = $false
+            for ($try = 0; $try -lt 25 -and -not $bumped; $try++) {
+              $g2 = New-Object HrsWin+RECT
+              [void][HrsWin]::GetWindowRect($hwnd, [ref]$g2)
+              $addX = [int](($g2.Right - $g2.Left) - 14 * $scaleNow - 75)
+              $addY = [int](34 * $scaleNow + 15)
+              Click-Client $target $addX $addY
+              Start-Sleep -Milliseconds 350
+              $m = [regex]::Matches((Read-LogText $log), 'dart: win: scale=([\d.]+)')
+              if ($m.Count -gt 0) {
+                $value = [double]$m[$m.Count - 1].Groups[1].Value
+                if ($value -gt $scaleNow + 0.01) { $scaleNow = $value; $bumped = $true }
+              }
+            }
+            if (-not $bumped) { throw "点「+」没有生效（停在 $scaleNow，目标 1.3）" }
+          }
+          if ($scaleNow -lt 1.29) { throw "缩放没到 1.3（当前 $scaleNow）" }
+          Write-Host "zoom -> $scaleNow (3 clicks of +)"
+          Resize-Top $hwnd 1280 800
+          Assert-ViewFillsClient $hwnd '1280x800 scale=1.3'
 
           Get-Process -Id $proc.Id | Stop-Process -Force
           Write-Host 'preview smoke OK'
