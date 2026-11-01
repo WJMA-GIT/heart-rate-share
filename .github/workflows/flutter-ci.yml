@@ -252,7 +252,9 @@ jobs:
           # 直接读 pubspec，别依赖 job outputs（跨 job 串号时会出现 expected 1.0.11 这种）
           $ver = ((Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9A-Za-z.\-]+)\+').Matches.Groups[1].Value)
           if ([string]::IsNullOrWhiteSpace($ver)) { throw 'cannot parse version from pubspec.yaml' }
-          Write-Host "resolved from pubspec: $ver"
+          $build = (Select-String -Path pubspec.yaml -Pattern '^version:\s*[0-9A-Za-z.\-]+\+(\d+)').Matches.Groups[1].Value
+          $armBuild = [int]$build + 2000   # --split-per-abi: arm64-v8a = base + 2000
+          Write-Host "resolved from pubspec: $ver build=$build (arm64 versionCode=$armBuild)"
           $stage = 'build/win-stage'
           Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $stage | Out-Null
@@ -274,7 +276,13 @@ jobs:
           $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
           if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found at $vcvars" }
           Remove-Item loader.exe -Force -ErrorAction SilentlyContinue
-          cmd /c "call `"$vcvars`" >nul && cl /nologo /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE windows\loader\loader.cpp /Fe:loader.exe /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup user32.lib bcrypt.lib"
+          $fileVersion = "$ver.$build"
+          Write-Host "loader version resource: $fileVersion"
+          $rc = Get-Content windows/loader/loader.rc.in -Raw
+          $parts = $ver.Split('.')
+          $rc = $rc.Replace('@VERSION_MAJOR@', $parts[0]).Replace('@VERSION_MINOR@', $(if ($parts.Length -gt 1) { $parts[1] } else { '0' })).Replace('@VERSION_PATCH@', $(if ($parts.Length -gt 2) { $parts[2] } else { '0' })).Replace('@VERSION@', $ver).Replace('@BUILD@', "$build")
+          Set-Content -Path 'windows/loader/version_gen.rc' -Value $rc -Encoding ASCII
+          cmd /c "call `"$vcvars`" >nul && cl /nologo /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE windows\loader\loader.cpp windows\loader\version_gen.rc /Fe:loader.exe /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup user32.lib bcrypt.lib"
           if (-not (Test-Path 'loader.exe')) { throw 'loader.exe not produced' }
           Write-Host "loader.exe built: $((Get-Item loader.exe).Length) bytes"
 
@@ -291,7 +299,7 @@ jobs:
           [BitConverter]::GetBytes([uint64]$payloadBytes.Length).CopyTo($footer, 24)
           $sha.CopyTo($footer, 32)
           [Text.Encoding]::UTF8.GetBytes($ver).CopyTo($footer, 64)
-          $out = "heartrate-$ver-windows-x64.exe"
+          $out = "heartrate-$ver-windows-x64-b$armBuild.exe"
           $fs = [IO.File]::Create($out)
           $fs.Write($loaderBytes, 0, $loaderBytes.Length)
           $fs.Write($payloadBytes, 0, $payloadBytes.Length)
@@ -302,6 +310,12 @@ jobs:
           $probe = Join-Path $env:TEMP "hrs-verprobe-$ver"
           Remove-Item $probe -Recurse -Force -ErrorAction SilentlyContinue
           Expand-Archive -Path $payload -DestinationPath $probe -Force
+          # 外层 loader 的版本资源（Explorer 属性里看到的那个）也必须对上
+          $outerVersion = (Get-Item $out).VersionInfo.FileVersion
+          Write-Host "loader FileVersion='$outerVersion' (expected '$fileVersion')"
+          if ([string]::IsNullOrWhiteSpace($outerVersion) -or $outerVersion -notlike "$ver*") {
+            throw "loader 版本取到 '$outerVersion'，期望 '$ver.*'，不一致"
+          }
           $inner = Join-Path $probe 'heartrate.exe'
           if (-not (Test-Path $inner)) { throw "payload 里没有 heartrate.exe" }
           $fileVersion = (Get-Item $inner).VersionInfo.FileVersion
@@ -318,7 +332,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ github.sha }}
-          path: heartrate-*-windows-x64.exe
+          path: heartrate-*-windows-x64*.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -330,8 +344,10 @@ jobs:
           # 直接读 pubspec，别依赖 job outputs（跨 job 串号时会出现 expected 1.0.11 这种）
           $ver = ((Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9A-Za-z.\-]+)\+').Matches.Groups[1].Value)
           if ([string]::IsNullOrWhiteSpace($ver)) { throw 'cannot parse version from pubspec.yaml' }
-          Write-Host "resolved from pubspec: $ver"
-          $exe = (Resolve-Path "heartrate-$ver-windows-x64.exe").Path
+          $build = (Select-String -Path pubspec.yaml -Pattern '^version:\s*[0-9A-Za-z.\-]+\+(\d+)').Matches.Groups[1].Value
+          $armBuild = [int]$build + 2000   # --split-per-abi: arm64-v8a = base + 2000
+          Write-Host "resolved from pubspec: $ver build=$build (arm64 versionCode=$armBuild)"
+          $exe = (Resolve-Path "heartrate-$ver-windows-x64*.exe" | Select-Object -First 1).Path
           # 中文 + 空格路径（用户机器就是 D:\默认下载）
           $cnDir = Join-Path $env:SystemDrive '默认下载 冒烟'
           Remove-Item $cnDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -540,7 +556,7 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
                  --title "共享心率 $TAG" --generate-notes \
-                 --notes "资产：arm64 APK（可覆盖安装，签名不变）+ Windows 单文件 exe（双击直开，自解到 %LOCALAPPDATA%\\heartrate\\app\\<版本>，无安装/无注册表/无管理员）（无截图资产：UI 以真机验收为准）。"
+                 --notes "Windows 构建号 $armBuild（第一次运行前建议先删除 %LOCALAPPDATA%\\heartrate 以清掉旧解压目录）。资产：arm64 APK（可覆盖安装，签名不变）+ Windows 单文件 exe（双击直开，自解到 %LOCALAPPDATA%\\heartrate\\app\\<版本>，无安装/无注册表/无管理员）（无截图资产：UI 以真机验收为准）。"
           gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | .name + "  " + (.size|tostring) + " bytes"'
