@@ -148,7 +148,13 @@ jobs:
             return @([int]$g[1].Value, [int]$g[2].Value, [int]$g[3].Value, [int]$g[4].Value)
           }
 
-          $hwnd = [HrsWin]::Main([uint32]$proc.Id)
+          # 窗口是首帧之后才显示的，等它出现再取句柄。
+          $hwnd = [IntPtr]::Zero
+          for ($i = 0; $i -lt 60; $i++) {
+            $hwnd = [HrsWin]::Main([uint32]$proc.Id)
+            if ($hwnd -ne [IntPtr]::Zero) { break }
+            Start-Sleep -Milliseconds 250
+          }
           if ($hwnd -eq [IntPtr]::Zero) { throw '找不到主窗口' }
           $style = [HrsWin]::GetWindowLong($hwnd, -16)
           if (($style -band 0x00040000) -eq 0) { throw '窗口没有 WS_THICKFRAME' }
