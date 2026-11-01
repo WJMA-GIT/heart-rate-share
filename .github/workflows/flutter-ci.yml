@@ -562,12 +562,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets[]|select(.name|test("windows-x64"))|"\(.name) \(.size) \(.digest // "no-digest")"' || true
-          for id in $(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets[]|select(.name|test("windows-x64"))|.id' 2>/dev/null || true); do
-            echo "deleting stale asset id=$id"
-            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"
-          done
+          # Release 可能是 draft/尚未创建（tag 刚重指时常见）→ 这一步必须容错，
+          # 否则 `gh api` 的 404 文本会被当成 asset id 传下去。
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+            --jq '.assets[]|select(.name|test("windows-x64"))|"\(.name) \(.size) \(.digest // "no-digest")"' \
+            2>/dev/null || echo "release for $TAG not found yet (draft or new)"
+          ids=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+                  --jq '.assets[]|select(.name|test("windows-x64"))|.id' 2>/dev/null \
+                | grep -E '^[0-9]+$' || true)
+          if [ -z "$ids" ]; then
+            echo "no stale windows-x64 asset to delete"
+          else
+            for id in $ids; do
+              echo "deleting stale asset id=$id"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || echo "::warning::delete failed for $id"
+            done
+          fi
       - name: Create / update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
