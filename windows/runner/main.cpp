@@ -132,11 +132,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   flutter::DartProject project(L"data");
   std::vector<std::string> command_line_arguments = GetCommandLineArguments();
+  // 预览开关统一翻译成环境变量（loader 不透传参数时也有效）。
+  if (HasFlag(L"--connected-preview") || EnvIsOne(L"HEARTRATE_PREVIEW")) {
+    ::SetEnvironmentVariableW(L"HEARTRATE_PREVIEW", L"1");
+  }
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);
   Win32Window::Point origin(120, 120);
-  Win32Window::Size size(320, 220);
+  Win32Window::Size size(900, 700);
   if (!window.Create(L"heartrate", origin, size)) {
     Log("FATAL window.Create failed");
     ShowFatalBox("窗口创建失败（flutter_windows.dll / data 目录是否缺失？）");
@@ -149,8 +153,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   const bool safe_mode = HasFlag(L"--safe-mode") || EnvIsOne(L"HEARTRATE_SAFE_MODE");
   const bool opaque_only = HasFlag(L"--opaque") || EnvIsOne(L"HEARTRATE_OPAQUE");
+  const bool preview = EnvIsOne(L"HEARTRATE_PREVIEW");
   Log("mode", std::string("safe=") + (safe_mode ? "1" : "0") +
-                  " opaque=" + (opaque_only ? "1" : "0"));
+                  " opaque=" + (opaque_only ? "1" : "0") +
+                  " preview=" + (preview ? "1" : "0"));
 
   // 自检：主窗口必须是标准系统窗口（有标题栏、不是分层/置顶）。
   const LONG_PTR style = ::GetWindowLongPtr(hwnd, GWL_STYLE);
