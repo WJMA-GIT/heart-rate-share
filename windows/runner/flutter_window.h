@@ -3,7 +3,6 @@
 
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
-
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 
@@ -15,7 +14,6 @@
 // A window that does nothing but host a Flutter view.
 class FlutterWindow : public Win32Window {
  public:
-  // Creates a new FlutterWindow hosting a Flutter view running |project|.
   explicit FlutterWindow(const flutter::DartProject& project);
   virtual ~FlutterWindow();
 
@@ -23,19 +21,14 @@ class FlutterWindow : public Win32Window {
   void set_overlay(hrs::OverlayWindow* overlay) { overlay_ = overlay; }
 
  protected:
-  // Win32Window:
   bool OnCreate() override;
   void OnDestroy() override;
   LRESULT MessageHandler(HWND window, UINT const message, WPARAM const wparam,
                          LPARAM const lparam) noexcept override;
 
  private:
-  // The project to run.
   flutter::DartProject project_;
-
-  // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
-
   hrs::OverlayWindow* overlay_ = nullptr;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
 };

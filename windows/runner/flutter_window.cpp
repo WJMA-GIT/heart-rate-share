@@ -21,16 +21,31 @@ bool FlutterWindow::OnCreate() {
 
   RECT frame = GetClientArea();
 
-  // The size here must match the window dimensions to avoid unnecessary surface
-  // creation / destruction in the startup path.
   flutter_controller_ = std::make_unique<flutter::FlutterViewController>(
       frame.right - frame.left, frame.bottom - frame.top, project_);
-  // Ensure that basic setup of the controller was successful.
   if (!flutter_controller_->engine() || !flutter_controller_->view()) {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+
+  // 标准窗口下 Flutter 视图必须正好等于客户区；不等就是"UI 在窗口里移动"的根源。
+  {
+    RECT child{};
+    ::GetWindowRect(flutter_controller_->view()->GetNativeWindow(), &child);
+    RECT client = GetClientArea();
+    const long cw = client.right - client.left;
+    const long ch = client.bottom - client.top;
+    const long vw = child.right - child.left;
+    const long vh = child.bottom - child.top;
+    if (cw == vw && ch == vh) {
+      hrs::Log("view==client OK", std::to_string(cw) + "x" + std::to_string(ch));
+    } else {
+      hrs::Log("view/client MISMATCH",
+               "client=" + std::to_string(cw) + "x" + std::to_string(ch) +
+                   " view=" + std::to_string(vw) + "x" + std::to_string(vh));
+    }
+  }
 
   // Dart → 原生：setOverlay(rows/font) / showOverlay(bool)。
   // 原生 → Dart：overlayDisconnect（悬浮窗上点了断开）。
@@ -49,8 +64,7 @@ bool FlutterWindow::OnCreate() {
           return;
         }
         if (call.method_name() == "setOverlay") {
-          const auto* args =
-              std::get_if<flutter::EncodableMap>(call.arguments());
+          const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
           if (args == nullptr || overlay_ == nullptr) {
             result->Success();
             return;
@@ -65,8 +79,7 @@ bool FlutterWindow::OnCreate() {
           std::vector<hrs::OverlayRow> rows;
           const auto rows_it = args->find(flutter::EncodableValue("rows"));
           if (rows_it != args->end()) {
-            if (const auto* list =
-                    std::get_if<flutter::EncodableList>(&rows_it->second)) {
+            if (const auto* list = std::get_if<flutter::EncodableList>(&rows_it->second)) {
               for (const auto& item : *list) {
                 const auto* map = std::get_if<flutter::EncodableMap>(&item);
                 if (map == nullptr) continue;
@@ -130,11 +143,7 @@ bool FlutterWindow::OnCreate() {
     hrs::Log("stage: window shown");
   });
 
-  // Flutter can complete the first frame before the "show window" callback is
-  // registered. The following call ensures a frame is pending to ensure the
-  // window is shown. It is a no-op if the first frame hasn't completed yet.
   flutter_controller_->ForceRedraw();
-
   return true;
 }
 
@@ -157,12 +166,6 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       channel_->InvokeMethod("overlayDisconnect", nullptr);
     }
     return 0;
-  }
-
-  // 缩放命中（WM_NCHITTEST）先自己答：无边框 + 分层色键窗口没有系统拖拽区，
-  // 这是窗口唯一能被拉大的途径，不能让嵌入层有机会先吞掉。
-  if (message == WM_NCHITTEST || message == WM_NCCALCSIZE) {
-    return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
   }
 
   // Give Flutter, including plugins, an opportunity to handle window messages.

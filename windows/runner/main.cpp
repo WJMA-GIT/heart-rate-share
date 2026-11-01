@@ -1,4 +1,3 @@
-#include <dwmapi.h>
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
@@ -97,20 +96,6 @@ LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info) {
   return EXCEPTION_EXECUTE_HANDLER;
 }
 
-// 主窗口：无边框（用户不要标题栏），但**不置顶、不透明、非分层**。
-// 只去掉标题栏与系统菜单，保留 WS_THICKFRAME 让系统边框参与命中/缩放。
-void MakeMainWindowFrameless(HWND hwnd) {
-  if (hwnd == nullptr) return;
-  const LONG_PTR style = ::GetWindowLongPtr(hwnd, GWL_STYLE);
-  ::SetWindowLongPtr(hwnd, GWL_STYLE, style & ~(WS_CAPTION | WS_SYSMENU));
-  const COLORREF no_border = 0xFFFFFFFE;  // DWMWA_COLOR_NONE
-  ::DwmSetWindowAttribute(hwnd, 34 /* DWMWA_BORDER_COLOR */, &no_border,
-                          sizeof(no_border));
-  ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-  Log("main: frameless, not topmost, not layered");
-}
-
 bool HasFlag(const wchar_t* flag) { return ::wcsstr(::GetCommandLineW(), flag) != nullptr; }
 
 bool EnvIsOne(const wchar_t* name) {
@@ -147,35 +132,37 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   flutter::DartProject project(L"data");
   std::vector<std::string> command_line_arguments = GetCommandLineArguments();
-  // 预览开关统一翻译成环境变量（和 HEARTRATE_SAFE_MODE 一样），loader 不透传参数时也有效。
-  if (HasFlag(L"--connected-preview") || EnvIsOne(L"HEARTRATE_PREVIEW")) {
-    ::SetEnvironmentVariableW(L"HEARTRATE_PREVIEW", L"1");
-  }
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);
-  // 主窗口默认 900×700，可缩放；位置/尺寸优先用上次退出的记录。
   Win32Window::Point origin(120, 120);
-  Win32Window::Size size(900, 700);
+  Win32Window::Size size(320, 220);
   if (!window.Create(L"heartrate", origin, size)) {
     Log("FATAL window.Create failed");
     ShowFatalBox("窗口创建失败（flutter_windows.dll / data 目录是否缺失？）");
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
+
   HWND hwnd = window.GetHandle();
   Log("dpi", hwnd ? std::to_string(::GetDpiForWindow(hwnd)) : "unknown");
 
   const bool safe_mode = HasFlag(L"--safe-mode") || EnvIsOne(L"HEARTRATE_SAFE_MODE");
-  // --opaque 现在没有实际作用（悬浮窗是独立窗口，主窗口本来就全不透明），
-  // 但主 ci 的三模式冒烟按这行日志断言，字段保留。
   const bool opaque_only = HasFlag(L"--opaque") || EnvIsOne(L"HEARTRATE_OPAQUE");
-  const bool preview = EnvIsOne(L"HEARTRATE_PREVIEW");
-  Log("mode", std::string("safe=") + (safe_mode ? "1" : "0") + " opaque=" +
-                  (opaque_only ? "1" : "0") + " preview=" + (preview ? "1" : "0"));
-  MakeMainWindowFrameless(hwnd);
+  Log("mode", std::string("safe=") + (safe_mode ? "1" : "0") +
+                  " opaque=" + (opaque_only ? "1" : "0"));
 
-  // 悬浮窗：独立的原生窗口，只在「已连接」时显示（Dart 通过通道控制）。
+  // 自检：主窗口必须是标准系统窗口（有标题栏、不是分层/置顶）。
+  const LONG_PTR style = ::GetWindowLongPtr(hwnd, GWL_STYLE);
+  const LONG_PTR ex_style = ::GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+  Log("window: style",
+      std::string("caption=") + ((style & WS_CAPTION) != 0 ? "1" : "0") +
+          " thickframe=" + ((style & WS_THICKFRAME) != 0 ? "1" : "0") +
+          " layered=" + ((ex_style & WS_EX_LAYERED) != 0 ? "1" : "0") +
+          " topmost=" + ((ex_style & WS_EX_TOPMOST) != 0 ? "1" : "0") +
+          " transparent=" + ((ex_style & WS_EX_TRANSPARENT) != 0 ? "1" : "0"));
+
+  // 悬浮窗：独立原生窗口，只在「已连接」时显示（Dart 通过通道控制）。
   hrs::OverlayWindow overlay;
   if (overlay.Create(hwnd)) {
     window.set_overlay(&overlay);
