@@ -47,6 +47,14 @@ bool FlutterWindow::OnCreate() {
     }
   }
 
+  // 悬浮窗在这里创建（不是 main.cpp 注入）：成员对象，生命周期和本窗口一致，
+  // 通道回调捕获 this 拿到的就是同一个实例。
+  if (overlay_.Create(GetHandle())) {
+    Log("overlay: ready");
+  } else {
+    Log("overlay: create failed, 悬浮窗不可用（主界面不受影响）");
+  }
+
   // Dart → 原生：setOverlay(rows/font) / showOverlay(bool)。
   // 原生 → Dart：overlayDisconnect（悬浮窗上点了断开）。
   channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
@@ -55,17 +63,22 @@ bool FlutterWindow::OnCreate() {
   channel_->SetMethodCallHandler(
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        Log("channel", call.method_name() +
+                           std::string(" overlay=") +
+                           (overlay_.handle() != nullptr ? "ok" : "null"));
         if (call.method_name() == "showOverlay") {
           const auto* flag = std::get_if<bool>(call.arguments());
-          if (overlay_ != nullptr) {
-            (flag != nullptr && *flag) ? overlay_->Show() : overlay_->Hide();
+          if (flag != nullptr && *flag) {
+            overlay_.Show();
+          } else {
+            overlay_.Hide();
           }
           result->Success();
           return;
         }
         if (call.method_name() == "setOverlay") {
           const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
-          if (args == nullptr || overlay_ == nullptr) {
+          if (args == nullptr) {
             result->Success();
             return;
           }
@@ -130,7 +143,7 @@ bool FlutterWindow::OnCreate() {
               }
             }
           }
-          overlay_->SetRows(std::move(rows), font);
+          overlay_.SetRows(std::move(rows), font);
           result->Success();
           return;
         }

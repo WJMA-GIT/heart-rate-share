@@ -130,6 +130,37 @@ jobs:
           }
           "@
 
+          # 先起一次「未连接」的，抓主窗口空闲态截图；再起带 preview 的跑断言。
+          Add-Type -AssemblyName System.Drawing
+          function Save-Shot-Pre([IntPtr]$h, [string]$path) {
+            $r = New-Object HrsWin+RECT
+            [void][HrsWin]::GetWindowRect($h, [ref]$r)
+            $w = $r.Right - $r.Left
+            $hh = $r.Bottom - $r.Top
+            $bmp = New-Object System.Drawing.Bitmap($w, $hh)
+            $graphics = [System.Drawing.Graphics]::FromImage($bmp)
+            $hdc = $graphics.GetHdc()
+            [void][HrsWin]::PrintWindow($h, $hdc, 2)
+            $graphics.ReleaseHdc($hdc)
+            $graphics.Dispose()
+            $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+            $bmp.Dispose()
+            Write-Host "shot saved: $path ($w x $hh)"
+          }
+
+          $idle = Start-Process -FilePath $exe -PassThru
+          $idleMain = [IntPtr]::Zero
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Milliseconds 250
+            $idleMain = [HrsWin]::ByClass([uint32]$idle.Id, 'FLUTTER_RUNNER_WIN32_WINDOW')
+            if ($idleMain -ne [IntPtr]::Zero) { break }
+          }
+          if ($idleMain -eq [IntPtr]::Zero) { throw '未连接模式没能拉起主窗口' }
+          Start-Sleep -Seconds 3
+          Save-Shot-Pre $idleMain 'ui-main-idle.png'
+          Get-Process -Id $idle.Id -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 1
+
           $proc = Start-Process -FilePath $exe -ArgumentList '--connected-preview' -PassThru
           Write-Host "started pid=$($proc.Id)"
 
@@ -217,6 +248,14 @@ jobs:
           if ($text -notmatch 'view==client OK') { throw '启动日志里没有 view==client OK' }
           Assert-ViewFillsClient $main 'main' $true
           Assert-ViewFillsClient $overlay 'overlay' $false
+          $osize = New-Object HrsWin+RECT
+          [void][HrsWin]::GetWindowRect($overlay, [ref]$osize)
+          $ow = $osize.Right - $osize.Left
+          $oh = $osize.Bottom - $osize.Top
+          Write-Host "overlay size = ${ow}x${oh}"
+          if ($ow -lt 200 -or $oh -lt 60) {
+            throw "悬浮窗没有按内容展开（${ow}x${oh}，应 >= 200x60）"
+          }
           if ($text -notmatch 'overlay: shown') { throw '日志里没有 overlay: shown（连接后悬浮窗没显示）' }
           if ($text -notmatch 'mode safe=0 opaque=0 preview=1') { throw 'preview 开关没生效' }
           Write-Host 'log OK: window style / view==client / overlay: shown'

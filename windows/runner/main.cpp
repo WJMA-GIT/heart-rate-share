@@ -13,7 +13,6 @@
 #define HRS_VERSION "1.0.6"
 #endif
 #include "flutter_window.h"
-#include "overlay_window.h"
 #include "utils.h"
 
 namespace {
@@ -167,14 +166,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
           " layered=" + ((ex_style & WS_EX_LAYERED) != 0 ? "1" : "0") +
           " topmost=" + ((ex_style & WS_EX_TOPMOST) != 0 ? "1" : "0") +
           " transparent=" + ((ex_style & WS_EX_TRANSPARENT) != 0 ? "1" : "0"));
-
-  // 悬浮窗：独立原生窗口，只在「已连接」时显示（Dart 通过通道控制）。
-  hrs::OverlayWindow overlay;
-  if (overlay.Create(hwnd)) {
-    window.set_overlay(&overlay);
-  } else {
-    Log("overlay: create failed, 悬浮窗不可用（主界面不受影响）");
-  }
 
   Log("stage: entering message loop");
   ::MSG msg;

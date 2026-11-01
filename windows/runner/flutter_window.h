@@ -17,9 +17,6 @@ class FlutterWindow : public Win32Window {
   explicit FlutterWindow(const flutter::DartProject& project);
   virtual ~FlutterWindow();
 
-  // 由 main.cpp 在 Create() 之前注入：悬浮窗（Dart 通过通道驱动它）。
-  void set_overlay(hrs::OverlayWindow* overlay) { overlay_ = overlay; }
-
  protected:
   bool OnCreate() override;
   void OnDestroy() override;
@@ -29,7 +26,8 @@ class FlutterWindow : public Win32Window {
  private:
   flutter::DartProject project_;
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
-  hrs::OverlayWindow* overlay_ = nullptr;
+  // 悬浮窗归窗口自己所有：在 OnCreate 里创建，通道回调只认这个实例。
+  hrs::OverlayWindow overlay_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
 };
 
