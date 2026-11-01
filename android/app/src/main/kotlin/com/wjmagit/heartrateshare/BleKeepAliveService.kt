@@ -48,7 +48,6 @@ class BleKeepAliveService : Service() {
     private var overlayScroll: ScrollView? = null
     private var dynamicNameWidth = 0f
     private var dynamicBpmWidth = 0f
-    private var bpmFontSize = 48f
     private var overlayBackground: GradientDrawable? = null
     private var windowManager: WindowManager? = null
     private var prefs: SharedPreferences? = null
@@ -194,11 +193,8 @@ class BleKeepAliveService : Service() {
             textSize = dp(12).toFloat()
             typeface = Typeface.DEFAULT
         }
-        val bpmFont = (prefs?.getFloat(KEY_BPM_FONT, BPM_FONT_DEFAULT) ?: BPM_FONT_DEFAULT)
-            .coerceIn(BPM_FONT_MIN, BPM_FONT_MAX)
-        bpmFontSize = bpmFont
         val bpmPaint = Paint().apply {
-            textSize = bpmFont
+            textSize = dp(13).toFloat()
             typeface = Typeface.DEFAULT_BOLD
         }
         var longest = namePaint.measureText("宽")
@@ -268,13 +264,11 @@ class BleKeepAliveService : Service() {
                     else -> "$bpm"
                 }
                 setTextColor(if (offline) TEXT_OFFLINE else CHART_LINE_COLOR)
-                textSize = bpmFontSize
+                textSize = 13f
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.END
                 // 定宽 + 右对齐：心率位数变化时右侧折线不会左右抖。
                 width = dynamicBpmWidth.toInt()
-                // 行高跟着字号走，避免大字号被行高裁掉。
-                height = kotlin.math.max(dp(22), (bpmFontSize * 1.5f).toInt())
                 outline()
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -447,7 +441,7 @@ class BleKeepAliveService : Service() {
         }
         return builder
             .setContentTitle("正在采集心率")
-            .setContentText("保持与蓝牙设备的连接，息屏后继续共享")
+            .setContentText("保持与心率带的连接，息屏后继续共享")
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setOngoing(true)
             .build()
@@ -468,12 +462,6 @@ class BleKeepAliveService : Service() {
         // 与 lib/theme/overlay_metrics.dart 一一对应（CI 里有比对测试，改一处必须改两处）。
         private const val GAP_DP = 8
         private const val NAME_EXTRA_DP = 2
-        // 心率字号可调（与 Windows 同一套语义：24–96、步进 4、默认 48）。
-        private const val BPM_FONT_MIN = 24f
-        private const val BPM_FONT_MAX = 96f
-        private const val BPM_FONT_STEP = 4f
-        private const val BPM_FONT_DEFAULT = 48f
-        private const val KEY_BPM_FONT = "overlay.bpmFontSize"
         private const val CHART_WIDTH_DP_FALLBACK = 72
         private const val CHART_WIDTH_DP = 72
         private const val CHART_HEIGHT_DP = 20

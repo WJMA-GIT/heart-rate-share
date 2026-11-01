@@ -30,7 +30,7 @@ abstract final class Zh {
   static const adapterLabel = '蓝牙适配器';
   static const connectionStatusLabel = '连接状态';
   static const bleErrorTitle = '蓝牙连接失败，请按提示处理后重试';
-  static const bleReconnectFailed = '多次自动重连仍未成功，请确认蓝牙设备已佩戴且电量正常后重新连接。';
+  static const bleReconnectFailed = '多次自动重连仍未成功，请确认心率带已佩戴且电量正常后重新连接。';
 
   // ---- 连接方式 / 最近连接 ----
   static const cloudRoom = '云端房间';
@@ -113,13 +113,13 @@ abstract final class Zh {
       '通知：连接期间显示一条常驻通知（前台服务）。'
       '拒绝的话，切到后台后系统可能把连接冻结，心率会停止上传。';
   static const permissionBluetooth =
-      '蓝牙：扫描并连接蓝牙设备。'
+      '蓝牙：扫描并连接心率带。'
       '拒绝的话无法采集心率，其他功能仍可查看。';
   static const permissionGrant = '去授权';
   static const permissionLater = '稍后';
   static const permissionDeniedTitle = '权限不完整';
   static const permissionDeniedNotifications = '通知权限未开：后台保活能力受影响，切后台可能断连。';
-  static const permissionDeniedBluetooth = '蓝牙权限未开：无法扫描蓝牙设备。';
+  static const permissionDeniedBluetooth = '蓝牙权限未开：无法扫描心率带。';
   static const openAppSettings = '去设置里开启';
 
   // ---- 系统悬浮窗（垂直列表 + 透明度）----

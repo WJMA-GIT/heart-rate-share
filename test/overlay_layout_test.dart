@@ -104,14 +104,20 @@ void main() {
       );
     });
 
-    test('Kotlin 侧用同一偏好键与字号范围', () {
+    test('安卓侧已回退到 1.0.12 基线：不再读字号键（冻结区）', () {
       final source = File(
         'android/app/src/main/kotlin/com/wjmagit/heartrateshare/BleKeepAliveService.kt',
       ).readAsStringSync();
-      expect(source.contains('overlay.bpmFontSize'), isTrue);
-      expect(source.contains('BPM_FONT_MIN'), isTrue);
-      expect(source.contains('BPM_FONT_MAX'), isTrue);
-      expect(source.contains('BPM_FONT_STEP'), isTrue);
+      expect(
+        source.contains('overlay.bpmFontSize'),
+        isFalse,
+        reason: '安卓为冻结区，字号可调只在 Windows 侧',
+      );
+      expect(
+        source.contains('textSize = 13f'),
+        isTrue,
+        reason: '安卓恢复 1.0.12 的固定 13sp',
+      );
     });
   });
 
