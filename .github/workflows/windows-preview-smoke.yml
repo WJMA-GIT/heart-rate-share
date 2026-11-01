@@ -171,13 +171,25 @@ jobs:
             return ([HrsWin]::SendMessage($h, 0x0084, [IntPtr]::Zero, $lp)).ToInt32()
           }
 
-          # 等窗口把精简态尺寸调整完，再按上报的矩形去命中/点击。
-          Start-Sleep -Milliseconds 600
-
-          # 精简态：拖动把手必须回 HTCAPTION，其余（含「断开」按钮中心）必须回 HTCLIENT。
-          $btn = Last-Rect (Read-LogText $log) 'disconnect'
+          # 等窗口把精简态尺寸调整完（窗口先缩、布局后到），直到按钮矩形落进客户区。
+          $btn = $null
+          $drag = $null
+          $cliW = 0
+          $cliH = 0
+          for ($k = 0; $k -lt 25; $k++) {
+            $btn = Last-Rect (Read-LogText $log) 'disconnect'
+            $drag = Last-Rect (Read-LogText $log) 'drag'
+            $cli = New-Object HrsWin+RECT
+            [void][HrsWin]::GetClientRect($hwnd, [ref]$cli)
+            $cliW = $cli.Right - $cli.Left
+            $cliH = $cli.Bottom - $cli.Top
+            if ($btn -ne $null -and $drag -ne $null -and $cliW -gt 0 -and
+                ($btn[0] + $btn[2]) -le $cliW -and ($btn[1] + $btn[3]) -le $cliH) {
+              break
+            }
+            Start-Sleep -Milliseconds 300
+          }
           if ($btn -eq $null) { throw 'Dart 没有上报「断开」按钮矩形' }
-          $drag = Last-Rect (Read-LogText $log) 'drag'
           if ($drag -eq $null) { throw 'Dart 没有上报拖动区矩形' }
           # 客户区坐标（点调用）+ 屏幕坐标（WM_NCHITTEST 用）。
           $geo = New-Object HrsWin+RECT
@@ -186,10 +198,6 @@ jobs:
           $btnY = $btn[1] + [int]($btn[3] / 2)
           $dragX = $drag[0] + [int]($drag[2] / 2)
           $dragY = $drag[1] + [int]($drag[3] / 2)
-          $cli = New-Object HrsWin+RECT
-          [void][HrsWin]::GetClientRect($hwnd, [ref]$cli)
-          $cliW = $cli.Right - $cli.Left
-          $cliH = $cli.Bottom - $cli.Top
           Write-Host "compact rects: drag=($($drag -join ',')) button=($($btn -join ',')) client=${cliW}x${cliH}"
           $bx = $btn[0]
           $by = $btn[1]
