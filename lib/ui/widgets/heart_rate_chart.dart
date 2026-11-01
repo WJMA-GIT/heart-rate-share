@@ -80,6 +80,9 @@ final class HeartRateSeries {
     if (_points.isEmpty) return;
     _points.clear();
     _revision++;
+    // 清数据时一并丢量程缓存：重连后不该沿用上一轮的宽量程（否则曲线看着"不动"）。
+    rangeState = null;
+    rangeAt = null;
   }
 
   // 以最新采样时刻为基准裁剪：设备时间戳整体偏移时窗口仍然成立。
@@ -240,6 +243,8 @@ HeartRatePolyline normalizedPolyline(HeartRateSeries series) {
       : now.difference(series.rangeAt!);
   final throttled = elapsed != null && elapsed < const Duration(seconds: 2);
   // 超出当前量程的数据必须立刻扩（绝不裁切），限流只管"没超界时的重标定"。
+  // 只要有任何采样越过当前量程的**边界**就立刻扩张（不再看迟滞余量）：
+  // 用户报的「超过 60 就变直线」就是点被 clamp 在边界上、量程没跟上。
   final outside =
       series.rangeState != null &&
       visible.any(

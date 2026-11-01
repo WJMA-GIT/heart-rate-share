@@ -23,6 +23,65 @@ double _yRange(List<int> bpms) {
 }
 
 void main() {
+  group('连续爬升不裁切（用户报的「超过 60 就变直线」）', () {
+    test('60 → 75 → 90：每个采样都在绘制区内，右端持续前进', () {
+      final series = HeartRateSeries();
+      final base = DateTime.utc(2026, 11, 2, 9);
+      var second = 0;
+      void add(int bpm) {
+        series.add(
+          HeartRatePoint(
+            at: base.add(Duration(seconds: second++)),
+            bpm: bpm,
+          ),
+        );
+      }
+
+      for (var i = 0; i < 10; i++) {
+        add(60);
+      }
+      normalizedPolyline(series);
+      final startHigh = series.range.high;
+      expect(startHigh, greaterThanOrEqualTo(60));
+
+      for (final bpm in [75, 90, 90]) {
+        add(bpm);
+        final polyline = normalizedPolyline(series);
+        final ys = [
+          for (final seg in polyline.segments) ...seg.map((o) => o.dy),
+        ];
+        expect(
+          ys.every((y) => y >= 0 && y <= 1),
+          isTrue,
+          reason: '采样 $bpm 必须落在绘制区（不能贴顶成直线）',
+        );
+        expect(
+          series.range.high,
+          greaterThanOrEqualTo(bpm),
+          reason: '量程上界必须覆盖 $bpm，否则曲线被裁成一条直线',
+        );
+      }
+      expect(series.range.high, greaterThan(startHigh), reason: '量程必须扩大过');
+      // 右端持续前进：末点 x 应接近 1
+      final last = normalizedPolyline(series).segments.last.last;
+      expect(last.dx, greaterThan(0.9));
+    });
+
+    test('恒 60：曲线平坦，但刻度随量程变化而变化', () {
+      final series = HeartRateSeries();
+      final base = DateTime.utc(2026, 11, 2, 10);
+      for (var i = 0; i < 8; i++) {
+        series.add(HeartRatePoint(at: base.add(Duration(seconds: i)), bpm: 60));
+      }
+      final flat = normalizedPolyline(series);
+      final ys = [for (final seg in flat.segments) ...seg.map((o) => o.dy)];
+      expect(ys.toSet().length, 1, reason: '恒定值应为水平线');
+      final ticks = heartRateTicks(series.range);
+      expect(ticks.first, lessThanOrEqualTo(60));
+      expect(ticks.last, greaterThanOrEqualTo(60));
+    });
+  });
+
   group('纵轴刻度跟随动态量程', () {
     List<int> ticksFor(List<int> bpms) {
       final series = _series(bpms);
