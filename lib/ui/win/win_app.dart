@@ -149,9 +149,7 @@ final class _WinAppState extends State<WinApp> {
     // 全透明精简态：宽度按内容、高度按行数（8 行封顶）。
     final width = metrics.width * _scale;
     final height = metrics.height(rows) * _scale;
-    _pushDragRect(
-      Rect.fromLTWH(0, 0, metrics.handleWidth * _scale, height),
-    );
+    _pushDragRect(Rect.fromLTWH(0, 0, metrics.handleWidth * _scale, height));
     setCompactWindow(true);
     setWindowMinSize(width, height);
     setWindowClientSize(width, height);
@@ -593,6 +591,7 @@ final class _CompactMetrics {
   static const double padding = 8;
   static const double verticalPadding = 6;
   static const double gap = 6;
+
   /// 左侧拖拽把手（只用来拖窗，不参与内容列宽）。
   static const double handleWidth = 16;
   static const double nameWidth = OverlayMetrics.nameWidth;
