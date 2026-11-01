@@ -212,6 +212,35 @@ jobs:
           }
           Remove-Item $emptyRoot -Recurse -Force -ErrorAction SilentlyContinue
 
+      - name: Cloud relay probe (随机测试房间，只读试探)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # 不进用户房间：自己生成一个从没出现过的房间号，只发 hello、收一帧就关。
+          $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+          $suffix = -join (1..8 | ForEach-Object { $alphabet[(Get-Random -Maximum $alphabet.Length)] })
+          $room = "WINTEST$suffix"
+          $masked = $room.Substring(0, 7) + '****'
+          $uri = [Uri]"wss://heart.mawj.asia:10086/ws?room=$room"
+          $socket = [System.Net.WebSockets.ClientWebSocket]::new()
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          try {
+            $cts = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(15))
+            $socket.ConnectAsync($uri, $cts.Token).GetAwaiter().GetResult()
+            Write-Host ("cloud connect ok in {0} ms (room={1})" -f $sw.ElapsedMilliseconds, $masked)
+            $hello = [Text.Encoding]::UTF8.GetBytes('{"v":1,"type":"hello","memberId":"win-probe","displayName":"WindowsProbe"}')
+            $socket.SendAsync($hello, 'Text', $true, $cts.Token).GetAwaiter().GetResult()
+            $buffer = New-Object byte[] 8192
+            $recv = $socket.ReceiveAsync($buffer, $cts.Token).GetAwaiter().GetResult()
+            $text = [Text.Encoding]::UTF8.GetString($buffer, 0, $recv.Count)
+            Write-Host ("cloud first frame in {0} ms: {1}" -f $sw.ElapsedMilliseconds, $text.Substring(0, [Math]::Min(120, $text.Length)))
+            $socket.CloseAsync('NormalClosure', 'bye', [Threading.CancellationToken]::None).GetAwaiter().GetResult() | Out-Null
+          } catch {
+            Write-Warning ("cloud probe failed: {0}" -f $_.Exception.Message)
+          } finally {
+            $socket.Dispose()
+          }
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
