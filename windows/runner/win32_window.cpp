@@ -437,12 +437,10 @@ LRESULT Win32Window::HitTestWindow(LPARAM lparam) {
     const LRESULT edge = ResizeEdgeFor(x, y, width, height, border);
     if (edge != HTCLIENT) return edge;
   }
-  if (has_drag_rect_) {
-    const RECT band = drag_rect_;
-    if (rect.left + x >= band.left && rect.left + x < band.right &&
-        rect.top + y >= band.top && rect.top + y < band.bottom) {
-      return HTCAPTION;
-    }
+  // x/y 已经是窗口内坐标；drag_rect_ 同样是窗口内坐标（DIP×DPI），直接比。
+  if (has_drag_rect_ && x >= drag_rect_.left && x < drag_rect_.right &&
+      y >= drag_rect_.top && y < drag_rect_.bottom) {
+    return HTCAPTION;
   }
   return HTCLIENT;
 }
