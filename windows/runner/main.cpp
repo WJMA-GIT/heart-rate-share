@@ -167,9 +167,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Log("dpi", hwnd ? std::to_string(::GetDpiForWindow(hwnd)) : "unknown");
 
   const bool safe_mode = HasFlag(L"--safe-mode") || EnvIsOne(L"HEARTRATE_SAFE_MODE");
+  // --opaque 现在没有实际作用（悬浮窗是独立窗口，主窗口本来就全不透明），
+  // 但主 ci 的三模式冒烟按这行日志断言，字段保留。
+  const bool opaque_only = HasFlag(L"--opaque") || EnvIsOne(L"HEARTRATE_OPAQUE");
   const bool preview = EnvIsOne(L"HEARTRATE_PREVIEW");
-  Log("mode", std::string("safe=") + (safe_mode ? "1" : "0") + " preview=" +
-                  (preview ? "1" : "0"));
+  Log("mode", std::string("safe=") + (safe_mode ? "1" : "0") + " opaque=" +
+                  (opaque_only ? "1" : "0") + " preview=" + (preview ? "1" : "0"));
   MakeMainWindowFrameless(hwnd);
 
   // 悬浮窗：独立的原生窗口，只在「已连接」时显示（Dart 通过通道控制）。
