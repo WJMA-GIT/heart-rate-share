@@ -58,7 +58,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $ver = ([xml](Get-Content pc/HeartRateShare.Desktop/HeartRateShare.Desktop.csproj)).Project.PropertyGroup.Version
           dotnet publish pc/HeartRateShare.Desktop -c Release -r win-x64 --self-contained false `
-            -p:PublishSingleFile=true -o pc-out-b
+            -p:SelfContained=false -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false `
+            -o pc-out-b
+          Write-Host '--- B publish 目录 ---'
+          Get-ChildItem pc-out-b -File | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Write-Host
           $src = 'pc-out-b/HeartRateShare.exe'
           if (-not (Test-Path $src)) { throw 'B 没有产出 exe' }
           $name = "heartrate-pc-$ver-win-x64-framework-dependent.exe"
