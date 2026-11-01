@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 单文件 exe：self-contained + PublishSingleFile，用户双击即用，不需要装 .NET。 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- WinRT（蓝牙）需要带 Windows SDK 版本的 TFM -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>HeartRateShare</AssemblyName>
+    <RootNamespace>HeartRateShare.Desktop</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.0.15</Version>
+    <Company>com.wjmagit</Company>
+    <Product>HeartRateShare</Product>
+
+    <!-- RID 与 SelfContained 交给 publish 命令行按形态决定（A 自包含 / B 框架依赖），
+         csproj 里焊死会让 framework-dependent 形态也把运行时打进去。 -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- 压缩/原生库自解压只在 self-contained 下合法，由 publish 命令行按形态传参，
+         不能焊在 csproj 里（否则 framework-dependent 形态会 NETSDK1176）。 -->
+    <DebugType>none</DebugType>
+    <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>

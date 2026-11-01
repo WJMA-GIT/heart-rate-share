@@ -54,3 +54,11 @@
 - 任何 Windows 任务**不得顺带改安卓**；共享层（如 `lib/theme/overlay_metrics.dart`）
   必须平台参数化，两端各自回归。
 - 用户认定 1.0.12 的安卓是"很完美"的基线：安卓行为以该版本为准。
+
+## Windows 交付物（2026-11-01 起）
+Windows 桌面客户端已切换到 **`pc/`（C# .NET 8 WPF）**，双形态发布：
+`heartrate-pc-<ver>-win-x64-selfcontained.exe`（~69 MB，免运行时）与
+`heartrate-pc-<ver>-win-x64-framework-dependent.exe`（~25 MB，需 .NET 8 Desktop Runtime）。
+旧的 Flutter `windows/` 产物（`heartrate-*-windows-x64*.exe`）**不再是交付物**，
+仅保留作参考实现；`flutter-ci.yml` 的 windows job 不再参与发布。
+构建/发布走 `.github/workflows/windows-pc.yml`。
