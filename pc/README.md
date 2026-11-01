@@ -8,11 +8,15 @@
 | | **A · self-contained**（推荐给普通用户） | **B · framework-dependent** |
 |---|---|---|
 | 文件名 | `heartrate-pc-1.0.15-win-x64-selfcontained.exe` | `heartrate-pc-1.0.15-win-x64-framework-dependent.exe` |
-| 体积 | ≈ 69 MB | ≈ 1–2 MB |
+| 体积 | ≈ 69 MB | ≈ 25 MB（当前实测，见下） |
 | 需要装 .NET | **不需要** | **需要 .NET 8 Desktop Runtime** |
-| 首次启动 | 慢一些（会解压到 `%TEMP%\.net`） | 快 |
+| 首次启动 | ≈1.3 s（会解压到 `%TEMP%\.net`） | ≈0.5 s，更快 |
 | 缺运行时的表现 | 不存在此问题 | 弹 .NET 的"缺少运行时/去下载"提示 |
 | 适用 | 发给别人、干净机器、不想解释依赖 | 自己机器、已装 .NET 8、在意体积 |
+
+B 当前体积（25 MB）比理论上限（~2 MB）大：publish 走的是
+`PublishSingleFile` 的 RID 特定路径，仍把一部分 WPF 程序集打进了 bundle。
+功能与依赖要求不受影响（仍然需要运行时、仍然启动更快），下一轮再抠体积。
 
 > A 解压目录是 `%TEMP%\.net\<app>\<hash>`，用户看不到、不写安装目录，退出后可被系统清理；
 > 这是 .NET 自包含单文件的固有行为，不是安装包。
