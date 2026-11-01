@@ -858,8 +858,10 @@ final class _SettingsPage extends StatelessWidget {
           children: [
             ListTile(
               title: Text('日志目录', style: winText(15)),
-              subtitle: Text(StartupLog.path ?? '(未创建)',
-                  style: winText(12, color: WinColors.dim)),
+              subtitle: Text(
+                StartupLog.path ?? '(未创建)',
+                style: winText(12, color: WinColors.dim),
+              ),
               trailing: TextButton(
                 onPressed: () => controller.openLogFolder(),
                 child: const Text('打开'),
