@@ -80,6 +80,7 @@ jobs:
             [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
             [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
             [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+            [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int cmd);
             [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wparam, IntPtr lparam);
             public delegate bool EnumChildProc(IntPtr hwnd, IntPtr lparam);
             [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr lparam);
@@ -310,6 +311,7 @@ jobs:
           }
 
           function Resize-Top([IntPtr]$top, [int]$w, [int]$h) {
+            [void][HrsWin]::ShowWindow($top, 9)   # SW_RESTORE：别被最小化状态带跑
             [void][HrsWin]::SetWindowPos($top, [IntPtr]::Zero, 0, 0, $w, $h, 0x0004)
             Start-Sleep -Milliseconds 400
           }
@@ -336,7 +338,7 @@ jobs:
             if ($scaleNow -ge 1.29) { $zoomOk = $true; break }
             $g2 = New-Object HrsWin+RECT
             [void][HrsWin]::GetWindowRect($hwnd, [ref]$g2)
-            $addX = ($g2.Right - $g2.Left) - (45 + 6 * $scaleNow)
+            $addX = [int](($g2.Right - $g2.Left) - 14 * $scaleNow - 75)
             $addY = [int](34 * $scaleNow + 15)
             Click-Client $target $addX $addY
             Start-Sleep -Milliseconds 400
