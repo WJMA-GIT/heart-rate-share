@@ -103,7 +103,7 @@ final class _WinAppState extends State<WinApp> {
   static const _buildId = String.fromEnvironment('BUILD_ID');
 
   /// 版本号只读一次（全应用唯一入口 `AppVersion`），不要放进 build 里反复异步读。
-  /// 显示成 `1.0.15 (1002116) · <sha8|dev>`：用户一眼能对上发布物。
+  /// 显示成 `1.0.15 (1002116) · sha8`（本地是 dev）：用户一眼能对上发布物。
   Future<void> _loadVersion() async {
     final raw = await AppVersion.readWithBuild();
     final parts = raw.split('+');
