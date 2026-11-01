@@ -49,6 +49,7 @@ void closeWindow() => _postCommand(0xF060); // SC_CLOSE
 const int _wmAppMinClientSize = 0x8001;
 const int _wmAppCompact = 0x8002;
 const int _wmAppClientSize = 0x8003;
+const int _wmAppDragRect = 0x8004;
 
 /// 最小客户区（DIP）：720×480，乘当前 UI 缩放后由 runner 的 WM_GETMINMAXINFO 兜住。
 void setWindowMinSize(double width, double height) =>
@@ -60,6 +61,14 @@ void setCompactWindow(bool compact) => _post(_wmAppCompact, compact ? 1 : 0, 0);
 /// 按内容改客户区（DIP）：精简态宽度按内容、高度按行数。
 void setWindowClientSize(double width, double height) =>
     _post(_wmAppClientSize, width.round(), height.round());
+
+/// 可拖动区（DIP，相对窗口左上角）：只有这块返回 HTCAPTION。
+/// 必须显式给：按"空白区"猜会把按钮一起判成拖动区，点击就全丢。
+void setWindowDragRect(double x, double y, double width, double height) => _post(
+  _wmAppDragRect,
+  (y.round() << 16) | (x.round() & 0xFFFF),
+  (height.round() << 16) | (width.round() & 0xFFFF),
+);
 
 void _post(int message, int wparam, int lparam) {
   if (!Platform.isWindows) return;

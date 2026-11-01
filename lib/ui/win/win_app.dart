@@ -51,6 +51,9 @@ final class _WinAppState extends State<WinApp> {
   /// 设置页显示的版本号：启动读一次（PackageInfo → exe 版本资源），不再手写死。
   String _version = '—';
 
+  /// 上次上报的拖动区签名：只有变了才发 Win32 消息。
+  String _dragRectSignature = '';
+
   /// 缩放持久化键（0.8–1.6，步进 0.1）。
   static const _scaleKey = 'win.scale';
 
@@ -75,6 +78,21 @@ final class _WinAppState extends State<WinApp> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble(_scaleKey, _scale);
     } catch (_) {}
+  }
+
+  /// 报给原生的可拖动区（DIP）：命中它才 HTCAPTION，别处一律 HTCLIENT。
+  /// 显式上报而不是让原生猜"空白区"——猜的版本把按钮一起吞了。
+  void _pushDragRect(Rect rect) {
+    final signature = [
+      rect.left.round(),
+      rect.top.round(),
+      rect.width.round(),
+      rect.height.round(),
+    ].join('/');
+    if (signature == _dragRectSignature) return;
+    _dragRectSignature = signature;
+    StartupLog.info('hit: drag rect $signature');
+    setWindowDragRect(rect.left, rect.top, rect.width, rect.height);
   }
 
   /// 版本号只读一次（全应用唯一入口 `AppVersion`），不要放进 build 里反复异步读。
@@ -131,6 +149,9 @@ final class _WinAppState extends State<WinApp> {
     // 全透明精简态：宽度按内容、高度按行数（8 行封顶）。
     final width = metrics.width * _scale;
     final height = metrics.height(rows) * _scale;
+    _pushDragRect(
+      Rect.fromLTWH(0, 0, metrics.handleWidth * _scale, height),
+    );
     setCompactWindow(true);
     setWindowMinSize(width, height);
     setWindowClientSize(width, height);
@@ -229,6 +250,16 @@ final class _WinAppState extends State<WinApp> {
                   // 窄于阈值（×缩放）就把导航折叠成图标，宽度让给内容。
                   final iconOnly =
                       constraints.maxWidth < _narrowLayoutWidth * _scale;
+                  // 顶部空白带（导航右侧、右上角控件左侧）是拖动区：那里没有控件，
+                  // 点它只会拖窗；其余区域一律 HTCLIENT，按钮照常点。
+                  final railWidth = (iconOnly ? 64.0 : 168.0) * _scale;
+                  final bandWidth =
+                      constraints.maxWidth - railWidth - 150 * _scale;
+                  if (bandWidth > 20) {
+                    _pushDragRect(
+                      Rect.fromLTWH(railWidth, 0, bandWidth, 24 * _scale),
+                    );
+                  }
                   // Ctrl+滚轮调缩放（原来挂在 _TopBar 上，标题栏删掉后挪到整页）。
                   return Listener(
                     onPointerSignal: (event) {
@@ -562,6 +593,8 @@ final class _CompactMetrics {
   static const double padding = 8;
   static const double verticalPadding = 6;
   static const double gap = 6;
+  /// 左侧拖拽把手（只用来拖窗，不参与内容列宽）。
+  static const double handleWidth = 16;
   static const double nameWidth = OverlayMetrics.nameWidth;
   static const double chartWidth = OverlayMetrics.chartWidth;
   static const int maxRows = 8;
@@ -578,9 +611,11 @@ final class _CompactMetrics {
 
   /// 断开按钮：不超过行高的 80%，也不超过 36；footer 是它 + 间距。
   double get buttonHeight => rowHeight * 0.8 > 36 ? 36 : rowHeight * 0.8;
+  double get buttonWidth => 64;
   double get footer => buttonHeight + 8;
 
-  double get width => nameWidth + bpmWidth + gap + chartWidth + padding * 2;
+  double get width =>
+      handleWidth + nameWidth + bpmWidth + gap + chartWidth + padding * 2;
 
   double height(int rows) =>
       rowHeight * (rows < 1 ? 1 : rows) + footer + verticalPadding * 2;
@@ -588,7 +623,7 @@ final class _CompactMetrics {
 
 /// 连接成功后的全透明精简态：只有「名称 | 心率大字 | 迷你折线 | 断开」。
 /// 背景用颜色键色（原生 LWA_COLORKEY 抠掉），内容不透明；整块可拖动。
-final class _CompactView extends StatelessWidget {
+final class _CompactView extends StatefulWidget {
   const _CompactView({
     required this.controller,
     required this.scale,
@@ -602,8 +637,23 @@ final class _CompactView extends StatelessWidget {
   final Future<void> Function() onDisconnect;
 
   @override
+  State<_CompactView> createState() => _CompactViewState();
+}
+
+final class _CompactViewState extends State<_CompactView> {
+  final _disconnectKey = GlobalKey();
+  String _lastButtonRect = '';
+
+  WinController get controller => widget.controller;
+  double get scale => widget.scale;
+  double get bpmFont => widget.bpmFont;
+  Future<void> Function() get onDisconnect => widget.onDisconnect;
+
+  @override
   Widget build(BuildContext context) {
     final metrics = _CompactMetrics(bpmFont);
+    // 冒烟要按真实布局去点「断开」，所以把它的矩形报进 startup.log。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _reportButtonRect());
     final rows = <Widget>[];
     if (controller.transport == WinTransport.ble) {
       rows.add(
@@ -648,20 +698,48 @@ final class _CompactView extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              ConstrainedBox(
-                // 8 行封顶：人再多也只占这么高，滚轮在这块里滚，不拖整窗。
-                constraints: BoxConstraints(maxHeight: maxListHeight),
-                child: SingleChildScrollView(child: Column(children: rows)),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 拖拽把手：只有这一列是拖动区（原生按上报矩形判 HTCAPTION）。
+                  SizedBox(
+                    width: _CompactMetrics.handleWidth * scale,
+                    height: maxListHeight > metrics.rowHeight * scale
+                        ? metrics.rowHeight * scale
+                        : maxListHeight,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: Icon(
+                        Icons.drag_indicator,
+                        size: 12 * scale,
+                        color: WinColors.textDim,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: ConstrainedBox(
+                      // 8 行封顶：人再多也只占这么高，滚轮在这里滚，不拖整窗。
+                      constraints: BoxConstraints(maxHeight: maxListHeight),
+                      child: SingleChildScrollView(
+                        child: Column(children: rows),
+                      ),
+                    ),
+                  ),
+                ],
               ),
               SizedBox(height: 4 * scale),
               Align(
                 alignment: Alignment.centerRight,
                 child: SizedBox(
+                  key: _disconnectKey,
+                  width: metrics.buttonWidth * scale,
                   height: buttonHeight,
                   child: TextButton.icon(
                     onPressed: onDisconnect,
                     style: TextButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: 10 * scale),
+                      // 不透明底：色键透明区上的透明按钮会被系统判成穿透，点不到。
+                      backgroundColor: WinColors.surface,
+                      padding: EdgeInsets.symmetric(horizontal: 8 * scale),
                       minimumSize: Size(0, buttonHeight),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       visualDensity: VisualDensity.compact,
@@ -690,6 +768,22 @@ final class _CompactView extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  void _reportButtonRect() {
+    if (!mounted) return;
+    final box = _disconnectKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final origin = box.localToGlobal(Offset.zero);
+    final rect = [
+      origin.dx.round(),
+      origin.dy.round(),
+      box.size.width.round(),
+      box.size.height.round(),
+    ].join(' ');
+    if (rect == _lastButtonRect) return;
+    _lastButtonRect = rect;
+    StartupLog.info('hit: disconnect rect $rect');
   }
 }
 

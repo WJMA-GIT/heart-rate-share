@@ -367,6 +367,7 @@ final class WinController extends ChangeNotifier {
   }
 
   Future<void> disconnectAll() async {
+    _previewOnline = false; // 预览模式下点「断开」也要真的断开（冒烟据此验证点击链路）
     await _room.disconnect().catchError((_) {});
     await _ble?.disconnect().catchError((_) {});
     _connectedPeerName = null;

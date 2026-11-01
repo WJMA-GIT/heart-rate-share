@@ -48,6 +48,9 @@ int Scale(int source, double scale_factor) {
 constexpr UINT kMsgMinClientSize = WM_APP + 1;
 constexpr UINT kMsgCompact = WM_APP + 2;
 constexpr UINT kMsgClientSize = WM_APP + 3;
+// WM_APP+4：Dart 上报可拖动区（DIP，相对窗口左上角）。wparam=(y<<16)|x，
+// lparam=(h<<16)|w。只有这块返回 HTCAPTION，其余一律 HTCLIENT。
+constexpr UINT kMsgDragRect = WM_APP + 4;
 
 // 客户区尺寸（DIP）→ 窗口尺寸（物理像素）。客户端 == 整窗（WM_NCCALCSIZE 返回 0，
 // 没有非客户区），所以这里只剩 DPI 折算，不再 AdjustWindowRectEx。
@@ -86,11 +89,11 @@ void CenterOnPrimary(HWND window) {
 // 无边框（去掉了 WS_CAPTION/WS_BORDER，且 WM_NCCALCSIZE 返回 0）的分层窗口：
 // 系统没有非客户区可拖、可缩放，命中测试全得自己答：
 //   - 外沿 8 DIP（和 96dpi 下系统边框同宽）→ HTLEFT/HTRIGHT/HTTOP/HTBOTTOM + 四角；
-//   - 顶部 28 DIP 的空白带 → HTCAPTION（就是"没有标题栏也能拖窗"的那条）；
+//   - Dart 上报的拖动区 → HTCAPTION（把手/空白带，见 win_app.dart 的拖动区上报）；
 //   - 其余 → HTCLIENT，交给 Flutter 的按钮/输入框/滑杆。
-// Dart 侧控件从 34 DIP 起摆（见 win_app.dart 的 _WindowControls），不落在这条带上。
+// 拖动区必须由 Dart 明确给出：之前按"顶部 28 DIP 全宽"猜，结果把导航栏和
+// 精简态行内控件一起判成了拖动区，鼠标一按就去拖窗、点击全丢。
 constexpr int kResizeBorderDip = 8;
-constexpr int kDragStripDip = 28;
 
 LRESULT ResizeEdgeFor(LONG x, LONG y, LONG width, LONG height, LONG border) {
   const bool left = x < border;
@@ -306,6 +309,24 @@ Win32Window::MessageHandler(HWND hwnd,
       ResizeClientDip(hwnd, static_cast<int>(wparam), static_cast<int>(lparam));
       return 0;
 
+    case kMsgDragRect: {
+      const double scale = ::GetDpiForWindow(hwnd) / 96.0;
+      const int dip_x = static_cast<int>(LOWORD(wparam));
+      const int dip_y = static_cast<int>(HIWORD(wparam));
+      const int dip_w = static_cast<int>(LOWORD(lparam));
+      const int dip_h = static_cast<int>(HIWORD(lparam));
+      has_drag_rect_ = dip_w > 0 && dip_h > 0;
+      drag_rect_.left = static_cast<LONG>(dip_x * scale);
+      drag_rect_.top = static_cast<LONG>(dip_y * scale);
+      drag_rect_.right = static_cast<LONG>((dip_x + dip_w) * scale);
+      drag_rect_.bottom = static_cast<LONG>((dip_y + dip_h) * scale);
+      // 给冒烟用：CI 直接读这行，按同一份矩形去断言命中结果。
+      hrs::Log("hit: drag rect",
+               "x=" + std::to_string(dip_x) + " y=" + std::to_string(dip_y) +
+                   " w=" + std::to_string(dip_w) + " h=" + std::to_string(dip_h));
+      return 0;
+    }
+
     case WM_NCHITTEST:
       return HitTestWindow(lparam);
 
@@ -416,7 +437,13 @@ LRESULT Win32Window::HitTestWindow(LPARAM lparam) {
     const LRESULT edge = ResizeEdgeFor(x, y, width, height, border);
     if (edge != HTCLIENT) return edge;
   }
-  if (y < static_cast<LONG>(kDragStripDip * scale)) return HTCAPTION;
+  if (has_drag_rect_) {
+    const RECT band = drag_rect_;
+    if (rect.left + x >= band.left && rect.left + x < band.right &&
+        rect.top + y >= band.top && rect.top + y < band.bottom) {
+      return HTCAPTION;
+    }
+  }
   return HTCLIENT;
 }
 

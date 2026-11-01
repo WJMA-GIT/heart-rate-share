@@ -112,6 +112,9 @@ class Win32Window {
   int min_client_height_ = 480;
   bool compact_ = false;
   RECT full_rect_{};
+  // 可拖动区（物理像素）：只由 Dart 上报，不在这里猜"空白区"。空 = 没有拖动区。
+  RECT drag_rect_{};
+  bool has_drag_rect_ = false;
   bool start_maximized_ = false;
 
   // window handle for top level window.
