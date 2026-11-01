@@ -16,8 +16,8 @@
     <Company>com.wjmagit</Company>
     <Product>HeartRateShare</Product>
 
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>true</SelfContained>
+    <!-- RID 与 SelfContained 交给 publish 命令行按形态决定（A 自包含 / B 框架依赖），
+         csproj 里焊死会让 framework-dependent 形态也把运行时打进去。 -->
     <PublishSingleFile>true</PublishSingleFile>
     <!-- 压缩/原生库自解压只在 self-contained 下合法，由 publish 命令行按形态传参，
          不能焊在 csproj 里（否则 framework-dependent 形态会 NETSDK1176）。 -->
