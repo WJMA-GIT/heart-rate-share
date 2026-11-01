@@ -54,6 +54,10 @@ final class _WinAppState extends State<WinApp> {
   /// 缩放持久化键（0.8–1.6，步进 0.1）。
   static const _scaleKey = 'win.scale';
 
+  /// 心率字号（DIP，24–96 步进 4）：主界面卡片与精简态行内数字共用。
+  static const _bpmSizeKey = 'win.bpmFontSize';
+  double _bpmFontSize = defaultBpmFontSize;
+
   Future<void> _loadScale() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -79,6 +83,25 @@ final class _WinAppState extends State<WinApp> {
     if (mounted) setState(() => _version = value);
   }
 
+  Future<void> _loadBpmFontSize() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final value = prefs.getDouble(_bpmSizeKey);
+      if (value != null && mounted) {
+        setState(() => _bpmFontSize = _clampBpmFontSize(value));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _setBpmFontSize(double value) async {
+    final next = _clampBpmFontSize(value);
+    setState(() => _bpmFontSize = next);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_bpmSizeKey, next);
+    } catch (_) {}
+  }
+
   WinController get _controller => _controllerOrNull!;
 
   /// 窗口形态跟着「连接状态 + 缩放」走：最小尺寸、精简态内容尺寸、切换日志。
@@ -86,7 +109,7 @@ final class _WinAppState extends State<WinApp> {
   void _syncWindow(bool connected) {
     final mode = connected ? 'compact' : 'full';
     final rows = _compactRowCount();
-    final signature = '$mode/${_scale.toStringAsFixed(1)}/$rows';
+    final signature = '$mode/${_scale.toStringAsFixed(1)}/$rows/$_bpmFontSize';
     if (mode != _uiMode) {
       StartupLog.info('ui_mode: $_uiMode -> $mode');
       _uiMode = mode;
@@ -94,14 +117,20 @@ final class _WinAppState extends State<WinApp> {
     }
     if (signature == _pushedMetrics) return;
     _pushedMetrics = signature;
+    final metrics = _CompactMetrics(_bpmFontSize);
     if (!connected) {
       setCompactWindow(false);
-      setWindowMinSize(_minWindowWidth * _scale, _minWindowHeight * _scale);
+      // 最小尺寸跟着字号走：字号调大后 720×480 也放不下大数字。
+      final minWidth = metrics.width > _minWindowWidth
+          ? metrics.width
+          : _minWindowWidth;
+      final minHeight = _minWindowHeight;
+      setWindowMinSize(minWidth * _scale, minHeight * _scale);
       return;
     }
-    // 全透明精简态：宽度按内容（三列固定宽 + 内边距），高度按行数（8 行封顶）。
-    final width = _CompactMetrics.width * _scale;
-    final height = _CompactMetrics.height(rows) * _scale;
+    // 全透明精简态：宽度按内容、高度按行数（8 行封顶）。
+    final width = metrics.width * _scale;
+    final height = metrics.height(rows) * _scale;
     setCompactWindow(true);
     setWindowMinSize(width, height);
     setWindowClientSize(width, height);
@@ -129,6 +158,7 @@ final class _WinAppState extends State<WinApp> {
       controller.addListener(_onChange);
       _loadScale();
       _loadVersion();
+      _loadBpmFontSize();
       if (widget.preview) {
         controller.startPreview();
       } else if (!_safeMode) {
@@ -186,6 +216,7 @@ final class _WinAppState extends State<WinApp> {
           ? _CompactView(
               controller: _controller,
               scale: _scale,
+              bpmFont: _bpmFontSize,
               onDisconnect: () async {
                 await _controller.disconnectAll();
                 if (mounted) setState(() {});
@@ -198,33 +229,46 @@ final class _WinAppState extends State<WinApp> {
                   // 窄于阈值（×缩放）就把导航折叠成图标，宽度让给内容。
                   final iconOnly =
                       constraints.maxWidth < _narrowLayoutWidth * _scale;
-                  return Column(
-                    children: [
-                      _TopBar(
-                        controller: _controller,
-                        safeMode: _safeMode,
-                        scale: _scale,
-                        onZoomIn: () => _bumpScale(0.1),
-                        onZoomOut: () => _bumpScale(-0.1),
-                        onToggleSection: (section) =>
-                            setState(() => _section = section),
-                        section: _section,
-                      ),
-                      Expanded(
-                        child: Row(
-                          children: [
-                            _NavRail(
-                              section: _section,
-                              iconOnly: iconOnly,
-                              onSelect: (section) =>
-                                  setState(() => _section = section),
-                              onDrag: startWindowDrag,
-                            ),
-                            Expanded(child: _page()),
-                          ],
+                  // Ctrl+滚轮调缩放（原来挂在 _TopBar 上，标题栏删掉后挪到整页）。
+                  return Listener(
+                    onPointerSignal: (event) {
+                      if (event is PointerScrollEvent &&
+                          HardwareKeyboard.instance.isControlPressed) {
+                        _bumpScale(event.scrollDelta.dy < 0 ? 0.1 : -0.1);
+                      }
+                    },
+                    child: Stack(
+                      children: [
+                        // Positioned.fill：Row 要拿到确定宽高（_NavRail 里有 Spacer）。
+                        Positioned.fill(
+                          child: Row(
+                            children: [
+                              _NavRail(
+                                section: _section,
+                                iconOnly: iconOnly,
+                                onSelect: (section) =>
+                                    setState(() => _section = section),
+                                onDrag: startWindowDrag,
+                              ),
+                              Expanded(child: _page()),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                        // 没有标题栏：退出/缩放浮在内容区右上角，顶部 28 DIP
+                        // 留给原生的拖拽带（win32_window.cpp: kDragStripDip）。
+                        Positioned(
+                          top: (_dragStripDip + 6) * _scale,
+                          right: 8 * _scale,
+                          child: _WindowControls(
+                            scale: _scale,
+                            onZoomIn: () => _bumpScale(0.1),
+                            onZoomOut: () => _bumpScale(-0.1),
+                            onMinimize: minimizeWindow,
+                            onClose: closeWindow,
+                          ),
+                        ),
+                      ],
+                    ),
                   );
                 },
               ),
@@ -263,6 +307,7 @@ final class _WinAppState extends State<WinApp> {
           ownSeries: c.ownSeries,
           showBleRow: c.transport == WinTransport.ble,
           scale: _scale,
+          bpmFont: _bpmFontSize,
         );
       case _Section.settings:
         return SettingsView(
@@ -274,6 +319,9 @@ final class _WinAppState extends State<WinApp> {
           version: _version,
           bleDebug: c.bleDebug,
           onToggleBleDebug: c.toggleBleDebug,
+          scale: _scale,
+          bpmFont: _bpmFontSize,
+          onBpmFontChanged: _setBpmFontSize,
         );
     }
   }
@@ -307,164 +355,55 @@ TextStyle winText(
   FontWeight? weight,
 }) => TextStyle(fontSize: size, color: color, fontWeight: weight);
 
-// ---------------------------------------------------------------- 顶部状态条
+// ------------------------------------------------------- 右上角窗口控件（无标题栏）
 
-final class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.controller,
-    required this.safeMode,
-    required this.section,
-    required this.onToggleSection,
+final class _WindowControls extends StatelessWidget {
+  const _WindowControls({
     required this.scale,
     required this.onZoomIn,
     required this.onZoomOut,
+    required this.onMinimize,
+    required this.onClose,
   });
 
-  final WinController controller;
-  final bool safeMode;
-  final _Section section;
-  final ValueChanged<_Section> onToggleSection;
   final double scale;
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
+  final VoidCallback onMinimize;
+  final VoidCallback onClose;
 
-  @override
-  Widget build(BuildContext context) {
-    final connected = controller.connected;
-    return GestureDetector(
-      onPanStart: (_) => startWindowDrag(),
-      child: Container(
-        height: 48,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: const BoxDecoration(
-          color: WinColors.surface,
-          border: Border(bottom: BorderSide(color: WinColors.line)),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.monitor_heart, size: 18, color: WinColors.accent),
-            const SizedBox(width: 8),
-            Text(
-              '共享心率',
-              style: winText(AppTextSize.body, weight: FontWeight.w600),
-            ),
-            const SizedBox(width: 16),
-            _Badge(
-              label: connected ? '已连接' : '未连接',
-              color: connected ? WinColors.ok : WinColors.textDim,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                controller.transportLabel,
-                overflow: TextOverflow.ellipsis,
-                style: winText(
-                  12,
-                  color: connected ? WinColors.text : WinColors.textDim,
-                ),
-              ),
-            ),
-            const Spacer(),
-            if (safeMode)
-              Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Text(
-                  '安全模式',
-                  style: winText(AppTextSize.caption, color: WinColors.warn),
-                ),
-              ),
-            IconButton(
-              tooltip: '设置',
-              iconSize: 16,
-              onPressed: () => onToggleSection(_Section.settings),
-              icon: const Icon(Icons.tune, color: WinColors.textDim),
-            ),
-            // 缩放：0.8–1.6 步进 0.1，持久化；Ctrl+滚轮也能调。
-            Listener(
-              onPointerSignal: (event) {
-                if (event is PointerScrollEvent &&
-                    HardwareKeyboard.instance.isControlPressed) {
-                  if (event.scrollDelta.dy < 0) {
-                    onZoomIn();
-                  } else {
-                    onZoomOut();
-                  }
-                }
-              },
-              child: Row(
-                children: [
-                  _WinButton(
-                    icon: Icons.remove,
-                    tooltip: '缩小界面（Ctrl+滚轮）',
-                    onTap: onZoomOut,
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Text(
-                      '${(scale * 100).round()}%',
-                      style: winText(
-                        AppTextSize.caption,
-                        color: WinColors.textDim,
-                      ),
-                    ),
-                  ),
-                  _WinButton(
-                    icon: Icons.add,
-                    tooltip: '放大界面（Ctrl+滚轮）',
-                    onTap: onZoomIn,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 4),
-            _WinButton(
-              icon: Icons.remove,
-              tooltip: '最小化',
-              onTap: minimizeWindow,
-            ),
-            _WinButton(
-              icon: Icons.close,
-              tooltip: '关闭',
-              onTap: closeWindow,
-              danger: true,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 胶囊状态徽标：绿=在线/已连接，灰=离线，黄=连接中。
-final class _Badge extends StatelessWidget {
-  const _Badge({required this.label, required this.color});
-  final String label;
-  final Color color;
-
+  /// 浮在内容区右上角的一小条：缩放 −/＋、最小化、退出。
+  /// 没有任何标题栏；拖动靠原生顶部 28 DIP 的拖拽带（HTCAPTION）。
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    padding: EdgeInsets.symmetric(horizontal: 6 * scale),
     decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.16),
+      color: WinColors.surface.withValues(alpha: 0.92),
       borderRadius: BorderRadius.circular(999),
-      border: Border.all(color: color.withValues(alpha: 0.5)),
+      border: Border.all(color: WinColors.line),
     ),
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 6,
-          height: 6,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        _WinButton(
+          icon: Icons.remove,
+          tooltip: '缩小界面（Ctrl+滚轮）',
+          onTap: onZoomOut,
         ),
-        const SizedBox(width: 6),
-        Text(label, style: winText(11, color: color)),
+        _WinButton(icon: Icons.add, tooltip: '放大界面（Ctrl+滚轮）', onTap: onZoomIn),
+        _WinButton(icon: Icons.minimize, tooltip: '最小化', onTap: onMinimize),
+        _WinButton(
+          icon: Icons.power_settings_new,
+          tooltip: '退出',
+          onTap: onClose,
+          danger: true,
+        ),
       ],
     ),
   );
 }
 
-/// 自绘标题栏按钮（无系统灰条，所以最小化/关闭自己做）。
+/// 自绘窗口按钮（没有系统标题栏，最小化/退出只能自己做）。
 final class _WinButton extends StatelessWidget {
   const _WinButton({
     required this.icon,
@@ -597,26 +536,53 @@ const double _minWindowHeight = 480;
 const double _narrowLayoutWidth = 900;
 const double _wideLayoutWidth = 1000;
 
-/// 精简态尺寸：宽度按内容（三列固定宽 + 内边距），高度按行数（8 行封顶）。
-/// 这几个数必须和 `_CompactRow` 里的列宽一致，否则窗口和内容对不上。
-abstract final class _CompactMetrics {
+/// 心率字号（DIP，24–96 步进 4）：默认 52，比 1.0.12 的 28 明显大一截。
+const double minBpmFontSize = 24;
+const double maxBpmFontSize = 96;
+const double bpmFontSizeStep = 4;
+const double defaultBpmFontSize = 52;
+
+/// 顶部拖拽带（DIP）：和 windows/runner/win32_window.cpp 的 kDragStripDip 对齐，
+/// 这条带里原生返回 HTCAPTION，所以 Dart 的控件要从下面开始摆。
+const double _dragStripDip = 28;
+
+double _clampBpmFontSize(double value) {
+  final stepped = (value / bpmFontSizeStep).round() * bpmFontSizeStep;
+  return stepped.clamp(minBpmFontSize, maxBpmFontSize).toDouble();
+}
+
+/// 精简态尺寸：宽度按内容、高度按行数。列宽/行高跟着**心率字号**走
+/// （字号可调到 96，列宽不联动就会把数字挤折行）；名称/折线列仍用
+/// `OverlayMetrics` 的共享宽度，不另立一套。
+final class _CompactMetrics {
+  const _CompactMetrics(this.bpmFont);
+
+  final double bpmFont;
+
   static const double padding = 8;
   static const double verticalPadding = 6;
-  // 列宽/行高不再本地定义：与手机悬浮窗共用 OverlayMetrics（CI 里比对 Dart↔Kotlin）。
-  static const double nameWidth = OverlayMetrics.nameWidth;
-  static const double bpmWidth = OverlayMetrics.bpmWidth;
   static const double gap = 6;
+  static const double nameWidth = OverlayMetrics.nameWidth;
   static const double chartWidth = OverlayMetrics.chartWidth;
-  static const double rowHeight = OverlayMetrics.rowHeight;
-
-  /// 断开按钮那一行 + 与行列表的间距（按钮自带内边距，留宽一点免得被裁）。
-  static const double footer = 48;
   static const int maxRows = 8;
 
-  static double get width =>
-      nameWidth + bpmWidth + gap + chartWidth + padding * 2;
+  /// 行高至少是字号的一点四倍，否则大字会贴边；不小于共享行高。
+  double get rowHeight => bpmFont * 1.4 > OverlayMetrics.rowHeight
+      ? bpmFont * 1.4
+      : OverlayMetrics.rowHeight;
 
-  static double height(int rows) =>
+  /// 三位数字要放得下（等宽估算 0.62 em），不小于共享列宽。
+  double get bpmWidth => bpmFont * 1.86 > OverlayMetrics.bpmWidth
+      ? bpmFont * 1.86
+      : OverlayMetrics.bpmWidth;
+
+  /// 断开按钮：不超过行高的 80%，也不超过 36；footer 是它 + 间距。
+  double get buttonHeight => rowHeight * 0.8 > 36 ? 36 : rowHeight * 0.8;
+  double get footer => buttonHeight + 8;
+
+  double get width => nameWidth + bpmWidth + gap + chartWidth + padding * 2;
+
+  double height(int rows) =>
       rowHeight * (rows < 1 ? 1 : rows) + footer + verticalPadding * 2;
 }
 
@@ -626,15 +592,18 @@ final class _CompactView extends StatelessWidget {
   const _CompactView({
     required this.controller,
     required this.scale,
+    required this.bpmFont,
     required this.onDisconnect,
   });
 
   final WinController controller;
   final double scale;
+  final double bpmFont;
   final Future<void> Function() onDisconnect;
 
   @override
   Widget build(BuildContext context) {
+    final metrics = _CompactMetrics(bpmFont);
     final rows = <Widget>[];
     if (controller.transport == WinTransport.ble) {
       rows.add(
@@ -643,6 +612,7 @@ final class _CompactView extends StatelessWidget {
           bpm: controller.ownBpm,
           series: controller.ownSeries,
           scale: scale,
+          metrics: metrics,
           online: true,
         ),
       );
@@ -654,12 +624,14 @@ final class _CompactView extends StatelessWidget {
           bpm: member.online ? member.report.bpm : null,
           series: controller.seriesFor(member.report.memberId),
           scale: scale,
+          metrics: metrics,
           online: member.online,
         ),
       );
     }
-    final maxListHeight =
-        _CompactMetrics.rowHeight * _CompactMetrics.maxRows * scale;
+    final maxListHeight = metrics.rowHeight * _CompactMetrics.maxRows * scale;
+    // 断开：不超过行高 80%（也不超过 36），和行等高对齐，不再是大胶囊。
+    final buttonHeight = metrics.buttonHeight * scale;
     return GestureDetector(
       onPanStart: (_) => startWindowDrag(),
       behavior: HitTestBehavior.translucent,
@@ -684,10 +656,33 @@ final class _CompactView extends StatelessWidget {
               SizedBox(height: 4 * scale),
               Align(
                 alignment: Alignment.centerRight,
-                child: OutlinedButton.icon(
-                  onPressed: onDisconnect,
-                  icon: const Icon(Icons.link_off, size: 12),
-                  label: Text('断开', style: winText(AppTextSize.caption)),
+                child: SizedBox(
+                  height: buttonHeight,
+                  child: TextButton.icon(
+                    onPressed: onDisconnect,
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: 10 * scale),
+                      minimumSize: Size(0, buttonHeight),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      side: const BorderSide(color: WinColors.line),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    icon: Icon(
+                      Icons.link_off,
+                      size: buttonHeight * 0.5,
+                      color: WinColors.textDim,
+                    ),
+                    label: Text(
+                      '断开',
+                      style: winText(
+                        buttonHeight * 0.42,
+                        color: WinColors.textDim,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -706,6 +701,7 @@ final class _CompactRow extends StatelessWidget {
     required this.bpm,
     required this.series,
     required this.scale,
+    required this.metrics,
     required this.online,
   });
 
@@ -713,12 +709,15 @@ final class _CompactRow extends StatelessWidget {
   final int? bpm;
   final HeartRateSeries series;
   final double scale;
+  final _CompactMetrics metrics;
   final bool online;
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    height: _CompactMetrics.rowHeight * scale,
+    height: metrics.rowHeight * scale,
     child: Row(
+      // 名称、数字、折线一律垂直居中，数字不贴顶。
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         SizedBox(
           width: _CompactMetrics.nameWidth * scale,
@@ -736,21 +735,23 @@ final class _CompactRow extends StatelessWidget {
           ),
         ),
         SizedBox(
-          width: _CompactMetrics.bpmWidth * scale,
+          width: metrics.bpmWidth * scale,
           child: Text(
             online ? (bpm?.toString() ?? '--') : '--',
             textAlign: TextAlign.right,
+            maxLines: 1,
+            softWrap: false,
             style: winText(
-              AppTextSize.body * (1 + (scale - 1) * 0.2),
+              metrics.bpmFont * scale,
               color: online ? WinColors.accent : WinColors.textDim,
               weight: FontWeight.bold,
-            ),
+            ).copyWith(height: 1.1),
           ),
         ),
         SizedBox(width: _CompactMetrics.gap * scale),
         SizedBox(
           width: _CompactMetrics.chartWidth * scale,
-          height: 18 * scale,
+          height: metrics.rowHeight * 0.62 * scale,
           child: CustomPaint(painter: WinSparklinePainter(series)),
         ),
       ],
@@ -798,7 +799,7 @@ final class ConnectView extends StatelessWidget {
     final narrow =
         MediaQuery.sizeOf(context).width < _narrowLayoutWidth * scale;
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 64 * scale, 16, 16),
       children: [
         _SectionTitle(
           '蓝牙设备',
@@ -1093,6 +1094,7 @@ final class RoomView extends StatelessWidget {
     required this.ownSeries,
     required this.showBleRow,
     this.scale = 1,
+    this.bpmFont = defaultBpmFontSize,
     super.key,
   });
 
@@ -1108,6 +1110,9 @@ final class RoomView extends StatelessWidget {
   /// UI 缩放：列数阈值与卡片高度都跟着它走。
   final double scale;
 
+  /// 心率字号（DIP）：卡片高度必须放得下，否则大数字被裁。
+  final double bpmFont;
+
   @override
   Widget build(BuildContext context) {
     if (!connected) {
@@ -1121,7 +1126,13 @@ final class RoomView extends StatelessWidget {
     final cards = <Widget>[];
     if (showBleRow) {
       cards.add(
-        _MemberCard(name: '蓝牙设备', bpm: ownBpm, series: ownSeries, online: true),
+        _MemberCard(
+          name: '蓝牙设备',
+          bpm: ownBpm,
+          series: ownSeries,
+          online: true,
+          bpmFont: bpmFont,
+        ),
       );
     }
     for (final member in members) {
@@ -1131,6 +1142,7 @@ final class RoomView extends StatelessWidget {
           bpm: liveBpm(member),
           series: seriesFor(member.report.memberId),
           online: member.online,
+          bpmFont: bpmFont,
         ),
       );
     }
@@ -1139,8 +1151,10 @@ final class RoomView extends StatelessWidget {
     final contentWidth = windowWidth - 200; // 导航 168 + 内容区外边距
     final columns = windowWidth >= _wideLayoutWidth * scale ? 2 : 1;
     final cardWidth = (contentWidth - 12 * (columns - 1)) / columns;
+    // 卡片高度：放得下心率字号（含行距）+ 上下留白，不小于原来的 96。
+    final cardHeight = bpmFont * 1.6 + 32 > 96 ? bpmFont * 1.6 + 32 : 96.0;
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 64 * scale, 16, 16),
       children: [
         _SectionTitle('房间成员', trailing: transport),
         if (cards.isEmpty)
@@ -1153,7 +1167,7 @@ final class RoomView extends StatelessWidget {
         else
           GridView.count(
             crossAxisCount: columns,
-            childAspectRatio: cardWidth / (96 * scale),
+            childAspectRatio: cardWidth / (cardHeight * scale),
             mainAxisSpacing: 12,
             crossAxisSpacing: 12,
             shrinkWrap: true,
@@ -1171,12 +1185,14 @@ final class _MemberCard extends StatelessWidget {
     required this.bpm,
     required this.series,
     required this.online,
+    this.bpmFont = defaultBpmFontSize,
   });
 
   final String name;
   final int? bpm;
   final HeartRateSeries series;
   final bool online;
+  final double bpmFont;
 
   @override
   Widget build(BuildContext context) {
@@ -1218,11 +1234,13 @@ final class _MemberCard extends StatelessWidget {
             ),
             Text(
               online ? (bpm?.toString() ?? '--') : '--',
+              maxLines: 1,
+              softWrap: false,
               style: winText(
-                28,
+                bpmFont,
                 color: online ? WinColors.accent : WinColors.textDim,
                 weight: FontWeight.w600,
-              ),
+              ).copyWith(height: 1.1),
             ),
             const SizedBox(width: 4),
             Text('bpm', style: winText(11, color: WinColors.textDim)),
@@ -1251,6 +1269,9 @@ final class SettingsView extends StatelessWidget {
     required this.version,
     this.bleDebug = false,
     this.onToggleBleDebug,
+    this.scale = 1,
+    this.bpmFont = defaultBpmFontSize,
+    this.onBpmFontChanged,
     super.key,
   });
 
@@ -1265,10 +1286,16 @@ final class SettingsView extends StatelessWidget {
   final bool bleDebug;
   final VoidCallback? onToggleBleDebug;
 
+  final double scale;
+
+  /// 心率字号（DIP）：主界面卡片与精简态都跟它走。
+  final double bpmFont;
+  final ValueChanged<double>? onBpmFontChanged;
+
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 64 * scale, 16, 16),
       children: [
         _SectionTitle('显示'),
         _Card(
@@ -1280,6 +1307,24 @@ final class SettingsView extends StatelessWidget {
                 title: Text('背景全透明', style: winText(AppTextSize.body)),
                 subtitle: Text(
                   '关闭则用深色底；文字与折线始终不透明',
+                  style: winText(AppTextSize.caption, color: WinColors.textDim),
+                ),
+              ),
+              const Divider(height: 1, color: WinColors.line),
+              ListTile(
+                title: Text('心率字号', style: winText(AppTextSize.body)),
+                subtitle: Slider(
+                  value: bpmFont,
+                  min: minBpmFontSize,
+                  max: maxBpmFontSize,
+                  divisions:
+                      ((maxBpmFontSize - minBpmFontSize) / bpmFontSizeStep)
+                          .round(),
+                  label: '${bpmFont.round()}',
+                  onChanged: onBpmFontChanged,
+                ),
+                trailing: Text(
+                  '${bpmFont.round()} px',
                   style: winText(AppTextSize.caption, color: WinColors.textDim),
                 ),
               ),

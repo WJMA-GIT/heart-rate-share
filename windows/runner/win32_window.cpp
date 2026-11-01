@@ -1,5 +1,6 @@
 #include "win32_window.h"
 
+#include <commctrl.h>  // SetWindowSubclass（挂在 Flutter 视图窗口上做命中测试）
 #include <dwmapi.h>
 #include <flutter_windows.h>
 #include <windowsx.h>  // GET_X_LPARAM / GET_Y_LPARAM（WM_NCHITTEST 的鼠标坐标）
@@ -48,14 +49,12 @@ constexpr UINT kMsgMinClientSize = WM_APP + 1;
 constexpr UINT kMsgCompact = WM_APP + 2;
 constexpr UINT kMsgClientSize = WM_APP + 3;
 
-// 客户区尺寸（DIP）→ 窗口尺寸（物理像素）。DIP→物理的 DPI 折算只做在这一处。
+// 客户区尺寸（DIP）→ 窗口尺寸（物理像素）。客户端 == 整窗（WM_NCCALCSIZE 返回 0，
+// 没有非客户区），所以这里只剩 DPI 折算，不再 AdjustWindowRectEx。
 RECT ClientToWindow(HWND window, int dip_width, int dip_height) {
   const double scale = ::GetDpiForWindow(window) / 96.0;
   RECT rect{0, 0, static_cast<LONG>(dip_width * scale),
             static_cast<LONG>(dip_height * scale)};
-  ::AdjustWindowRectEx(&rect,
-                       static_cast<DWORD>(::GetWindowLongPtr(window, GWL_STYLE)), FALSE,
-                       static_cast<DWORD>(::GetWindowLongPtr(window, GWL_EXSTYLE)));
   return rect;
 }
 
@@ -84,22 +83,16 @@ void CenterOnPrimary(HWND window) {
   ::SetWindowPos(window, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-// 无边框（去掉了 WS_CAPTION）+ 分层色键窗口：系统的非客户区拖拽区不生效，
-// 鼠标落在边框上没人认，窗口就「拉不动」。自己回 WM_NCHITTEST：
-// 命中带 8 DIP（和 96dpi 下 WS_THICKFRAME 的边框同宽，不会吃掉客户区），
-// 四角同样 8 DIP，内部一律 HTCLIENT（交给 Flutter 子窗口）。
+// 无边框（去掉了 WS_CAPTION/WS_BORDER，且 WM_NCCALCSIZE 返回 0）的分层窗口：
+// 系统没有非客户区可拖、可缩放，命中测试全得自己答：
+//   - 外沿 8 DIP（和 96dpi 下系统边框同宽）→ HTLEFT/HTRIGHT/HTTOP/HTBOTTOM + 四角；
+//   - 顶部 28 DIP 的空白带 → HTCAPTION（就是"没有标题栏也能拖窗"的那条）；
+//   - 其余 → HTCLIENT，交给 Flutter 的按钮/输入框/滑杆。
+// Dart 侧控件从 34 DIP 起摆（见 win_app.dart 的 _WindowControls），不落在这条带上。
 constexpr int kResizeBorderDip = 8;
+constexpr int kDragStripDip = 28;
 
-LRESULT HitTestResize(HWND window, LPARAM lparam) {
-  RECT rect{};
-  if (!::GetWindowRect(window, &rect)) return HTCLIENT;
-  const LONG width = rect.right - rect.left;
-  const LONG height = rect.bottom - rect.top;
-  const LONG x = GET_X_LPARAM(lparam) - rect.left;
-  const LONG y = GET_Y_LPARAM(lparam) - rect.top;
-  if (x < 0 || y < 0 || x >= width || y >= height) return HTNOWHERE;
-  const LONG dpi = static_cast<LONG>(::GetDpiForWindow(window));
-  const LONG border = ::MulDiv(kResizeBorderDip, static_cast<LONG>(dpi), 96);
+LRESULT ResizeEdgeFor(LONG x, LONG y, LONG width, LONG height, LONG border) {
   const bool left = x < border;
   const bool right = x >= width - border;
   const bool top = y < border;
@@ -314,9 +307,13 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
 
     case WM_NCHITTEST:
-      // 精简态按内容自适应、最大化时也不给缩放（先还原回普通态再说）。
-      if (compact_ || ::IsZoomed(hwnd)) return HTCLIENT;
-      return HitTestResize(hwnd, lparam);
+      return HitTestWindow(lparam);
+
+    case WM_NCCALCSIZE:
+      // 客户区 == 整个窗口：不留任何非客户区，标题栏/边框连一条细线都没有。
+      // 缩放和拖动全靠上面的 WM_NCHITTEST（`HitTestWindow`）。
+      if (wparam != FALSE) return 0;
+      break;
 
     case WM_DPICHANGED: {
       auto newRectSize = reinterpret_cast<RECT*>(lparam);
@@ -377,6 +374,13 @@ void Win32Window::SetChildContent(HWND content) {
   MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
              frame.bottom - frame.top, true);
 
+  // 视图窗口盖满客户区，鼠标命中只会问它：不挂这个子类过程，缩放/拖拽带了
+  // 就永远收不到 WM_NCHITTEST（这就是「保留 WS_THICKFRAME 也拉不动」的真相）。
+  if (!::SetWindowSubclass(content, &Win32Window::HitTestSubclass, 1,
+                           reinterpret_cast<DWORD_PTR>(this))) {
+    hrs::Log("window: SetWindowSubclass failed, resize/drag by frame only");
+  }
+
   SetFocus(child_content_);
 }
 
@@ -392,6 +396,38 @@ HWND Win32Window::GetHandle() {
 
 void Win32Window::SetQuitOnClose(bool quit_on_close) {
   quit_on_close_ = quit_on_close;
+}
+
+// 命中测试的唯一实现：顶层窗口和 Flutter 视图（子类过程）都走它。
+LRESULT Win32Window::HitTestWindow(LPARAM lparam) {
+  if (window_handle_ == nullptr) return HTCLIENT;
+  RECT rect{};
+  if (!::GetWindowRect(window_handle_, &rect)) return HTCLIENT;
+  const LONG width = rect.right - rect.left;
+  const LONG height = rect.bottom - rect.top;
+  const LONG x = GET_X_LPARAM(lparam) - rect.left;
+  const LONG y = GET_Y_LPARAM(lparam) - rect.top;
+  if (x < 0 || y < 0 || x >= width || y >= height) return HTNOWHERE;
+
+  const double scale = ::GetDpiForWindow(window_handle_) / 96.0;
+  // 精简态按内容自适应，不给缩放；最大化时也不给（先还原成普通窗口再说）。
+  if (!compact_ && !::IsZoomed(window_handle_)) {
+    const LONG border = static_cast<LONG>(kResizeBorderDip * scale);
+    const LRESULT edge = ResizeEdgeFor(x, y, width, height, border);
+    if (edge != HTCLIENT) return edge;
+  }
+  if (y < static_cast<LONG>(kDragStripDip * scale)) return HTCAPTION;
+  return HTCLIENT;
+}
+
+LRESULT CALLBACK Win32Window::HitTestSubclass(HWND hwnd, UINT message,
+                                              WPARAM wparam, LPARAM lparam,
+                                              UINT_PTR id, DWORD_PTR ref) {
+  auto* that = reinterpret_cast<Win32Window*>(ref);
+  if (message == WM_NCHITTEST && that != nullptr) {
+    return that->HitTestWindow(lparam);
+  }
+  return ::DefSubclassProc(hwnd, message, wparam, lparam);
 }
 
 // 用户把 UI 放大到 1.6 后最小尺寸跟着变大：已经比最小还小的窗口现场撑开，

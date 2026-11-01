@@ -57,7 +57,7 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               LPARAM const lparam) noexcept {
   // 缩放命中（WM_NCHITTEST）先自己答：无边框 + 分层色键窗口没有系统拖拽区，
   // 这是窗口唯一能被拉大的途径，不能让嵌入层有机会先吞掉。
-  if (message == WM_NCHITTEST) {
+  if (message == WM_NCHITTEST || message == WM_NCCALCSIZE) {
     return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
   }
 
