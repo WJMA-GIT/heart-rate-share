@@ -59,7 +59,8 @@ final class _WinAppState extends State<WinApp> {
   void initState() {
     super.initState();
     try {
-      final controller = widget.controller ?? WinController(preview: widget.preview);
+      final controller =
+          widget.controller ?? WinController(preview: widget.preview);
       _owns = widget.controller == null;
       _controller = controller;
       controller.addListener(_onChange);
@@ -111,7 +112,8 @@ final class _WinAppState extends State<WinApp> {
     final raw = await AppVersion.readWithBuild();
     final parts = raw.split('+');
     final build = parts.length > 1 && parts[1].isNotEmpty ? parts[1] : '?';
-    final label = '${parts.first} ($build) · ${_buildId.isEmpty ? 'dev' : _buildId}';
+    final label =
+        '${parts.first} ($build) · ${_buildId.isEmpty ? 'dev' : _buildId}';
     StartupLog.info('win: build=$label');
     if (mounted) setState(() => _version = label);
   }
@@ -151,7 +153,9 @@ final class _WinAppState extends State<WinApp> {
     }
     final now = DateTime.now();
     final last = _lastOverlayPush;
-    if (last != null && now.difference(last) < const Duration(seconds: 1)) return;
+    if (last != null && now.difference(last) < const Duration(seconds: 1)) {
+      return;
+    }
     _lastOverlayPush = now;
     channel
         .invokeMethod<void>('setOverlay', _overlayPayload())
@@ -162,7 +166,9 @@ final class _WinAppState extends State<WinApp> {
     final controller = _controller;
     final rows = <Map<String, Object?>>[];
     if (controller.transport == WinTransport.ble) {
-      rows.add(_overlayRow('蓝牙设备', controller.ownBpm, controller.ownSeries, true));
+      rows.add(
+        _overlayRow('蓝牙设备', controller.ownBpm, controller.ownSeries, true),
+      );
     }
     for (final member in controller.members) {
       rows.add(
@@ -261,13 +267,16 @@ abstract final class WinTheme {
   );
 }
 
-TextStyle winText(double size, {Color color = WinColors.text, FontWeight? weight}) =>
-    TextStyle(
-      fontSize: size,
-      color: color,
-      fontWeight: weight,
-      decoration: TextDecoration.none,
-    );
+TextStyle winText(
+  double size, {
+  Color color = WinColors.text,
+  FontWeight? weight,
+}) => TextStyle(
+  fontSize: size,
+  color: color,
+  fontWeight: weight,
+  decoration: TextDecoration.none,
+);
 
 // ---------------------------------------------------------------- 主界面
 
