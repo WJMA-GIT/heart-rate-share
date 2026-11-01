@@ -193,8 +193,10 @@ class BleKeepAliveService : Service() {
             textSize = dp(12).toFloat()
             typeface = Typeface.DEFAULT
         }
+        val bpmFont = (prefs?.getFloat(KEY_BPM_FONT, BPM_FONT_DEFAULT) ?: BPM_FONT_DEFAULT)
+            .coerceIn(BPM_FONT_MIN, BPM_FONT_MAX)
         val bpmPaint = Paint().apply {
-            textSize = dp(13).toFloat()
+            textSize = bpmFont
             typeface = Typeface.DEFAULT_BOLD
         }
         var longest = namePaint.measureText("宽")
@@ -264,11 +266,13 @@ class BleKeepAliveService : Service() {
                     else -> "$bpm"
                 }
                 setTextColor(if (offline) TEXT_OFFLINE else CHART_LINE_COLOR)
-                textSize = 13f
+                textSize = bpmFont
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.END
                 // 定宽 + 右对齐：心率位数变化时右侧折线不会左右抖。
                 width = dynamicBpmWidth.toInt()
+                // 行高跟着字号走，避免大字号被行高裁掉。
+                height = max(dp(22), (bpmFont * 1.5f).toInt())
                 outline()
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -462,6 +466,12 @@ class BleKeepAliveService : Service() {
         // 与 lib/theme/overlay_metrics.dart 一一对应（CI 里有比对测试，改一处必须改两处）。
         private const val GAP_DP = 8
         private const val NAME_EXTRA_DP = 2
+        // 心率字号可调（与 Windows 同一套语义：24–96、步进 4、默认 48）。
+        private const val BPM_FONT_MIN = 24f
+        private const val BPM_FONT_MAX = 96f
+        private const val BPM_FONT_STEP = 4f
+        private const val BPM_FONT_DEFAULT = 48f
+        private const val KEY_BPM_FONT = "overlay.bpmFontSize"
         private const val CHART_WIDTH_DP_FALLBACK = 72
         private const val CHART_WIDTH_DP = 72
         private const val CHART_HEIGHT_DP = 20

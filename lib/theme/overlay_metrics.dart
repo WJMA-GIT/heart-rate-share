@@ -24,6 +24,14 @@ abstract final class OverlayMetrics {
   /// 名称列上限：超过屏宽 60% 才省略（阈值集中在这里）。
   static const nameMaxScreenRatio = 0.6;
 
+  /// 心率字号：范围 24–96、步进 4、默认 48，持久化键 `overlay.bpmFontSize`
+  /// （Windows 侧同一套语义，键 `win.bpmFontSize`）。
+  static const bpmFontMin = 24.0;
+  static const bpmFontMax = 96.0;
+  static const bpmFontStep = 4.0;
+  static const bpmFontDefault = 48.0;
+  static const bpmFontKey = 'overlay.bpmFontSize';
+
   /// 保留给 Windows 紧凑态/旧调用方的兜底默认值（真实布局请用 [computeOverlayLayout]）。
   static const nameWidth = 96.0;
   static const bpmWidth = 48.0;
@@ -44,6 +52,7 @@ final class OverlayLayout {
     required this.gap,
     required this.chartWidth,
     required this.padding,
+    required this.rowHeight,
   });
 
   final double nameWidth;
@@ -51,6 +60,9 @@ final class OverlayLayout {
   final double gap;
   final double chartWidth;
   final double padding;
+
+  /// 行高：随心率字号放大（至少 [OverlayMetrics.rowHeight]）。
+  final double rowHeight;
 
   /// 一行内容宽（不含左右内边距）。
   double get contentWidth => nameWidth + gap + bpmWidth + gap + chartWidth;
@@ -98,7 +110,7 @@ double measureTextWidth(
 OverlayLayout computeOverlayLayout({
   required List<String> names,
   double nameFontSize = 12,
-  double bpmFontSize = 13,
+  double bpmFontSize = OverlayMetrics.bpmFontDefault,
   double? maxNameWidth,
   MeasureText? measure,
 }) {
@@ -126,5 +138,9 @@ OverlayLayout computeOverlayLayout({
     gap: OverlayMetrics.gap,
     chartWidth: OverlayMetrics.chartWidth,
     padding: OverlayMetrics.padding,
+    // 行高跟着字号走：字号 48 时约 22 → 72；字号 96 时约 144，数字不会被裁。
+    rowHeight: bpmFontSize * 1.5 < OverlayMetrics.rowHeight
+        ? OverlayMetrics.rowHeight
+        : bpmFontSize * 1.5,
   );
 }

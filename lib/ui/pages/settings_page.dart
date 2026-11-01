@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/config/app_config.dart';
@@ -11,6 +12,7 @@ import '../../core/update/update_installer.dart';
 import '../../debug/debug_panel.dart';
 import '../../room/room_client.dart';
 import '../app_state.dart';
+import '../../theme/overlay_metrics.dart';
 import '../version_tap.dart';
 import '../widgets/update_tile.dart';
 
@@ -25,11 +27,16 @@ final class _SettingsPageState extends State<SettingsPage> {
   String _version = Zh.loadingVersion;
   late final TextEditingController _nicknameController;
   final _versionTaps = VersionTapGate();
+
+  /// 心率字号（24–96、步进 4、默认 48）：写 `overlay.bpmFontSize`，
+  /// 与 Windows 的 `win.bpmFontSize` 同一套语义；安卓原生悬浮窗读同一个键。
+  double _bpmFont = OverlayMetrics.bpmFontDefault;
   String? _nicknameError;
   bool _savingNickname = false;
 
   @override
   void initState() {
+    _loadBpmFont();
     super.initState();
     _nicknameController = TextEditingController(text: widget.state.nickname);
     PackageInfo.fromPlatform()
@@ -86,6 +93,37 @@ final class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 悬浮窗开关：只在用户主动打开时申请权限；拒绝/不支持就降级为不显示。
+  Future<void> _loadBpmFont() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final value = prefs.getDouble(OverlayMetrics.bpmFontKey);
+      if (value != null && mounted) {
+        setState(
+          () => _bpmFont = value.clamp(
+            OverlayMetrics.bpmFontMin,
+            OverlayMetrics.bpmFontMax,
+          ),
+        );
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _setBpmFont(double value) async {
+    final snapped =
+        (value / OverlayMetrics.bpmFontStep).round() *
+        OverlayMetrics.bpmFontStep;
+    setState(
+      () => _bpmFont = snapped.clamp(
+        OverlayMetrics.bpmFontMin,
+        OverlayMetrics.bpmFontMax,
+      ),
+    );
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(OverlayMetrics.bpmFontKey, _bpmFont);
+    } catch (_) {}
+  }
+
   Future<void> _toggleOverlay(bool value) async {
     final state = widget.state;
     if (value) {
@@ -240,6 +278,34 @@ final class _SettingsPageState extends State<SettingsPage> {
                 Zh.overlayAlphaHint,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(
+              children: [
+                const Text('心率字号'),
+                Expanded(
+                  child: Slider(
+                    value: _bpmFont,
+                    min: OverlayMetrics.bpmFontMin,
+                    max: OverlayMetrics.bpmFontMax,
+                    divisions:
+                        ((OverlayMetrics.bpmFontMax -
+                                    OverlayMetrics.bpmFontMin) /
+                                OverlayMetrics.bpmFontStep)
+                            .round(),
+                    label: '${_bpmFont.round()}',
+                    onChanged: state.overlayEnabled
+                        ? (v) => _setBpmFont(v)
+                        : null,
+                  ),
+                ),
+                SizedBox(
+                  width: 44,
+                  child: Text('${_bpmFont.round()}', textAlign: TextAlign.end),
+                ),
+              ],
             ),
           ),
           SwitchListTile(
