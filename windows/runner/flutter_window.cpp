@@ -67,8 +67,10 @@ bool FlutterWindow::OnCreate() {
                            std::string(" overlay=") +
                            (overlay_.handle() != nullptr ? "ok" : "null"));
         if (call.method_name() == "showOverlay") {
+          // 参数缺失时按"要显示"处理：宁可多显示一次，也不要静默走 Hide 分支。
           const auto* flag = std::get_if<bool>(call.arguments());
-          if (flag != nullptr && *flag) {
+          const bool want_show = (flag == nullptr) ? true : *flag;
+          if (want_show) {
             overlay_.Show();
           } else {
             overlay_.Hide();
