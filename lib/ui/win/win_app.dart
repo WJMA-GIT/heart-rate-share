@@ -37,7 +37,7 @@ double _clampBpmFont(double value) {
 }
 
 final class _WinAppState extends State<WinApp> {
-  WinController? _controller;
+  WinController? _controllerOrNull;
   Object? _fatal;
   bool _owns = false;
   String _version = '—';
@@ -53,7 +53,7 @@ final class _WinAppState extends State<WinApp> {
   static const _showChartKey = 'win.showChart';
   static const _buildId = String.fromEnvironment('BUILD_ID');
 
-  WinController get _controller => _controller!;
+  WinController get _controller => _controllerOrNull!;
 
   @override
   void initState() {
@@ -62,7 +62,7 @@ final class _WinAppState extends State<WinApp> {
       final controller =
           widget.controller ?? WinController(preview: widget.preview);
       _owns = widget.controller == null;
-      _controller = controller;
+      _controllerOrNull = controller;
       controller.addListener(_onChange);
       _overlayChannel = const MethodChannel('hrs/win')
         ..setMethodCallHandler((call) async {
@@ -211,8 +211,8 @@ final class _WinAppState extends State<WinApp> {
   @override
   void dispose() {
     _overlayChannel?.setMethodCallHandler(null);
-    _controller.removeListener(_onChange);
-    if (_owns) _controller.dispose();
+    _controllerOrNull?.removeListener(_onChange);
+    if (_owns) _controllerOrNull?.dispose();
     super.dispose();
   }
 
