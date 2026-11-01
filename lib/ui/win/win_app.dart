@@ -492,14 +492,14 @@ enum _Section { connect, room, settings }
 
 /// Windows 端浅色配色（照手机截图）。**只是本地常量**，不动 `AppColors`（安卓那份）。
 abstract final class WinColors {
-  static const bg = Color(0xFFFAF7F7);         // 页面背景
-  static const surface = Color(0xFFFFFFFF);     // 卡片白
+  static const bg = Color(0xFFFAF7F7); // 页面背景
+  static const surface = Color(0xFFFFFFFF); // 卡片白
   static const surfaceHigh = Color(0xFFF3EFEF); // 次级底（输入框/次级胶囊）
-  static const line = Color(0xFFF0EAEA);        // 极淡分隔（只用在 1px 分隔，不做描边）
-  static const accent = Color(0xFFFF5252);      // 主色，与手机同值
-  static const accentSoft = Color(0x1FFF5252);  // 选中胶囊底
-  static const text = Color(0xFF1A1A1A);        // 正文近黑
-  static const textDim = Color(0xFF9A9A9A);     // 次要灰
+  static const line = Color(0xFFF0EAEA); // 极淡分隔（只用在 1px 分隔，不做描边）
+  static const accent = Color(0xFFFF5252); // 主色，与手机同值
+  static const accentSoft = Color(0x1FFF5252); // 选中胶囊底
+  static const text = Color(0xFF1A1A1A); // 正文近黑
+  static const textDim = Color(0xFF9A9A9A); // 次要灰
   static const ok = Color(0xFF34C759);
   static const warn = Color(0xFFFF9F0A);
 }
