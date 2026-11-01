@@ -14,9 +14,11 @@
 | 缺运行时的表现 | 不存在此问题 | 弹 .NET 的"缺少运行时/去下载"提示 |
 | 适用 | 发给别人、干净机器、不想解释依赖 | 自己机器、已装 .NET 8、在意体积 |
 
-B 当前体积（25 MB）比理论上限（~2 MB）大：publish 走的是
-`PublishSingleFile` 的 RID 特定路径，仍把一部分 WPF 程序集打进了 bundle。
-功能与依赖要求不受影响（仍然需要运行时、仍然启动更快），下一轮再抠体积。
+B 的 25 MB **不是**运行时被打进去了，而是蓝牙用的 WinRT 投影：
+`Microsoft.Windows.SDK.NET.dll` 单文件就 24.9 MB（CI 里 publish 非单文件版可见）。
+要压到 10 MB 以下只能不用这个投影（改用原始 COM 互操作调 `BluetoothLEAdvertisementWatcher`），
+那是另一件工程；WPF 不支持裁剪（`PublishTrimmed`）所以走不了裁剪这条路。
+功能与"需要运行时"的结论不变。
 
 > A 解压目录是 `%TEMP%\.net\<app>\<hash>`，用户看不到、不写安装目录，退出后可被系统清理；
 > 这是 .NET 自包含单文件的固有行为，不是安装包。
