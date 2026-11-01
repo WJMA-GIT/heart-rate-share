@@ -171,6 +171,7 @@
                        VerticalContentAlignment="Center" Padding="10,0" Text="Windows"/>
               <CheckBox x:Name="OverlayBox" Content="连接后显示透明悬浮窗" IsChecked="True" FontSize="14" Margin="0,0,0,12"/>
               <CheckBox x:Name="ShowAllBleBox" Content="显示全部蓝牙设备（默认只列心率设备）" FontSize="14" Margin="0,0,0,12"/>
+              <CheckBox x:Name="ClickThroughBox" Content="悬浮窗点击穿透（开启后悬浮窗不可拖、不可点断开，回这里取消）" FontSize="14" Margin="0,0,0,12"/>
               <TextBlock Text="悬浮窗心率字号" FontSize="13" Foreground="{StaticResource TextDim}"/>
               <Slider x:Name="FontSlider" Minimum="24" Maximum="96" TickFrequency="4"
                       IsSnapToTickEnabled="True" Value="48" Margin="0,6,0,0"
@@ -190,6 +191,17 @@
                 </Border>
               </Grid>
               <TextBlock x:Name="AboutText" FontSize="12" Foreground="{StaticResource TextDim}" Margin="0,12,0,0"/>
+              <TextBlock Text="诊断" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextMain}" Margin="0,16,0,8"/>
+              <TextBlock x:Name="DiagnosticsText" FontSize="12" Foreground="{StaticResource TextDim}"
+                         TextWrapping="Wrap" Text="—"/>
+              <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Border Grid.Column="0" CornerRadius="20" BorderBrush="{StaticResource Accent}"
+                        BorderThickness="1" Height="40">
+                  <Button Content="复制诊断信息" Foreground="{StaticResource Accent}" Background="Transparent"
+                          BorderThickness="0" Padding="16,0" Click="CopyDiagnostics_Click"/>
+                </Border>
+              </Grid>
             </StackPanel>
           </Border>
         </StackPanel>

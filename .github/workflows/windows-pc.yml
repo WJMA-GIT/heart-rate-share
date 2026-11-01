@@ -62,6 +62,15 @@ jobs:
             -o pc-out-b
           Write-Host '--- B publish 目录 ---'
           Get-ChildItem pc-out-b -File | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Write-Host
+
+          # 25MB 从哪来：再 publish 一份**不打单文件**的，看包里到底有哪些程序集
+          dotnet publish pc/HeartRateShare.Desktop -c Release -r win-x64 --self-contained false `
+            -p:SelfContained=false -p:PublishSingleFile=false -o pc-out-b-flat | Out-Null
+          Write-Host '--- B 非单文件产物（前 12 大文件）---'
+          Get-ChildItem pc-out-b-flat -File | Sort-Object Length -Descending | Select-Object -First 12 Name, Length |
+            Format-Table -AutoSize | Out-String | Write-Host
+          $sum = (Get-ChildItem pc-out-b-flat -File | Measure-Object Length -Sum).Sum
+          Write-Host ("B flat total = {0:N1} MB" -f ($sum / 1MB))
           $src = 'pc-out-b/HeartRateShare.exe'
           if (-not (Test-Path $src)) { throw 'B 没有产出 exe' }
           $name = "heartrate-pc-$ver-win-x64-framework-dependent.exe"

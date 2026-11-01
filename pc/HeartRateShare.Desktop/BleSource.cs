@@ -48,11 +48,15 @@ public sealed class BleSource : IHeartRateSource
             watcher.Stopped += (_, args) =>
             {
                 if (args.Error == BluetoothError.RadioNotAvailable)
+                {
                     Failed?.Invoke("蓝牙未开启：请在 Windows 设置里打开蓝牙");
+                    AppState.Current.NoteBleAdapter("蓝牙未开启");
+                }
             };
             watcher.Start();
             _watcher = watcher;
             Status?.Invoke("扫描中…");
+            AppState.Current.NoteBleAdapter("扫描中");
         }
         catch (Exception error)
         {

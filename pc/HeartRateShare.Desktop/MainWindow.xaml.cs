@@ -96,6 +96,18 @@ public partial class MainWindow : Window
         }
     }
 
+    private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Clipboard.SetText(AppState.Current.Diagnostics());
+        }
+        catch (Exception)
+        {
+            // 剪贴板被占用就算了
+        }
+    }
+
     private void Font_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_overlay is not null) _overlay.FontSize = e.NewValue;
@@ -109,6 +121,7 @@ public partial class MainWindow : Window
         if (show)
         {
             _overlay ??= new OverlayWindow { FontSize = FontSlider.Value };
+            _overlay.SetClickThrough(ClickThroughBox.IsChecked ?? false);
             _overlay.Refresh();
             if (!_overlay.IsVisible) _overlay.Show();
         }
@@ -135,6 +148,13 @@ public partial class MainWindow : Window
         RoomStatusText.Text = state.Status;
         AppState.Current.DisplayName = NameBox.Text.Trim();
         AppState.Current.ShowAllBle = ShowAllBleBox.IsChecked ?? false;
+        var clickThrough = ClickThroughBox.IsChecked ?? false;
+        if (clickThrough != AppState.Current.OverlayClickThrough)
+        {
+            AppState.Current.OverlayClickThrough = clickThrough;
+            _overlay?.SetClickThrough(clickThrough);
+        }
+        DiagnosticsText.Text = state.Diagnostics();
 
         DrawChart(first);
         BuildMembers(state);

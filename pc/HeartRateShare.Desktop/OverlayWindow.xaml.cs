@@ -1,7 +1,9 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Interop;
 using System.Windows.Shapes;
 
 namespace HeartRateShare.Desktop;
@@ -9,6 +11,21 @@ namespace HeartRateShare.Desktop;
 /// 透明置顶悬浮窗：名称｜心率｜迷你折线，左侧 16px 拖动条，右侧 24px 断开图标。
 public partial class OverlayWindow : Window
 {
+    private const int GwlExStyle = -20;
+    private const int WsExTransparent = 0x20;
+    private const int WsExNoActivate = 0x08000000;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpFrameChanged = 0x0020;
+
+    [DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")] private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy,
+        uint flags);
+
     private double _fontSize = 48;
 
     public OverlayWindow()
@@ -26,6 +43,22 @@ public partial class OverlayWindow : Window
             _fontSize = Math.Clamp(value, 24, 96);
             Refresh();
         }
+    }
+
+    /// 点击穿透：鼠标事件直接落到下层（游戏）里，窗口不再接收拖动/断开点击。
+    /// 解除方式：主窗口「设置 → 悬浮窗点击穿透」取消勾选（主窗口永远可点）。
+    public void SetClickThrough(bool enabled)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero) return;
+        var exStyle = GetWindowLong(handle, GwlExStyle);
+        exStyle = enabled
+            ? exStyle | WsExTransparent | WsExNoActivate
+            : exStyle & ~WsExTransparent;
+        SetWindowLong(handle, GwlExStyle, exStyle);
+        SetWindowPos(handle, IntPtr.Zero, 0, 0, 0, 0,
+            SwpNoMove | SwpNoSize | SwpNoZOrder | SwpFrameChanged | SwpNoActivate);
+        AppState.Log($"overlay click-through={enabled}");
     }
 
     public void Refresh()

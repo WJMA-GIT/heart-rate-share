@@ -20,6 +20,10 @@ public sealed class AppState
     public string RoomCode { get; private set; } = "";
     public string Server { get; set; } = Protocol.OfficialServer;
     public bool ShowAllBle { get; set; }
+    public bool OverlayClickThrough { get; set; }
+    public DateTime? LastSampleAt { get; private set; }
+    public string? LastError { get; private set; }
+    public string BleAdapterText { get; private set; } = "未扫描";
 
     public event Action? Changed;
     public event Action<bool>? OverlayRequested;
@@ -71,11 +75,20 @@ public sealed class AppState
         }
     }
 
+    private const long MaxLogBytes = 1024 * 1024;   // 1 MB 轮转，留 3 份
+
     public static void Log(string message)
     {
         try
         {
-            File.AppendAllText(LogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+            var path = LogPath;
+            var info = new FileInfo(path);
+            if (info.Exists && info.Length > MaxLogBytes)
+            {
+                File.Move(path + ".1", path + ".2", true);
+                File.Move(path, path + ".1", true);
+            }
+            File.AppendAllText(path, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
         }
         catch (IOException)
         {
@@ -204,6 +217,7 @@ public sealed class AppState
         Transport = transport;
         Members.Clear();
         foreach (var row in rows) Members.Add(row);
+        if (rows.Count > 0) LastSampleAt = DateTime.Now;
         foreach (var row in rows)
         {
             if (!History.TryGetValue(row.Id, out var values))
@@ -218,6 +232,7 @@ public sealed class AppState
         {
             History.Remove(stale);
         }
+        LastError = null;
         Status = rows.Count == 0 ? "已连接，等待成员数据…" : $"已连接 {rows.Count} 人";
         if (rows.Count > 0) RequestOverlay(true);
         Changed?.Invoke();
@@ -236,11 +251,36 @@ public sealed class AppState
         if (index >= 0) Members[index] = row; else Members.Add(row);
     }
 
+    /// 蓝牙适配器状态文案（诊断区块显示用）。
+    public void NoteBleAdapter(string text)
+    {
+        BleAdapterText = text;
+        Changed?.Invoke();
+    }
+
     private void Fail(string message)
     {
         Status = message;
+        LastError = message;
         Log($"error: {message}");
         Changed?.Invoke();
+    }
+
+    /// 诊断区块用：一眼能看出版本、通路、设备数、最后一次采样、错误分类。
+    public string Diagnostics()
+    {
+        var last = LastSampleAt is null ? "无" : LastSampleAt.Value.ToString("HH:mm:ss");
+        return string.Join(Environment.NewLine,
+            $"版本：{typeof(AppState).Assembly.GetName().Version}",
+            $"构建：1.0.15 (PC/WPF)",
+            $"通路：{Transport}",
+            $"状态：{Status}",
+            $"蓝牙：{BleAdapterText}，已发现 {BleDevices.Count} 台",
+            $"局域网：{Peers.Count} 台手机",
+            $"成员：{Members.Count} 人",
+            $"最近采样：{last}",
+            $"最近错误：{LastError ?? "无"}",
+            $"日志：{LogPath}");
     }
 
     public async void Disconnect()
