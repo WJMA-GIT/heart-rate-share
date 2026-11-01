@@ -197,11 +197,20 @@ void OverlayWindow::Render() {
       const float bpm_x = name_x + kNameWidthDip * scale + kGapDip * scale;
       const float chart_x = bpm_x + bpm_width + kGapDip * scale;
 
+      // 浅色桌面上白字会糊：先画一层偏移 1px 的深色影子再画正文。
+      Gdiplus::SolidBrush shadow(Gdiplus::Color(130, 0, 0, 0));
+      g.DrawString(row.name.c_str(), -1, &name_font,
+                   Gdiplus::RectF(name_x + 1.0f, y + 1.0f, kNameWidthDip * scale,
+                                  row_height),
+                   nullptr, &shadow);
       g.DrawString(row.name.c_str(), -1, &name_font,
                    Gdiplus::RectF(name_x, y, kNameWidthDip * scale, row_height),
                    nullptr, &name_brush);
       Gdiplus::StringFormat right;
       right.SetAlignment(Gdiplus::StringAlignmentFar);
+      g.DrawString(row.bpm.c_str(), -1, &bpm_font,
+                   Gdiplus::RectF(bpm_x + 1.0f, y + 1.0f, bpm_width, row_height),
+                   &right, &shadow);
       g.DrawString(row.bpm.c_str(), -1, &bpm_font,
                    Gdiplus::RectF(bpm_x, y, bpm_width, row_height), &right,
                    row.online ? &bpm_brush : &dim_brush);

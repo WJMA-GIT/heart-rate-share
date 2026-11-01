@@ -292,20 +292,12 @@ final class _WinAppState extends State<WinApp> {
               backgroundColor: WinColors.bg,
               body: LayoutBuilder(
                 builder: (context, constraints) {
-                  // 窄于阈值（×缩放）就把导航折叠成图标，宽度让给内容。
-                  final iconOnly =
-                      constraints.maxWidth < _narrowLayoutWidth * _scale;
-                  // 顶部空白带（导航右侧、右上角控件左侧）是拖动区：那里没有控件，
-                  // 点它只会拖窗；其余区域一律 HTCLIENT，按钮照常点。
-                  final railWidth = (iconOnly ? 64.0 : 168.0) * _scale;
-                  final bandWidth =
-                      constraints.maxWidth - railWidth - 150 * _scale;
+                  // 顶部空白带是拖动区：那里没有控件，点它只拖窗；其余一律 HTCLIENT。
+                  final bandWidth = constraints.maxWidth - 32 - 150 * _scale;
                   if (bandWidth > 20) {
-                    _pushDragRect(
-                      Rect.fromLTWH(railWidth, 0, bandWidth, 24 * _scale),
-                    );
+                    _pushDragRect(Rect.fromLTWH(16, 0, bandWidth, 24 * _scale));
                   }
-                  // Ctrl+滚轮调缩放（原来挂在 _TopBar 上，标题栏删掉后挪到整页）。
+                  // Ctrl+滚轮调缩放（标题栏删掉后挂在整页）。
                   return Listener(
                     onPointerSignal: (event) {
                       if (event is PointerScrollEvent &&
@@ -315,23 +307,20 @@ final class _WinAppState extends State<WinApp> {
                     },
                     child: Stack(
                       children: [
-                        // Positioned.fill：Row 要拿到确定宽高（_NavRail 里有 Spacer）。
                         Positioned.fill(
-                          child: Row(
+                          child: Column(
                             children: [
-                              _NavRail(
+                              Expanded(child: _page()),
+                              _BottomTabs(
                                 section: _section,
-                                iconOnly: iconOnly,
+                                scale: _scale,
                                 onSelect: (section) =>
                                     setState(() => _section = section),
-                                onDrag: startWindowDrag,
                               ),
-                              Expanded(child: _page()),
                             ],
                           ),
                         ),
-                        // 没有标题栏：退出/缩放浮在内容区右上角，顶部 28 DIP
-                        // 留给原生的拖拽带（win32_window.cpp: kDragStripDip）。
+                        // 右上角窗口控件（没有标题栏，最小化/退出只能自己做）。
                         Positioned(
                           top: (_dragStripDip + 6) * _scale,
                           right: 8 * _scale,
@@ -352,25 +341,119 @@ final class _WinAppState extends State<WinApp> {
     );
   }
 
+  /// 「当前心率」：蓝牙自己那一路优先，否则取第一个在线成员。
+  int? _currentBpm() {
+    final controller = _controllerOrNull;
+    if (controller == null) return null;
+    final own = controller.ownBpm;
+    if (own != null) return own;
+    for (final member in controller.members) {
+      final bpm = controller.liveBpm(member);
+      if (bpm != null) return bpm;
+    }
+    return null;
+  }
+
+  HeartRateSeries _currentSeries() {
+    final controller = _controllerOrNull;
+    if (controller == null) return HeartRateSeries();
+    if (controller.transport == WinTransport.ble) return controller.ownSeries;
+    for (final member in controller.members) {
+      if (member.online) {
+        return controller.seriesFor(member.report.memberId);
+      }
+    }
+    return HeartRateSeries();
+  }
+
+  /// 设备列表卡（沿用原来的连接页内容，视觉交给浅色主题）。
+  Widget _deviceList(WinController c) => ConnectView(
+    adapterState: c.ble.adapterState,
+    bleBusy: c.ble.phase.name,
+    devices: [for (final d in c.bleDevices) d],
+    hiddenDevices: c.hiddenBleDeviceCount,
+    peers: c.peers,
+    error: c.error,
+    scale: _scale,
+    onScanBle: c.scanBle,
+    onConnectBle: c.connectBle,
+    onConnectPeer: (peer) async {
+      await c.connectPeer(peer);
+      if (mounted) setState(() => _section = _Section.room);
+    },
+    onConnectManual: c.connectManual,
+  );
+
   Widget _page() {
     final c = _controller;
     switch (_section) {
       case _Section.connect:
-        return ConnectView(
-          adapterState: c.ble.adapterState,
-          bleBusy: c.ble.phase.name,
-          devices: [for (final d in c.bleDevices) d],
-          hiddenDevices: c.hiddenBleDeviceCount,
-          peers: c.peers,
-          error: c.error,
-          scale: _scale,
-          onScanBle: c.scanBle,
-          onConnectBle: c.connectBle,
-          onConnectPeer: (peer) async {
-            await c.connectPeer(peer);
-            if (mounted) setState(() => _section = _Section.room);
-          },
-          onConnectManual: c.connectManual,
+        return Column(
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(24, 64 * _scale, 24, 8 * _scale),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '当前心率',
+                  style: winText(32 * _scale, weight: FontWeight.w700),
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: _HeartCard(
+                bpm: _currentBpm(),
+                series: _currentSeries(),
+                scale: _scale,
+                font: _bpmFontSize,
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(24, 16, 24, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: FilledButton.icon(
+                        onPressed: () => c.scanBle(),
+                        icon: const Icon(Icons.bluetooth_searching, size: 18),
+                        label: const Text('扫描设备'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: WinColors.accent,
+                          foregroundColor: Colors.white,
+                          shape: const StadiumBorder(),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: c.connected
+                            ? () async {
+                                await c.disconnectAll();
+                                if (mounted) setState(() {});
+                              }
+                            : null,
+                        icon: const Icon(Icons.link_off, size: 18),
+                        label: const Text('断开连接'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: WinColors.accent,
+                          side: const BorderSide(color: WinColors.accent),
+                          shape: const StadiumBorder(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: _deviceList(c)),
+          ],
         );
       case _Section.room:
         return RoomView(
@@ -407,22 +490,36 @@ enum _Section { connect, room, settings }
 
 // ---------------------------------------------------------------- 设计令牌
 
-/// 只是 `AppColors` 的别名：Windows 端**不再有自己的色值**，全部来自手机端共用主题。
+/// Windows 端浅色配色（照手机截图）。**只是本地常量**，不动 `AppColors`（安卓那份）。
 abstract final class WinColors {
-  static const bg = AppColors.bg;
-  static const surface = AppColors.surface;
-  static const surfaceHigh = AppColors.surfaceHigh;
-  static const line = AppColors.line;
-  static const accent = AppColors.brand;
-  static const text = AppColors.text;
-  static const textDim = AppColors.textDim;
-  static const ok = AppColors.ok;
-  static const warn = AppColors.warn;
+  static const bg = Color(0xFFFAF7F7);         // 页面背景
+  static const surface = Color(0xFFFFFFFF);     // 卡片白
+  static const surfaceHigh = Color(0xFFF3EFEF); // 次级底（输入框/次级胶囊）
+  static const line = Color(0xFFF0EAEA);        // 极淡分隔（只用在 1px 分隔，不做描边）
+  static const accent = Color(0xFFFF5252);      // 主色，与手机同值
+  static const accentSoft = Color(0x1FFF5252);  // 选中胶囊底
+  static const text = Color(0xFF1A1A1A);        // 正文近黑
+  static const textDim = Color(0xFF9A9A9A);     // 次要灰
+  static const ok = Color(0xFF34C759);
+  static const warn = Color(0xFFFF9F0A);
 }
 
 abstract final class WinTheme {
-  /// 直接复用手机端那套色值/字号（见 lib/theme/app_theme.dart）。
-  static ThemeData data() => AppTheme.desktop();
+  /// 浅色桌面主题：白卡片 + 近黑正文，字号阶梯 12/14/16/20/32/96。
+  static ThemeData data() => ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.light,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: WinColors.accent,
+      brightness: Brightness.light,
+    ).copyWith(surface: WinColors.surface),
+    scaffoldBackgroundColor: WinColors.bg,
+    splashFactory: NoSplash.splashFactory,
+    textTheme: const TextTheme(
+      bodyMedium: TextStyle(color: WinColors.text),
+      bodySmall: TextStyle(color: WinColors.textDim),
+    ),
+  );
 }
 
 TextStyle winText(
@@ -517,121 +614,221 @@ final class _WinButton extends StatelessWidget {
   );
 }
 
-// ---------------------------------------------------------------- 左侧导航
+// ---------------------------------------------------------------- 底部 tab
 
-final class _NavRail extends StatelessWidget {
-  const _NavRail({
+/// 心率 / 房间 / 设置：图标 + 文字，选中态粉胶囊。
+final class _BottomTabs extends StatelessWidget {
+  const _BottomTabs({
     required this.section,
+    required this.scale,
     required this.onSelect,
-    required this.onDrag,
-    required this.iconOnly,
   });
 
   final _Section section;
+  final double scale;
   final ValueChanged<_Section> onSelect;
-  final VoidCallback onDrag;
-
-  /// 窄窗口下的图标模式：只剩图标（168 → 64），把宽度让给内容。
-  final bool iconOnly;
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onPanStart: (_) => onDrag(),
+  Widget build(BuildContext context) => Container(
+    height: 64 * scale,
+    padding: EdgeInsets.symmetric(horizontal: 16 * scale, vertical: 6 * scale),
+    color: WinColors.surface,
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        _tab(Icons.favorite, '心率', _Section.connect),
+        _tab(Icons.groups_outlined, '房间', _Section.room),
+        _tab(Icons.tune, '设置', _Section.settings),
+      ],
+    ),
+  );
+
+  Widget _tab(IconData icon, String label, _Section target) {
+    final selected = section == target;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: () => onSelect(target),
       child: Container(
-        width: iconOnly ? 64 : 168,
-        decoration: const BoxDecoration(
-          color: WinColors.surface,
-          border: Border(right: BorderSide(color: WinColors.line)),
+        padding: EdgeInsets.symmetric(horizontal: 18 * scale, vertical: 8 * scale),
+        decoration: BoxDecoration(
+          color: selected ? WinColors.accentSoft : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
         ),
-        child: Column(
+        child: Row(
           children: [
-            const SizedBox(height: 8),
-            _item(Icons.bluetooth_searching, '连接', _Section.connect),
-            _item(Icons.groups_outlined, '房间', _Section.room),
-            _item(Icons.tune, '设置', _Section.settings),
-            const Spacer(),
-            if (!iconOnly)
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  '拖动标题栏移动窗口',
-                  style: winText(11, color: WinColors.textDim),
-                ),
+            Icon(
+              icon,
+              size: 18 * scale,
+              color: selected ? WinColors.accent : WinColors.textDim,
+            ),
+            SizedBox(width: 6 * scale),
+            Text(
+              label,
+              style: winText(
+                14 * scale,
+                color: selected ? WinColors.accent : WinColors.textDim,
+                weight: selected ? FontWeight.w600 : FontWeight.w400,
               ),
+            ),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _item(IconData icon, String label, _Section target) {
-    final selected = section == target;
-    final item = Container(
-      height: 40,
-      padding: EdgeInsets.symmetric(horizontal: iconOnly ? 0 : 10),
-      decoration: BoxDecoration(
-        color: selected ? WinColors.surfaceHigh : Colors.transparent,
-        borderRadius: BorderRadius.circular(AppRadius.button),
-      ),
-      child: Row(
-        mainAxisAlignment: iconOnly
-            ? MainAxisAlignment.center
-            : MainAxisAlignment.start,
-        children: [
-          Icon(
-            icon,
-            size: 16,
-            color: selected ? WinColors.accent : WinColors.textDim,
-          ),
-          if (!iconOnly) const SizedBox(width: 10),
-          if (!iconOnly)
-            Text(
-              label,
-              style: winText(
-                14,
-                color: selected ? WinColors.text : WinColors.textDim,
+// ---------------------------------------------------------------- 心率主卡
+
+/// 超大心率数字 + 心形底纹 + BPM + 折线（左轴动态刻度、右端「最新」、左端「-60s」）。
+final class _HeartCard extends StatelessWidget {
+  const _HeartCard({
+    required this.bpm,
+    required this.series,
+    required this.scale,
+    required this.font,
+  });
+
+  final int? bpm;
+  final HeartRateSeries series;
+  final double scale;
+  final double font;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: EdgeInsets.all(24 * scale),
+    decoration: BoxDecoration(
+      color: WinColors.surface,
+      borderRadius: BorderRadius.circular(16 * scale),
+    ),
+    child: Column(
+      children: [
+        SizedBox(
+          height: font * 1.3 * scale,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Icon(
+                Icons.favorite,
+                size: font * 1.5 * scale,
+                color: WinColors.accent.withValues(alpha: 0.08),
               ),
+              Text(
+                bpm?.toString() ?? '--',
+                maxLines: 1,
+                style: winText(
+                  font * 2.0 * scale,
+                  color: WinColors.text,
+                  weight: FontWeight.w700,
+                ).copyWith(height: 1.0),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: 4 * scale),
+        Text('BPM', style: winText(14 * scale, color: WinColors.textDim)),
+        SizedBox(height: 16 * scale),
+        Stack(
+          children: [
+            HeartRateChart(series: series, bpm: bpm, height: 150 * scale),
+            Positioned(
+              right: 0,
+              top: 0,
+              child: Text('最新', style: winText(11 * scale, color: WinColors.textDim)),
             ),
-        ],
-      ),
-    );
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadius.button),
-        onTap: () => onSelect(target),
-        // 图标模式下没有文字，靠 Tooltip 说明。
-        child: iconOnly ? Tooltip(message: label, child: item) : item,
-      ),
-    );
-  }
+            Positioned(
+              left: 0,
+              bottom: 0,
+              child: Text('-60s', style: winText(11 * scale, color: WinColors.textDim)),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 }
 
-/// 完整界面的最小客户区（DIP，×UI 缩放后生效）：720×480 是导航 + 内容
-/// 都还放得下的宽度，再小就只能靠滚动看了。
-const double _minWindowWidth = 720;
-const double _minWindowHeight = 480;
+// ------------------------------------------------------- 右上角窗口控件（无标题栏）
 
-/// 自适应阈值（都乘当前 UI 缩放，放大后按比例提前收）：
-/// 窗口窄于它就折叠导航、设备表丢掉 RSSI 列；够宽才把成员卡片排成两列。
-const double _narrowLayoutWidth = 900;
-const double _wideLayoutWidth = 1000;
+final class _WindowControls extends StatelessWidget {
+  const _WindowControls({
+    required this.scale,
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onMinimize,
+    required this.onClose,
+  });
 
-/// 心率字号（DIP，24–96 步进 4）：默认 52，比 1.0.12 的 28 明显大一截。
-const double minBpmFontSize = 24;
-const double maxBpmFontSize = 96;
-const double bpmFontSizeStep = 4;
-const double defaultBpmFontSize = 52;
+  final double scale;
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onMinimize;
+  final VoidCallback onClose;
 
-/// 顶部拖拽带（DIP）：和 windows/runner/win32_window.cpp 的 kDragStripDip 对齐，
-/// 这条带里原生返回 HTCAPTION，所以 Dart 的控件要从下面开始摆。
-const double _dragStripDip = 28;
-
-double _clampBpmFontSize(double value) {
-  final stepped = (value / bpmFontSizeStep).round() * bpmFontSizeStep;
-  return stepped.clamp(minBpmFontSize, maxBpmFontSize).toDouble();
+  /// 浮在内容区右上角的一小条：缩放 −/＋、最小化、退出。
+  /// 没有任何标题栏；拖动靠原生顶部 28 DIP 的拖拽带（HTCAPTION）。
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: EdgeInsets.symmetric(horizontal: 6 * scale),
+    decoration: BoxDecoration(
+      color: WinColors.surface.withValues(alpha: 0.92),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: WinColors.line),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _WinButton(
+          icon: Icons.remove,
+          tooltip: '缩小界面（Ctrl+滚轮）',
+          onTap: onZoomOut,
+        ),
+        _WinButton(icon: Icons.add, tooltip: '放大界面（Ctrl+滚轮）', onTap: onZoomIn),
+        _WinButton(icon: Icons.minimize, tooltip: '最小化', onTap: onMinimize),
+        _WinButton(
+          icon: Icons.power_settings_new,
+          tooltip: '退出',
+          onTap: onClose,
+          danger: true,
+        ),
+      ],
+    ),
+  );
 }
+
+/// 自绘窗口按钮（没有系统标题栏，最小化/退出只能自己做）。
+final class _WinButton extends StatelessWidget {
+  const _WinButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.danger = false,
+  });
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: onTap,
+      child: SizedBox(
+        width: 30,
+        height: 30,
+        child: Icon(
+          icon,
+          size: 14,
+          color: danger ? WinColors.accent : WinColors.textDim,
+        ),
+      ),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------- 左侧导航
 
 // ---------------------------------------------------------------- 连接页
 
