@@ -149,7 +149,10 @@ final class _WinAppState extends State<WinApp> {
     }
     if (!_overlayShown) {
       _overlayShown = true;
-      channel.invokeMethod<void>('showOverlay', true).catchError((_) {});
+      StartupLog.info('overlay: show requested');
+      channel.invokeMethod<void>('showOverlay', true).catchError((error) {
+        StartupLog.info('overlay: showOverlay failed: $error');
+      });
     }
     final now = DateTime.now();
     final last = _lastOverlayPush;
@@ -159,7 +162,9 @@ final class _WinAppState extends State<WinApp> {
     _lastOverlayPush = now;
     channel
         .invokeMethod<void>('setOverlay', _overlayPayload())
-        .catchError((_) {});
+        .catchError((Object error) {
+          StartupLog.info('overlay: setOverlay failed: $error');
+        });
   }
 
   Map<String, Object?> _overlayPayload() {
