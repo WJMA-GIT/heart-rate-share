@@ -99,10 +99,19 @@ final class _WinAppState extends State<WinApp> {
     setWindowDragRect(rect.left, rect.top, rect.width, rect.height);
   }
 
+  /// 构建标识：CI 用 --dart-define=BUILD_ID=<sha8> 注入；本地构建显示 dev。
+  static const _buildId = String.fromEnvironment('BUILD_ID');
+
   /// 版本号只读一次（全应用唯一入口 `AppVersion`），不要放进 build 里反复异步读。
+  /// 显示成 `1.0.15 (1002116) · <sha8|dev>`：用户一眼能对上发布物。
   Future<void> _loadVersion() async {
-    final value = await AppVersion.read();
-    if (mounted) setState(() => _version = value);
+    final raw = await AppVersion.readWithBuild();
+    final parts = raw.split('+');
+    final build = parts.length > 1 && parts[1].isNotEmpty ? parts[1] : '?';
+    final label =
+        '${parts.first} ($build) · ${_buildId.isEmpty ? 'dev' : _buildId}';
+    StartupLog.info('win: build=$label');
+    if (mounted) setState(() => _version = label);
   }
 
   Future<void> _loadBpmFontSize() async {

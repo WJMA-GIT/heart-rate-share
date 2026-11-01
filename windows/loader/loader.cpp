@@ -45,6 +45,36 @@ std::wstring LongPath(const std::wstring& path) {
   return L"\\\\?\\" + path;
 }
 
+// 和 runner 写同一份 startup.log（UTF-8），用户回传一个文件就能看出跑的是哪次构建。
+void AppendLog(const std::wstring& line) {
+  const std::wstring local = Env(L"LOCALAPPDATA");
+  if (local.empty()) return;
+  const std::wstring dir = local + L"\\heartrate\\logs";
+  ::CreateDirectoryW((local + L"\\heartrate").c_str(), nullptr);
+  ::CreateDirectoryW(dir.c_str(), nullptr);
+  const std::wstring path = dir + L"\\startup.log";
+  HANDLE file = ::CreateFileW(LongPath(path).c_str(), FILE_APPEND_DATA,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) return;
+  SYSTEMTIME st{};
+  ::GetLocalTime(&st);
+  wchar_t stamp[32] = {0};
+  ::_snwprintf_s(stamp, 32, _TRUNCATE, L"[%04d-%02d-%02d %02d:%02d:%02d] ", st.wYear,
+                 st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+  const std::wstring text = std::wstring(stamp) + L"loader: " + line + L"\r\n";
+  const int bytes =
+      ::WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
+  if (bytes > 1) {
+    std::vector<char> buffer(static_cast<size_t>(bytes));
+    ::WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, buffer.data(), bytes, nullptr,
+                          nullptr);
+    DWORD written = 0;
+    ::WriteFile(file, buffer.data(), static_cast<DWORD>(bytes - 1), &written, nullptr);
+  }
+  ::CloseHandle(file);
+}
+
 bool Exists(const std::wstring& path) {
   return ::GetFileAttributesW(LongPath(path).c_str()) != INVALID_FILE_ATTRIBUTES;
 }
@@ -103,17 +133,46 @@ bool RunAndWait(const std::wstring& cmdline) {
   return code == 0;
 }
 
-// 只保留当前版本目录，避免旧版本无限堆积（每版约 45 MB）。
+// 目录名是 payload sha256 的前 8 位（8 个小写 hex）。保留当前目录 + 最近用的一个，
+// 旧的删掉——重新发版就天然换了目录，不会再跑旧文件。
 void CleanOlderVersions(const std::wstring& appRoot, const std::wstring& keep) {
   WIN32_FIND_DATAW data{};
   HANDLE find = ::FindFirstFileW(LongPath(appRoot + L"\\*").c_str(), &data);
   if (find == INVALID_HANDLE_VALUE) return;
+  std::wstring newestOther;
+  ULARGE_INTEGER newestTime{};
   do {
     if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
       const std::wstring name = data.cFileName;
       if (name == L"." || name == L".." || name == keep) continue;
-      // 只删我们自己的版本目录（形如 p<数字> 或 <数字>.<数字>.<数字>*）
-      if (name.empty() || (name[0] != L'p' && (name[0] < L'0' || name[0] > L'9'))) continue;
+      if (name.size() != 8) continue;
+      bool hex = true;
+      for (wchar_t ch : name) {
+        if (!((ch >= L'0' && ch <= L'9') || (ch >= L'a' && ch <= L'f'))) {
+          hex = false;
+          break;
+        }
+      }
+      if (!hex) continue;
+      ULARGE_INTEGER stamp{};
+      stamp.LowPart = data.ftLastWriteTime.dwLowDateTime;
+      stamp.HighPart = data.ftLastWriteTime.dwHighDateTime;
+      if (newestOther.empty() || stamp.QuadPart > newestTime.QuadPart) {
+        newestOther = name;
+        newestTime = stamp;
+      }
+    }
+  } while (::FindNextFileW(find, &data));
+  ::FindClose(find);
+
+  // 只保留"最近的一个旧目录"，其余全删。
+  find = ::FindFirstFileW(LongPath(appRoot + L"\\*").c_str(), &data);
+  if (find == INVALID_HANDLE_VALUE) return;
+  do {
+    if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+      const std::wstring name = data.cFileName;
+      if (name == L"." || name == L".." || name == keep || name == newestOther) continue;
+      if (name.size() != 8) continue;
       std::wstring cmd = L"cmd.exe /c rmdir /s /q \"" + appRoot + L"\\" + name + L"\"";
       RunAndWait(cmd);
     }
@@ -187,7 +246,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     return 1;
   }
   const std::wstring appRoot = local + L"\\heartrate\\app";
-  const std::wstring dest = appRoot + L"\\" + wideVersion;
+
+  // 解压目录**按 payload 的 sha256 前 8 位**命名，不按版本名。
+  // 版本名不变只递增构建号时（1.0.15 反复重发），按版本名会命中旧目录，
+  // 用户就永远跑着上一版（1.0.15 新 UI 没生效就是这么来的）。
+  std::wstring shaHex;
+  for (int i = 0; i < 32; ++i) {
+    static const wchar_t* digits = L"0123456789abcdef";
+    shaHex.push_back(digits[footer.sha256[i] >> 4]);
+    shaHex.push_back(digits[footer.sha256[i] & 0x0F]);
+  }
+  const std::wstring key = shaHex.substr(0, 8);
+  const std::wstring dest = appRoot + L"\\" + key;
   const std::wstring destExe = dest + L"\\heartrate.exe";
 
   HANDLE mutex = ::CreateMutexW(nullptr, FALSE, L"Local\\HeartRateShareLoader");
@@ -250,7 +320,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
   if (mutex) ::ReleaseMutex(mutex);
   if (mutex) ::CloseHandle(mutex);
 
-  CleanOlderVersions(appRoot, wideVersion);
+  CleanOlderVersions(appRoot, key);
+  AppendLog(L"payload sha256=" + shaHex);
+  AppendLog(L"launch dir=" + dest);
+  AppendLog(L"build=" + wideVersion + L"+" + key);
 
   STARTUPINFOW si{};
   si.cb = sizeof(si);
