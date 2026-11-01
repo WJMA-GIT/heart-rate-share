@@ -1,7 +1,8 @@
 name: windows-pc
 
-# C#/.NET 8 + WPF 桌面客户端（pc/）：单文件 exe 构建 + 冒烟 + 截图。
-# 与 Flutter 的 windows job 互不影响：这里只碰 pc/**。
+# C#/.NET 8 + WPF 桌面客户端（pc/）：两种分发形态一起出。
+#   A self-contained 单文件：免装运行时，体积大，首次运行会解到 %TEMP%\.net
+#   B framework-dependent 单文件：体积小，需装 .NET 8 Desktop Runtime
 "on":
   push:
     branches: [main, windows]
@@ -18,9 +19,9 @@ env:
   DOTNET_VERSION: '8.0.x'
 
 jobs:
-  pc-single-file:
+  pc-both-flavors:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -31,23 +32,45 @@ jobs:
         shell: pwsh
         run: dotnet test pc/HeartRateShare.Tests -c Release --nologo -v minimal
 
-      - name: Publish single-file exe
+      - name: Publish A · self-contained single file
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $ver = ([xml](Get-Content pc/HeartRateShare.Desktop/HeartRateShare.Desktop.csproj)).Project.PropertyGroup.Version
           dotnet publish pc/HeartRateShare.Desktop -c Release -r win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:EnableCompressionInSingleFile=true -o pc-out
-          $exe = Join-Path (Get-Location) 'pc-out/HeartRateShare.exe'
-          if (-not (Test-Path $exe)) { throw 'publish 没有产出 HeartRateShare.exe' }
-          $item = Get-Item $exe
-          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-          Write-Host ("exe = {0}" -f $exe)
-          Write-Host ("size = {0} bytes ({1:N1} MB)" -f $item.Length, ($item.Length / 1MB))
-          Write-Host ("sha256 = {0}" -f $hash)
-          Write-Host ("version = {0}" -f $item.VersionInfo.FileVersion)
+            -p:EnableCompressionInSingleFile=true -o pc-out-a
+          $src = 'pc-out-a/HeartRateShare.exe'
+          if (-not (Test-Path $src)) { throw 'A 没有产出 exe' }
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          $name = "heartrate-pc-$ver-win-x64-selfcontained.exe"
+          Copy-Item $src "out/$name" -Force
+          $item = Get-Item "out/$name"
+          $hash = (Get-FileHash $item.FullName -Algorithm SHA256).Hash.ToLower()
+          Write-Host ("A exe = {0}" -f $item.FullName)
+          Write-Host ("A size = {0} bytes ({1:N1} MB)" -f $item.Length, ($item.Length / 1MB))
+          Write-Host ("A sha256 = {0}" -f $hash)
+          Write-Host ("A version = {0}" -f $item.VersionInfo.FileVersion)
 
-      - name: Smoke (launch + first/second start timing + screenshots)
+      - name: Publish B · framework-dependent single file
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = ([xml](Get-Content pc/HeartRateShare.Desktop/HeartRateShare.Desktop.csproj)).Project.PropertyGroup.Version
+          dotnet publish pc/HeartRateShare.Desktop -c Release -r win-x64 --self-contained false `
+            -p:PublishSingleFile=true -o pc-out-b
+          $src = 'pc-out-b/HeartRateShare.exe'
+          if (-not (Test-Path $src)) { throw 'B 没有产出 exe' }
+          $name = "heartrate-pc-$ver-win-x64-framework-dependent.exe"
+          Copy-Item $src "out/$name" -Force
+          $item = Get-Item "out/$name"
+          $hash = (Get-FileHash $item.FullName -Algorithm SHA256).Hash.ToLower()
+          Write-Host ("B exe = {0}" -f $item.FullName)
+          Write-Host ("B size = {0} bytes ({1:N1} KB)" -f $item.Length, ($item.Length / 1KB))
+          Write-Host ("B sha256 = {0}" -f $hash)
+          Write-Host ("B version = {0}" -f $item.VersionInfo.FileVersion)
+
+      - name: Smoke both flavors (start timing + screenshots + missing-runtime check)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -55,80 +78,133 @@ jobs:
           Add-Type @"
           using System;
           using System.Runtime.InteropServices;
+          using System.Text;
           public class Win {
             [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
             [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
             [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int max);
+            [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr p);
+            [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+            [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+            public delegate bool EnumProc(IntPtr hwnd, IntPtr lparam);
             [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+            public static IntPtr FirstWindow(uint pid) {
+              IntPtr found = IntPtr.Zero;
+              EnumWindows(delegate(IntPtr hwnd, IntPtr lparam) {
+                uint owner; GetWindowThreadProcessId(hwnd, out owner);
+                if (owner == pid && IsWindowVisible(hwnd)) { found = hwnd; return false; }
+                return true;
+              }, IntPtr.Zero);
+              return found;
+            }
+            public static string Title(IntPtr h) {
+              var sb = new StringBuilder(512);
+              GetWindowTextW(h, sb, 512);
+              return sb.ToString();
+            }
           }
           "@
 
-          $exe = Join-Path (Get-Location) 'pc-out/HeartRateShare.exe'
           $tempNet = Join-Path $env:TEMP '.net'
 
-          function Start-Measure([string]$tag) {
+          function Start-And-Measure([string]$exe, [string]$tag, [hashtable]$extraEnv) {
             Remove-Item $tempNet -Recurse -Force -ErrorAction SilentlyContinue
+            if ($extraEnv) { foreach ($k in $extraEnv.Keys) { Set-Item -Path "env:$k" -Value $extraEnv[$k] } }
             $sw = [Diagnostics.Stopwatch]::StartNew()
             $proc = Start-Process -FilePath $exe -ArgumentList '--mock' -PassThru
             $hwnd = [IntPtr]::Zero
             for ($i = 0; $i -lt 400; $i++) {
               Start-Sleep -Milliseconds 50
               $proc.Refresh()
-              if ($proc.HasExited) { throw "[$tag] 进程提前退出，code=$($proc.ExitCode)" }
-              if ($proc.MainWindowHandle -ne [IntPtr]::Zero) { $hwnd = $proc.MainWindowHandle; break }
+              if ($proc.HasExited) { break }
+              $hwnd = [Win]::FirstWindow([uint32]$proc.Id)
+              if ($hwnd -ne [IntPtr]::Zero) { break }
             }
             $sw.Stop()
-            if ($hwnd -eq [IntPtr]::Zero) { throw "[$tag] 没有出现主窗口" }
-            Write-Host ("[{0}] window in {1} ms" -f $tag, $sw.ElapsedMilliseconds)
-            Start-Sleep -Seconds 3
-            $extracted = Test-Path $tempNet
-            Write-Host ("[{0}] %TEMP%\.net 解压目录: {1}" -f $tag, $(if ($extracted) { '存在 -> ' + $tempNet } else { '不存在' }))
-            return @{ Proc = $proc; Hwnd = $hwnd }
+            if ($extraEnv) { foreach ($k in $extraEnv.Keys) { Remove-Item "env:$k" -ErrorAction SilentlyContinue } }
+            return @{ Proc = $proc; Hwnd = $hwnd; Ms = $sw.ElapsedMilliseconds }
           }
-
-          $first = Start-Measure 'first-start'
-          $proc = $first.Proc
-          $hwnd = $first.Hwnd
 
           function Save-Shot([IntPtr]$h, [string]$path) {
             [void][Win]::SetForegroundWindow($h)
             $r = New-Object Win+RECT
             [void][Win]::GetWindowRect($h, [ref]$r)
-            $w = $r.Right - $r.Left
-            $hh = $r.Bottom - $r.Top
+            $w = $r.Right - $r.Left; $hh = $r.Bottom - $r.Top
             if ($w -le 0 -or $hh -le 0) { throw "窗口尺寸异常 $w x $hh" }
             $bmp = New-Object System.Drawing.Bitmap($w, $hh)
             $g = [System.Drawing.Graphics]::FromImage($bmp)
             $hdc = $g.GetHdc()
-            $ok = [Win]::PrintWindow($h, $hdc, 2)
-            $g.ReleaseHdc($hdc)
-            $g.Dispose()
+            [void][Win]::PrintWindow($h, $hdc, 2)
+            $g.ReleaseHdc($hdc); $g.Dispose()
             $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-            # 自查：整张图只有一种颜色就说明没抓到内容
             $distinct = @{}
             for ($x = 0; $x -lt $w; $x += 17) {
               for ($y = 0; $y -lt $hh; $y += 17) { $distinct[$bmp.GetPixel($x, $y).ToArgb()] = 1 }
             }
             $bmp.Dispose()
-            Write-Host ("shot {0}: {1} x {2}, printwindow={3}, distinct-sample={4}" -f $path, $w, $hh, $ok, $distinct.Count)
-            if ($distinct.Count -lt 5) { throw "$path 看起来是空白图（distinct=$($distinct.Count)）" }
+            Write-Host ("shot {0}: {1}x{2}, distinct-sample={3}" -f $path, $w, $hh, $distinct.Count)
+            if ($distinct.Count -lt 5) { throw "$path 看起来是空白图" }
           }
 
-          Save-Shot $hwnd 'pc-main.png'
-          Write-Host '--- startup log ---'
-          $log = Join-Path $env:LOCALAPPDATA 'HeartRateShare\logs\app.log'
-          if (Test-Path $log) { Get-Content $log | Select-Object -Last 30 } else { Write-Host '(no log file)' }
+          $a = Get-ChildItem 'out/*selfcontained.exe' | Select-Object -First 1
+          $b = Get-ChildItem 'out/*framework-dependent.exe' | Select-Object -First 1
+          if (-not $a -or -not $b) { throw '两个产物不齐' }
 
-          Stop-Process -Id $proc.Id -Force
+          # ---- A 自包含：首启/二启 + 解压目录 ----
+          $first = Start-And-Measure $a.FullName 'A-first' $null
+          if ($first.Hwnd -eq [IntPtr]::Zero) { throw 'A 没有出现窗口' }
+          Write-Host ("[A] first start {0} ms, %TEMP%\.net = {1}" -f $first.Ms, (Test-Path $tempNet))
+          Start-Sleep -Seconds 2
+          Save-Shot $first.Hwnd 'pc-a-selfcontained.png'
+          Stop-Process -Id $first.Proc.Id -Force
           Start-Sleep -Milliseconds 500
-          $second = Start-Measure 'second-start'
+          $second = Start-And-Measure $a.FullName 'A-second' $null
+          Write-Host ("[A] second start {0} ms" -f $second.Ms)
           Stop-Process -Id $second.Proc.Id -Force
+
+          # ---- B 框架依赖：本机有运行时，正常启动 ----
+          $bFirst = Start-And-Measure $b.FullName 'B-first' $null
+          if ($bFirst.Hwnd -eq [IntPtr]::Zero) { throw 'B 没有出现窗口（本机应已装 .NET 8 桌面运行时）' }
+          Write-Host ("[B] first start {0} ms" -f $bFirst.Ms)
+          Start-Sleep -Seconds 2
+          Save-Shot $bFirst.Hwnd 'pc-b-framework-dependent.png'
+          Stop-Process -Id $bFirst.Proc.Id -Force
+          Start-Sleep -Milliseconds 500
+          $bSecond = Start-And-Measure $b.FullName 'B-second' $null
+          Write-Host ("[B] second start {0} ms" -f $bSecond.Ms)
+          Stop-Process -Id $bSecond.Proc.Id -Force
+
+          # ---- B 在"没有运行时"的机器上会怎样：把 DOTNET_ROOT 指到空目录 ----
+          $emptyRoot = Join-Path $env:TEMP 'dotnet-empty'
+          Remove-Item $emptyRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $emptyRoot | Out-Null
+          $noRuntime = Start-And-Measure $b.FullName 'B-no-runtime' @{
+            DOTNET_ROOT = $emptyRoot
+            DOTNET_MULTILEVEL_LOOKUP = '0'
+            DOTNET_ROOT_X64 = $emptyRoot
+          }
+          Start-Sleep -Seconds 3
+          $proc = $noRuntime.Proc
+          $proc.Refresh()
+          if ($proc.HasExited) {
+            Write-Host ("[B-no-runtime] 进程退出 code={0}" -f $proc.ExitCode)
+          } else {
+            $dlg = [Win]::FirstWindow([uint32]$proc.Id)
+            $title = if ($dlg -ne [IntPtr]::Zero) { [Win]::Title($dlg) } else { '(无窗口)' }
+            Write-Host ("[B-no-runtime] 仍存活，窗口标题: {0}" -f $title)
+            if ($title -match '\.NET') {
+              Write-Host '[B-no-runtime] 结论：弹的是 .NET 的"缺少运行时/去下载"提示框'
+            }
+            Stop-Process -Id $proc.Id -Force
+          }
+          Remove-Item $emptyRoot -Recurse -Force -ErrorAction SilentlyContinue
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: win-pc-exe
-          path: pc-out/HeartRateShare.exe
+          name: win-pc-exes
+          path: out/*.exe
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
