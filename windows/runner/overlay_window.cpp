@@ -171,8 +171,11 @@ void OverlayWindow::Render() {
                                               static_cast<float>(height)));
     }
 
-    Gdiplus::FontFamily family(L"Microsoft YaHei UI");
-    if (!family.IsAvailable()) family = Gdiplus::FontFamily(L"Segoe UI");
+    const wchar_t* family_name = L"Microsoft YaHei UI";
+    if (!Gdiplus::FontFamily(family_name).IsAvailable()) {
+      family_name = L"Segoe UI";
+    }
+    Gdiplus::FontFamily family(family_name);
     const float name_size = std::max(11.0f, font_dip_ * 0.30f) * scale;
     Gdiplus::Font name_font(&family, name_size, Gdiplus::FontStyleRegular,
                             Gdiplus::UnitPixel);

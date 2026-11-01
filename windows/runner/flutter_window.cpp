@@ -91,9 +91,10 @@ bool FlutterWindow::OnCreate() {
                 }
                 const auto ys = map->find(flutter::EncodableValue("ys"));
                 if (ys != map->end()) {
-                  if (const auto* list = std::get_if<flutter::EncodableList>(&ys->second)) {
-                    row.ys.reserve(list->size());
-                    for (const auto& value : *list) {
+                  if (const auto* ys_list =
+                          std::get_if<flutter::EncodableList>(&ys->second)) {
+                    row.ys.reserve(ys_list->size());
+                    for (const auto& value : *ys_list) {
                       if (const auto* d = std::get_if<double>(&value)) {
                         row.ys.push_back(static_cast<float>(*d));
                       }
@@ -102,9 +103,10 @@ bool FlutterWindow::OnCreate() {
                 }
                 const auto gaps = map->find(flutter::EncodableValue("gaps"));
                 if (gaps != map->end()) {
-                  if (const auto* list = std::get_if<flutter::EncodableList>(&gaps->second)) {
-                    row.gaps.reserve(list->size());
-                    for (const auto& value : *list) {
+                  if (const auto* gap_list =
+                          std::get_if<flutter::EncodableList>(&gaps->second)) {
+                    row.gaps.reserve(gap_list->size());
+                    for (const auto& value : *gap_list) {
                       if (const auto* i = std::get_if<int32_t>(&value)) {
                         row.gaps.push_back(*i);
                       }
