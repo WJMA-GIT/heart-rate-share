@@ -282,7 +282,10 @@ jobs:
           $parts = $ver.Split('.')
           $rc = $rc.Replace('@VERSION_MAJOR@', $parts[0]).Replace('@VERSION_MINOR@', $(if ($parts.Length -gt 1) { $parts[1] } else { '0' })).Replace('@VERSION_PATCH@', $(if ($parts.Length -gt 2) { $parts[2] } else { '0' })).Replace('@VERSION@', $ver).Replace('@BUILD@', "$build")
           Set-Content -Path 'windows/loader/version_gen.rc' -Value $rc -Encoding ASCII
-          cmd /c "call `"$vcvars`" >nul && cl /nologo /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE windows\loader\loader.cpp windows\loader\version_gen.rc /Fe:loader.exe /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup user32.lib bcrypt.lib"
+          # .rc 不能直接喂给 cl（会被当成交给 link 的目标文件 → LNK1107），先用 rc.exe 编成 .res。
+          cmd /c "call `"$vcvars`" >nul && rc /nologo /fo version_gen.res windows\loader\version_gen.rc"
+          if (-not (Test-Path 'version_gen.res')) { throw 'version_gen.res not produced' }
+          cmd /c "call `"$vcvars`" >nul && cl /nologo /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE windows\loader\loader.cpp version_gen.res /Fe:loader.exe /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup user32.lib bcrypt.lib"
           if (-not (Test-Path 'loader.exe')) { throw 'loader.exe not produced' }
           Write-Host "loader.exe built: $((Get-Item loader.exe).Length) bytes"
 
