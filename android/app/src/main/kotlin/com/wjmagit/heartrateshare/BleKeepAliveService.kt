@@ -48,6 +48,7 @@ class BleKeepAliveService : Service() {
     private var overlayScroll: ScrollView? = null
     private var dynamicNameWidth = 0f
     private var dynamicBpmWidth = 0f
+    private var bpmFontSize = 48f
     private var overlayBackground: GradientDrawable? = null
     private var windowManager: WindowManager? = null
     private var prefs: SharedPreferences? = null
@@ -195,6 +196,7 @@ class BleKeepAliveService : Service() {
         }
         val bpmFont = (prefs?.getFloat(KEY_BPM_FONT, BPM_FONT_DEFAULT) ?: BPM_FONT_DEFAULT)
             .coerceIn(BPM_FONT_MIN, BPM_FONT_MAX)
+        bpmFontSize = bpmFont
         val bpmPaint = Paint().apply {
             textSize = bpmFont
             typeface = Typeface.DEFAULT_BOLD
@@ -266,13 +268,13 @@ class BleKeepAliveService : Service() {
                     else -> "$bpm"
                 }
                 setTextColor(if (offline) TEXT_OFFLINE else CHART_LINE_COLOR)
-                textSize = bpmFont
+                textSize = bpmFontSize
                 setTypeface(typeface, Typeface.BOLD)
                 gravity = Gravity.END
                 // 定宽 + 右对齐：心率位数变化时右侧折线不会左右抖。
                 width = dynamicBpmWidth.toInt()
                 // 行高跟着字号走，避免大字号被行高裁掉。
-                height = max(dp(22), (bpmFont * 1.5f).toInt())
+                height = kotlin.math.max(dp(22), (bpmFontSize * 1.5f).toInt())
                 outline()
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
