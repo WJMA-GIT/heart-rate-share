@@ -14,23 +14,39 @@ public partial class OverlayWindow : Window
     public OverlayWindow()
     {
         InitializeComponent();
-        Left = SystemParameters.WorkArea.Right - 360;
-        Top = 80;
+        Left = SystemParameters.WorkArea.Right - 380;
+        Top = 90;
+    }
+
+    public double FontSize
+    {
+        get => _fontSize;
+        set
+        {
+            _fontSize = Math.Clamp(value, 24, 96);
+            Refresh();
+        }
     }
 
     public void Refresh()
     {
         Rows.Children.Clear();
-        foreach (var member in AppState.Current.Members)
+        var state = AppState.Current;
+        foreach (var member in state.Members)
         {
-            var row = new Grid { Height = Math.Max(28, _fontSize * 1.4), Margin = new Thickness(0, 2, 0, 2) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(_fontSize * 2.2) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            var row = new Grid
+            {
+                Height = Math.Max(28, _fontSize * 1.4),
+                Margin = new Thickness(0, 2, 0, 2),
+            };
+            for (var i = 0; i < 5; i++) row.ColumnDefinitions.Add(new ColumnDefinition());
+            row.ColumnDefinitions[0].Width = new GridLength(16);
+            row.ColumnDefinitions[1].Width = new GridLength(120);
+            row.ColumnDefinitions[2].Width = new GridLength(_fontSize * 2.2);
+            row.ColumnDefinitions[3].Width = new GridLength(90);
+            row.ColumnDefinitions[4].Width = new GridLength(28);
 
-            // 拖动条：透明但可点（拖动整窗）
+            // 拖动条：几乎全透明但可点（点住拖整窗）
             var handle = new Border { Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)) };
             handle.MouseLeftButtonDown += (_, _) => DragMove();
             Grid.SetColumn(handle, 0);
@@ -49,7 +65,7 @@ public partial class OverlayWindow : Window
 
             var bpm = new TextBlock
             {
-                Text = member.Bpm?.ToString() ?? "--",
+                Text = member.Bpm.ToString(),
                 FontSize = _fontSize,
                 FontWeight = FontWeights.Bold,
                 Foreground = (Brush)FindResource("Accent"),
@@ -60,7 +76,7 @@ public partial class OverlayWindow : Window
             row.Children.Add(bpm);
 
             var spark = new Canvas { Margin = new Thickness(4, 0, 4, 0) };
-            DrawSpark(spark, member);
+            DrawSpark(spark, state.History.TryGetValue(member.Id, out var values) ? values : []);
             Grid.SetColumn(spark, 3);
             row.Children.Add(spark);
 
@@ -89,31 +105,31 @@ public partial class OverlayWindow : Window
         }
     }
 
-    private void DrawSpark(Canvas canvas, Member member)
+    private void DrawSpark(Canvas canvas, List<int> values)
     {
-        canvas.SizeChanged += (_, _) => Paint(canvas, member);
+        canvas.SizeChanged += (_, _) => Paint(canvas, values);
+        Paint(canvas, values);
     }
 
-    private void Paint(Canvas canvas, Member member)
+    private void Paint(Canvas canvas, List<int> values)
     {
         canvas.Children.Clear();
         var width = canvas.ActualWidth;
         var height = canvas.ActualHeight;
-        if (width <= 1 || height <= 1 || member.Samples.Count < 2) return;
-        var min = member.Samples.Min(s => s.Bpm) - 5;
-        var max = member.Samples.Max(s => s.Bpm) + 5;
+        if (width <= 1 || height <= 1 || values.Count < 2) return;
+        var min = values.Min() - 5;
+        var max = values.Max() + 5;
         if (max - min < 10) { min -= 5; max += 5; }
         var line = new Polyline
         {
             Stroke = (Brush)FindResource("Accent"),
             StrokeThickness = 1.6,
         };
-        var samples = member.Samples.ToList();
-        for (var i = 0; i < samples.Count; i++)
+        for (var i = 0; i < values.Count; i++)
         {
             line.Points.Add(new Point(
-                width * i / Math.Max(1, samples.Count - 1),
-                height - height * (samples[i].Bpm - min) / (max - min)));
+                width * i / (values.Count - 1),
+                height - height * (values[i] - min) / (max - min)));
         }
         canvas.Children.Add(line);
     }

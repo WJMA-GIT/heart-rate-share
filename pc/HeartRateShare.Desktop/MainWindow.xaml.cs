@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -20,78 +21,282 @@ public partial class MainWindow : Window
         _render = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _render.Tick += (_, _) => Refresh();
         _render.Start();
-        Loaded += (_, _) => Refresh();
+        Loaded += (_, _) =>
+        {
+            LogPathText.Text = AppState.LogPath;
+            var version = typeof(AppState).Assembly.GetName().Version;
+            AboutText.Text = $"共享心率 {version?.Major}.{version?.Minor}.{version?.Build} · Windows (WPF)";
+            Refresh();
+        };
         Closed += (_, _) => _overlay?.Close();
     }
+
+    // ---------------------------------------------------------------- 导航
 
     private void Nav_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Border { Tag: string tag }) return;
-        foreach (var (border, label) in new[]
-                 {
-                     (NavHeart, (TextBlock)NavHeart.Child),
-                     (NavRoom, (TextBlock)NavRoom.Child),
-                     (NavSettings, (TextBlock)NavSettings.Child),
-                 })
-        {
-            var on = ReferenceEquals(border, sender);
-            border.Background = on
-                ? (Brush)FindResource("AccentSoft")
-                : Brushes.Transparent;
-            label.Foreground = on
-                ? (Brush)FindResource("Accent")
-                : (Brush)FindResource("TextDim");
-        }
-        PageTitle.Text = tag switch
-        {
-            "room" => "房间",
-            "settings" => "设置",
-            _ => "当前心率",
-        };
+        HeartPanel.Visibility = tag == "heart" ? Visibility.Visible : Visibility.Collapsed;
+        RoomPanel.Visibility = tag == "room" ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPanel.Visibility = tag == "settings" ? Visibility.Visible : Visibility.Collapsed;
+        Highlight(NavHeart, NavHeartText, tag == "heart");
+        Highlight(NavRoom, NavRoomText, tag == "room");
+        Highlight(NavSettings, NavSettingsText, tag == "settings");
     }
 
-    private void Scan_Click(object sender, RoutedEventArgs e) => BleHint.Text = "扫描中…（Phase 1 接 BLE）";
+    private void Highlight(Border border, TextBlock label, bool on)
+    {
+        border.Background = on ? (Brush)FindResource("AccentSoft") : Brushes.Transparent;
+        label.Foreground = on ? (Brush)FindResource("Accent") : (Brush)FindResource("TextDim");
+    }
+
+    // ---------------------------------------------------------------- 操作
+
+    private void Scan_Click(object sender, RoutedEventArgs e) => AppState.Current.ScanBle();
+
     private void Disconnect_Click(object sender, RoutedEventArgs e) => AppState.Current.Disconnect();
-    private void Manual_Click(object sender, RoutedEventArgs e) { }
+
+    private void Manual_Click(object sender, RoutedEventArgs e) =>
+        _ = AppState.Current.ConnectManualAsync(ManualIp.Text);
+
+    private void Cloud_Click(object sender, RoutedEventArgs e)
+    {
+        AppState.Current.Server = ServerBox.Text.Trim();
+        _ = AppState.Current.ConnectCloudAsync(RoomBox.Text);
+    }
+
+    private void LanDiscover_Click(object sender, RoutedEventArgs e) => AppState.Current.StartLanDiscovery();
+
+    private void CopyRoom_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(AppState.Current.RoomCode)) return;
+        try
+        {
+            Clipboard.SetText(AppState.Current.RoomCode);
+        }
+        catch (Exception)
+        {
+            // 剪贴板被占用就算了
+        }
+    }
+
+    private void OpenLogs_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = System.IO.Path.GetDirectoryName(AppState.LogPath)!,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception)
+        {
+            // 打不开目录不影响使用
+        }
+    }
+
+    private void Font_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_overlay is not null) _overlay.FontSize = e.NewValue;
+    }
+
+    // ---------------------------------------------------------------- 悬浮窗
 
     private void ToggleOverlay(bool show)
     {
+        if (!(OverlayBox.IsChecked ?? true)) return;
         if (show)
         {
-            _overlay ??= new OverlayWindow();
+            _overlay ??= new OverlayWindow { FontSize = FontSlider.Value };
+            _overlay.Refresh();
             if (!_overlay.IsVisible) _overlay.Show();
         }
-        else if (_overlay is not null)
+        else if (_overlay is { IsVisible: true })
         {
             _overlay.Hide();
         }
     }
 
+    // ---------------------------------------------------------------- 刷新
+
     private void Refresh()
     {
         var state = AppState.Current;
-        var first = state.Members.FirstOrDefault(m => m.Online);
-        BpmText.Text = first?.Bpm?.ToString() ?? "--";
-        PageSubtitle.Text = state.Connected ? $"当前通路：{state.Transport}" : "未连接";
-        BleHint.Text = state.Connected
-            ? $"已连接 {state.Members.Count} 个成员"
-            : "未发现心率设备：确认蓝牙已开、设备没被手机占用、戴上唤醒后再扫描";
+        var first = state.Members.FirstOrDefault();
+        BpmText.Text = first?.Bpm.ToString() ?? "--";
+        TransportText.Text = state.Connected
+            ? $"当前通路：{state.Transport}   {state.Status}"
+            : string.IsNullOrEmpty(state.Status) ? "未连接" : state.Status;
+        MemberHint.Text = state.Members.Count == 0
+            ? "还没有数据：先连蓝牙设备，或到「房间」页连局域网/云端"
+            : "";
+        RoomCodeText.Text = string.IsNullOrEmpty(state.RoomCode) ? "—" : state.RoomCode;
+        RoomStatusText.Text = state.Status;
+        AppState.Current.DisplayName = NameBox.Text.Trim();
+        AppState.Current.ShowAllBle = ShowAllBleBox.IsChecked ?? false;
+
         DrawChart(first);
-        if (state.Connected && _overlay is not null && !_overlay.IsVisible) _overlay.Show();
-        _overlay?.Refresh();
-        if (!state.Connected && _overlay is { IsVisible: true }) _overlay.Hide();
+        BuildMembers(state);
+        BuildBle(state);
+        BuildPeers(state);
+        if (state.Members.Count > 0 && state.Connected && _overlay is not null) _overlay.Refresh();
     }
 
-    private void DrawChart(Member? member)
+    private void BuildMembers(AppState state)
+    {
+        MemberList.Children.Clear();
+        foreach (var row in state.Members)
+        {
+            var grid = new Grid { Height = 44 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+
+            var name = new TextBlock
+            {
+                Text = row.Name,
+                FontSize = 15,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)FindResource("TextMain"),
+            };
+            Grid.SetColumn(name, 0);
+            grid.Children.Add(name);
+
+            var bpm = new TextBlock
+            {
+                Text = row.Bpm.ToString(),
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold,
+                TextAlignment = TextAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = row.Online ? (Brush)FindResource("Accent") : (Brush)FindResource("TextDim"),
+            };
+            Grid.SetColumn(bpm, 1);
+            grid.Children.Add(bpm);
+
+            var spark = BuildSpark(state.History.TryGetValue(row.Id, out var values) ? values : []);
+            Grid.SetColumn(spark, 2);
+            grid.Children.Add(spark);
+
+            MemberList.Children.Add(grid);
+        }
+    }
+
+    private void BuildBle(AppState state)
+    {
+        BleList.Children.Clear();
+        foreach (var device in state.BleDevices)
+        {
+            var grid = new Grid { Height = 40 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
+
+            var name = new TextBlock
+            {
+                Text = string.IsNullOrEmpty(device.Name) ? "(未命名)" : device.Name,
+                FontSize = 14,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)FindResource("TextMain"),
+            };
+            Grid.SetColumn(name, 0);
+            grid.Children.Add(name);
+
+            var info = new TextBlock
+            {
+                Text = $"0x{device.Address:X} · {device.Rssi} dBm",
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)FindResource("TextDim"),
+            };
+            Grid.SetColumn(info, 1);
+            grid.Children.Add(info);
+
+            var connect = new Button { Content = "连接", Padding = new Thickness(12, 2, 12, 2) };
+            connect.Click += (_, _) => _ = AppState.Current.ConnectBleAsync(device);
+            Grid.SetColumn(connect, 2);
+            grid.Children.Add(connect);
+
+            BleList.Children.Add(grid);
+        }
+    }
+
+    private void BuildPeers(AppState state)
+    {
+        LanList.Children.Clear();
+        LanPeers.Children.Clear();
+        foreach (var peer in state.Peers)
+        {
+            var grid = new Grid { Height = 40 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
+
+            var name = new TextBlock
+            {
+                Text = peer.Name,
+                FontSize = 14,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)FindResource("TextMain"),
+            };
+            Grid.SetColumn(name, 0);
+            grid.Children.Add(name);
+
+            var info = new TextBlock
+            {
+                Text = $"{peer.Host}:{peer.Port} · {peer.Members} 人",
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)FindResource("TextDim"),
+            };
+            Grid.SetColumn(info, 1);
+            grid.Children.Add(info);
+
+            var connect = new Button { Content = "连接", Padding = new Thickness(12, 2, 12, 2) };
+            connect.Click += (_, _) => _ = AppState.Current.ConnectPeerAsync(peer);
+            Grid.SetColumn(connect, 2);
+            grid.Children.Add(connect);
+
+            LanList.Children.Add(grid);
+        }
+    }
+
+    private FrameworkElement BuildSpark(List<int> values)
+    {
+        var canvas = new Canvas { Height = 28, Width = 86 };
+        if (values.Count >= 2)
+        {
+            var min = values.Min() - 5;
+            var max = values.Max() + 5;
+            if (max - min < 10) { min -= 5; max += 5; }
+            var line = new Polyline
+            {
+                Stroke = (Brush)FindResource("Accent"),
+                StrokeThickness = 1.6,
+            };
+            for (var i = 0; i < values.Count; i++)
+            {
+                line.Points.Add(new Point(
+                    86.0 * i / (values.Count - 1),
+                    28 - 28.0 * (values[i] - min) / (max - min)));
+            }
+            canvas.Children.Add(line);
+        }
+        return canvas;
+    }
+
+    private void DrawChart(MemberRow? row)
     {
         ChartCanvas.Children.Clear();
         var width = ChartCanvas.ActualWidth;
         var height = ChartCanvas.ActualHeight;
-        if (width <= 1 || height <= 1 || member is null || member.Samples.Count < 2) return;
+        var state = AppState.Current;
+        if (row is null || width <= 1 || height <= 1) return;
+        if (!state.History.TryGetValue(row.Id, out var values) || values.Count < 2) return;
 
-        var samples = member.Samples.ToList();
-        var min = samples.Min(s => s.Bpm) - 5;
-        var max = samples.Max(s => s.Bpm) + 5;
+        var min = values.Min() - 5;
+        var max = values.Max() + 5;
         if (max - min < 10) { min -= 5; max += 5; }
 
         var line = new Polyline
@@ -100,19 +305,17 @@ public partial class MainWindow : Window
             StrokeThickness = 2,
             StrokeLineJoin = PenLineJoin.Round,
         };
-        for (var i = 0; i < samples.Count; i++)
+        for (var i = 0; i < values.Count; i++)
         {
-            var x = width * i / Math.Max(1, samples.Count - 1);
-            var y = height - (height * (samples[i].Bpm - min) / (max - min));
-            line.Points.Add(new Point(x, y));
+            line.Points.Add(new Point(
+                width * i / (values.Count - 1),
+                height - height * (values[i] - min) / (max - min)));
         }
         ChartCanvas.Children.Add(line);
 
-        // 左轴动态刻度（3–5 档整数）
-        var steps = 4;
-        for (var i = 0; i <= steps; i++)
+        for (var i = 0; i <= 4; i++)
         {
-            var value = min + (max - min) * (double)i / steps;
+            var value = min + (max - min) * (double)i / 4;
             var label = new TextBlock
             {
                 Text = ((int)Math.Round(value)).ToString(),
@@ -120,7 +323,7 @@ public partial class MainWindow : Window
                 Foreground = (Brush)FindResource("TextDim"),
             };
             Canvas.SetLeft(label, 0);
-            Canvas.SetTop(label, height - (height * i / steps) - 8);
+            Canvas.SetTop(label, height - height * i / 4 - 8);
             ChartCanvas.Children.Add(label);
         }
     }

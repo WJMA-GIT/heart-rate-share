@@ -27,6 +27,10 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Unit tests (protocol / flags / beacon / room code / WS / UDP)
+        shell: pwsh
+        run: dotnet test pc/HeartRateShare.Tests -c Release --nologo -v minimal
+
       - name: Publish single-file exe
         shell: pwsh
         run: |
