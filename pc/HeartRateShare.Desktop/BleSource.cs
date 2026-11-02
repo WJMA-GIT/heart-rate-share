@@ -186,15 +186,9 @@ public sealed class BleSource : IHeartRateSource
         }
         if (_device is not null)
         {
-            try
-            {
-                using var session = await GattSession.FromDeviceAsync(_device);
-                if (session is not null) session.MaintainConnection = false;
-            }
-            catch (Exception error)
-            {
-                Diagnostic?.Invoke($"ble: gatt session release failed {error.Message}");
-            }
+            // shortcut: 这一版 CsWinRT 投影里没有可用的 GattSession 静态入口，
+            // 释放链路靠"取消 CCCD 通知 + Dispose 设备"，实测足够断开；
+            // 一旦 SDK 投影补上 GattSession.MaintainConnection=false，再加回来。
             _device.Dispose();
             _device = null;
             Diagnostic?.Invoke("ble: device disposed");
