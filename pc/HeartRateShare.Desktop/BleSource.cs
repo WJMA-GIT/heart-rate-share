@@ -13,20 +13,20 @@ public sealed class BleSource : IHeartRateSource
     private static readonly Guid HeartRateServiceUuid = new("0000180d-0000-1000-8000-00805f9b34fb");
     private static readonly Guid HeartRateMeasurementUuid = new("00002a37-0000-1000-8000-00805f9b34fb");
 
-    // 30 秒没再听到广播才移除：以前每次广播都整体重建/或在扫描结束时清表，
-    // 用户就感觉"扫到一秒后消失"。
-    private readonly Dictionary<ulong, BleDevice> _devices = [];
-    private readonly Dictionary<ulong, DateTime> _lastSeen = [];
+    // 设备表是纯逻辑（BleDeviceTable）：同一地址只更新、30 秒没再听到才过期。
+    private readonly BleDeviceTable _table = new();
     private Timer? _expiry;
-    private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(30);
     private BluetoothLEAdvertisementWatcher? _watcher;
     private BluetoothLEDevice? _device;
     private GattCharacteristic? _characteristic;
     private DateTime _lastSampleAt;
+    private bool _firstSampleLogged;
 
     public string Transport => "蓝牙";
     public bool Connected => _characteristic is not null;
-    public IReadOnlyList<BleDevice> Devices => _devices.Values.OrderByDescending(d => d.Rssi).ToList();
+    public IReadOnlyList<BleDevice> Devices =>
+        _table.Snapshot().Select(entry => new BleDevice(entry.Address, entry.Name, entry.Rssi, entry.IsHeartRate))
+            .ToList();
     public event Action<string>? Diagnostic;
     public event Action<IReadOnlyList<MemberRow>>? MembersChanged;
     public event Action<string>? Status;
@@ -47,15 +47,17 @@ public sealed class BleSource : IHeartRateSource
             {
                 var isHeartRate = args.Advertisement.ServiceUuids.Contains(HeartRateServiceUuid);
                 var name = args.Advertisement.LocalName ?? string.Empty;
-                var fresh = !_devices.ContainsKey(args.BluetoothAddress);
-                _devices[args.BluetoothAddress] = new BleDevice(
-                    args.BluetoothAddress, name, args.RawSignalStrengthInDBm, isHeartRate);
-                _lastSeen[args.BluetoothAddress] = DateTime.UtcNow;
-                if (fresh)
+                var before = _table.Count;
+                var changed = _table.Observe(args.BluetoothAddress, name,
+                    args.RawSignalStrengthInDBm, isHeartRate, DateTime.UtcNow);
+                if (_table.Count != before)
                 {
-                    Diagnostic?.Invoke($"ble: seen 0x{args.BluetoothAddress:X} {name} rssi={args.RawSignalStrengthInDBm}");
+                    Diagnostic?.Invoke(
+                        $"ble: seen 0x{args.BluetoothAddress:X} {name} rssi={args.RawSignalStrengthInDBm}");
+                    changed = true;
                 }
-                DevicesChanged?.Invoke();
+                // 只有"值得刷新"时才通知 UI（同一条广播 10 次不会重绘列表）
+                if (changed) DevicesChanged?.Invoke();
             };
             watcher.Stopped += (_, args) =>
             {
@@ -77,20 +79,39 @@ public sealed class BleSource : IHeartRateSource
         }
     }
 
+    private void StopScan()
+    {
+        _watcher?.Stop();
+        _watcher = null;
+        _expiry?.Dispose();
+        _expiry = null;
+    }
+
     public async Task ConnectAsync(ulong address, string displayName)
     {
+        // 扫描会抢射频：连之前必须先停，否则 GATT 打开经常直接 Unreachable
+        StopScan();
+        Diagnostic?.Invoke($"ble: connect 0x{address:X} attempt=1");
         try
         {
             _device = await BluetoothLEDevice.FromBluetoothAddressAsync(address);
             if (_device is null)
             {
-                Failed?.Invoke("连接失败：设备不在范围内");
+                Diagnostic?.Invoke($"ble: connect 0x{address:X} attempt=2 (public address)");
+                _device = await BluetoothLEDevice.FromBluetoothAddressAsync(
+                    address, BluetoothAddressType.Public);
+            }
+            if (_device is null)
+            {
+                Diagnostic?.Invoke("ble: connect failed hr=0x0 (device null)");
+                Failed?.Invoke(BuildError(BleConnectFailure.Unreachable));
                 return;
             }
             var services = await _device.GetGattServicesForUuidAsync(HeartRateServiceUuid);
             if (services.Status != GattCommunicationStatus.Success || services.Services.Count == 0)
             {
-                Failed?.Invoke("连接失败：设备没有心率服务（可能被手机占用）");
+                Diagnostic?.Invoke($"ble: service missing hr=0x{(int)services.Status:X8}");
+                Failed?.Invoke(BuildError(BleErrors.FromStatus((int)services.Status)));
                 return;
             }
             var characteristics = await services.Services[0].GetCharacteristicsForUuidAsync(HeartRateMeasurementUuid);
@@ -106,32 +127,31 @@ public sealed class BleSource : IHeartRateSource
                 GattClientCharacteristicConfigurationDescriptorValue.Notify);
             if (status != GattCommunicationStatus.Success)
             {
-                Failed?.Invoke($"订阅心率失败：{status}（设备可能已被占用）");
+                Diagnostic?.Invoke($"ble: connect failed hr=0x{(int)status:X8} (subscribe)");
+                Failed?.Invoke(BuildError(BleErrors.FromStatus((int)status)));
                 return;
             }
             _characteristic = characteristic;
             _lastSampleAt = DateTime.UtcNow;
+            Diagnostic?.Invoke("ble: subscribed");
             Status?.Invoke("已连接（蓝牙）");
         }
         catch (Exception error)
         {
+            Diagnostic?.Invoke($"ble: connect failed hr=0x{error.HResult:X8} {error.Message}");
             Failed?.Invoke($"蓝牙连接异常：{error.Message}");
         }
     }
 
+    private static string BuildError(BleConnectFailure failure) =>
+        $"连接失败：{BleErrors.Describe(failure)}";
+
     // 过期的设备才移除，广播中间抖动不会闪没。
     private void Expire()
     {
-        var now = DateTime.UtcNow;
-        var stale = _lastSeen.Where(pair => now - pair.Value > KeepAlive)
-            .Select(pair => pair.Key).ToList();
+        var stale = _table.Expire(DateTime.UtcNow);
         if (stale.Count == 0) return;
-        foreach (var address in stale)
-        {
-            _devices.Remove(address);
-            _lastSeen.Remove(address);
-            Diagnostic?.Invoke($"ble: expired 0x{address:X}");
-        }
+        foreach (var entry in stale) Diagnostic?.Invoke($"ble: expired 0x{entry.Address:X}");
         DevicesChanged?.Invoke();
     }
 
@@ -141,14 +161,18 @@ public sealed class BleSource : IHeartRateSource
         var buffer = new byte[reader.UnconsumedBufferLength];
         reader.ReadBytes(buffer);
         if (!HeartRateMeasurement.TryDecode(buffer, out var bpm, out _)) return;
+        if (!_firstSampleLogged)
+        {
+            _firstSampleLogged = true;
+            Diagnostic?.Invoke($"ble: first sample bpm={bpm}");
+        }
         _lastSampleAt = DateTime.UtcNow;
         MembersChanged?.Invoke([new MemberRow("ble-own", "蓝牙设备", bpm, true)]);
     }
 
     public async Task DisconnectAsync()
     {
-        _watcher?.Stop();
-        _watcher = null;
+        StopScan();
         if (_characteristic is not null)
         {
             _characteristic.ValueChanged -= OnMeasurement;

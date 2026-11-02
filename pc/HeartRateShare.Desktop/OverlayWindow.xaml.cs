@@ -25,6 +25,9 @@ public partial class OverlayWindow : Window
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy,
         uint flags);
+    [DllImport("user32.dll")] private static extern bool ReleaseCapture();
+    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hwnd, int message,
+        IntPtr wparam, IntPtr lparam);
 
     private double _fontSize = 48;
 
@@ -72,23 +75,28 @@ public partial class OverlayWindow : Window
                 Height = Math.Max(28, _fontSize * 1.4),
                 Margin = new Thickness(0, 2, 0, 2),
             };
-            for (var i = 0; i < 5; i++) row.ColumnDefinitions.Add(new ColumnDefinition());
-            row.ColumnDefinitions[0].Width = new GridLength(16);
-            row.ColumnDefinitions[1].Width = new GridLength(120);
+            for (var i = 0; i < 4; i++) row.ColumnDefinitions.Add(new ColumnDefinition());
+            row.ColumnDefinitions[0].Width = new GridLength(18);          // 拖动条 18 DIP
+            row.ColumnDefinitions[1].Width = new GridLength(_fontSize * 4.6);
             row.ColumnDefinitions[2].Width = new GridLength(_fontSize * 2.2);
             row.ColumnDefinitions[3].Width = new GridLength(90);
-            row.ColumnDefinitions[4].Width = new GridLength(28);
 
-            // 拖动条：几乎全透明但可点（点住拖整窗）
-            var handle = new Border { Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)) };
-            handle.MouseLeftButtonDown += (_, _) => DragMove();
+            // 拖动条：Brushes.Transparent（不是 null）才收得到命中；拖动走 Win32，
+            // 因为 ShowActivated=false 时 WPF 的 DragMove() 不生效。
+            var handle = new Border
+            {
+                Background = Brushes.Transparent,
+                IsHitTestVisible = true,
+            };
+            handle.MouseLeftButtonDown += (_, _) => BeginDrag();
             Grid.SetColumn(handle, 0);
             row.Children.Add(handle);
 
             var name = new TextBlock
             {
                 Text = member.Name,
-                FontSize = Math.Max(12, _fontSize * 0.3),
+                // 名称与心率同字号（用户要求），行高按 1.4 倍留白
+                FontSize = _fontSize,
                 Foreground = Brushes.White,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -113,29 +121,18 @@ public partial class OverlayWindow : Window
             Grid.SetColumn(spark, 3);
             row.Children.Add(spark);
 
-            var close = new Border
-            {
-                Width = 24,
-                Height = 24,
-                CornerRadius = new CornerRadius(12),
-                BorderBrush = Brushes.White,
-                BorderThickness = new Thickness(1),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = new TextBlock
-                {
-                    Text = "⏻",
-                    FontSize = 11,
-                    Foreground = Brushes.White,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                },
-            };
-            close.MouseLeftButtonDown += (_, _) => AppState.Current.Disconnect();
-            Grid.SetColumn(close, 4);
-            row.Children.Add(close);
-
             Rows.Children.Add(row);
         }
+    }
+
+    /// 无边框 + 不抢焦点时 DragMove() 无效，改用系统拖动：ReleaseCapture + WM_NCLBUTTONDOWN。
+    private void BeginDrag()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero) return;
+        AppState.Log("overlay: drag begin");
+        ReleaseCapture();
+        SendMessage(handle, 0x00A1 /*WM_NCLBUTTONDOWN*/, (IntPtr)0x2 /*HTCAPTION*/, IntPtr.Zero);
     }
 
     private void DrawSpark(Canvas canvas, List<int> values)

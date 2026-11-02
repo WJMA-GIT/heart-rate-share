@@ -16,5 +16,6 @@
     <Compile Include="../HeartRateShare.Desktop/RoomConnection.cs" Link="RoomConnection.cs" />
     <Compile Include="../HeartRateShare.Desktop/Sources.cs" Link="Sources.cs" />
     <Compile Include="../HeartRateShare.Desktop/UiDispatch.cs" Link="UiDispatch.cs" />
+    <Compile Include="../HeartRateShare.Desktop/BleTable.cs" Link="BleTable.cs" />
   </ItemGroup>
 </Project>
