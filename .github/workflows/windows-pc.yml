@@ -6,6 +6,9 @@ name: windows-pc
 "on":
   push:
     branches: [main, windows]
+    # tag 必须显式列上：否则打 tag 不会触发，只会跑分支 push，
+    # "tag builds only" 的上传步骤永远不执行（这次就差点卡在这）。
+    tags: ['v*']
     paths:
       - 'pc/**'
       - '.github/workflows/windows-pc.yml'
