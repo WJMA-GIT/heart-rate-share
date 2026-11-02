@@ -40,7 +40,8 @@ public partial class OverlayWindow : Window
         Top = 90;
     }
 
-    public double FontSize
+    /// 心率字号（24–96）；名字与心率共用这个字号。
+    public double BpmFontSize
     {
         get => _fontSize;
         set

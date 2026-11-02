@@ -117,11 +117,11 @@ public sealed class AppState
         return ble;
     }
 
-    public async Task ConnectBleAsync(BleDevice device)
+    public async Task ConnectBleAsync(BleEntry entry)
     {
         _ble ??= CreateBle();
         await SwitchTo(_ble);
-        await _ble.ConnectAsync(device.Address, DisplayName);
+        await _ble.ConnectAsync(entry.Address, DisplayName);
     }
 
     // ---------------------------------------------------------------- 局域网

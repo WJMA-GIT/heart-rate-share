@@ -5,8 +5,6 @@ using Windows.Storage.Streams;
 
 namespace HeartRateShare.Desktop;
 
-public sealed record BleDevice(ulong Address, string Name, short Rssi, bool IsHeartRate);
-
 /// 蓝牙直连：看广播（0x180D 过滤展示）→ 连 GATT → 订阅 0x2A37 → 1 Hz 出数。
 public sealed class BleSource : IHeartRateSource
 {
@@ -31,7 +29,6 @@ public sealed class BleSource : IHeartRateSource
     public event Action<string>? Status;
     public event Action<string>? Failed;
     public event Action? DevicesChanged;
-    public event Action<BleEntry>? EntryUpdated;
 
     /// 只展示广播带 0x180D 的（"显示全部"由 UI 决定怎么过滤）。
     public void StartScan()
@@ -191,12 +188,8 @@ public sealed class BleSource : IHeartRateSource
         {
             try
             {
-                var session = await _device.GetGattSessionAsync(BluetoothCacheMode.Uncached);
-                if (session is not null)
-                {
-                    session.MaintainConnection = false;
-                    session.Dispose();
-                }
+                using var session = GattSession.FromDevice(_device);
+                if (session is not null) session.MaintainConnection = false;
             }
             catch (Exception error)
             {
