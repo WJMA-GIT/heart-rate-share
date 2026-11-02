@@ -109,18 +109,11 @@ public sealed class AppState
     private BleSource CreateBle()
     {
         var ble = new BleSource();
-        ble.DevicesChanged += () =>
-        {
-            BleDevices.Clear();
-            foreach (var device in ble.Devices)
-            {
-                if (ShowAllBle || device.IsHeartRate) BleDevices.Add(device);
-            }
-            Changed?.Invoke();
-        };
-        ble.MembersChanged += rows => Adopt(ble, "蓝牙", rows);
-        ble.Status += text => { Status = text; Changed?.Invoke(); };
-        ble.Failed += Fail;
+        ble.Diagnostic += text => UiDispatch.Post(() => Log(text));
+        ble.DevicesChanged += () => UiDispatch.Post(() => SyncDevices(ble.Devices));
+        ble.MembersChanged += rows => UiDispatch.Post(() => Adopt(ble, "蓝牙", rows));
+        ble.Status += text => UiDispatch.Post(() => { Status = text; Changed?.Invoke(); });
+        ble.Failed += text => UiDispatch.Post(() => Fail(text));
         return ble;
     }
 
@@ -144,15 +137,10 @@ public sealed class AppState
     private LanSource CreateLan()
     {
         var lan = new LanSource();
-        lan.PeersChanged += () =>
-        {
-            Peers.Clear();
-            foreach (var peer in lan.Peers) Peers.Add(peer);
-            Changed?.Invoke();
-        };
-        lan.MembersChanged += rows => Adopt(lan, "局域网", rows);
-        lan.Status += text => { Status = text; Changed?.Invoke(); };
-        lan.Failed += Fail;
+        lan.PeersChanged += () => UiDispatch.Post(() => SyncPeers(lan.Peers));
+        lan.MembersChanged += rows => UiDispatch.Post(() => Adopt(lan, "局域网", rows));
+        lan.Status += text => UiDispatch.Post(() => { Status = text; Changed?.Invoke(); });
+        lan.Failed += text => UiDispatch.Post(() => Fail(text));
         return lan;
     }
 
@@ -160,8 +148,8 @@ public sealed class AppState
     {
         _lan ??= CreateLan();
         await SwitchTo(_lan);
-        RoomCode = peer.Room;
-        Log($"lan connect {peer.Host}:{peer.Port} room={peer.Room}");
+        // 手机侧的局域网服务不校验房间号：不带 ?room=，只连 ws://ip:8770/ws
+        Log($"lan connect {peer.Host}:{peer.Port} (no room param)");
         await _lan.ConnectAsync(peer, DisplayName);
     }
 
@@ -194,9 +182,9 @@ public sealed class AppState
     private CloudSource CreateCloud()
     {
         var cloud = new CloudSource();
-        cloud.MembersChanged += rows => Adopt(cloud, "云端", rows);
-        cloud.Status += text => { Status = text; Changed?.Invoke(); };
-        cloud.Failed += Fail;
+        cloud.MembersChanged += rows => UiDispatch.Post(() => Adopt(cloud, "云端", rows));
+        cloud.Status += text => UiDispatch.Post(() => { Status = text; Changed?.Invoke(); });
+        cloud.Failed += text => UiDispatch.Post(() => Fail(text));
         return cloud;
     }
 
@@ -251,12 +239,43 @@ public sealed class AppState
         if (index >= 0) Members[index] = row; else Members.Add(row);
     }
 
+    /// 蓝牙列表增量更新：只加/删/改，不 Clear（避免 UI 闪一下并且保住选中态）。
+    private void SyncDevices(IReadOnlyList<BleDevice> devices)
+    {
+        var wanted = devices.Where(device => ShowAllBle || device.IsHeartRate).ToList();
+        for (var i = BleDevices.Count - 1; i >= 0; i--)
+        {
+            if (wanted.All(device => device.Address != BleDevices[i].Address)) BleDevices.RemoveAt(i);
+        }
+        foreach (var device in wanted)
+        {
+            var index = BleDevices.ToList().FindIndex(existing => existing.Address == device.Address);
+            if (index >= 0) BleDevices[index] = device; else BleDevices.Add(device);
+        }
+        Changed?.Invoke();
+    }
+
+    private void SyncPeers(IReadOnlyList<Beacon> peers)
+    {
+        for (var i = Peers.Count - 1; i >= 0; i--)
+        {
+            if (peers.All(peer => peer.Host != Peers[i].Host || peer.Port != Peers[i].Port))
+                Peers.RemoveAt(i);
+        }
+        foreach (var peer in peers)
+        {
+            var index = Peers.ToList().FindIndex(existing => existing.Host == peer.Host && existing.Port == peer.Port);
+            if (index >= 0) Peers[index] = peer; else Peers.Add(peer);
+        }
+        Changed?.Invoke();
+    }
+
     /// 蓝牙适配器状态文案（诊断区块显示用）。
-    public void NoteBleAdapter(string text)
+    public void NoteBleAdapter(string text) => UiDispatch.Post(() =>
     {
         BleAdapterText = text;
         Changed?.Invoke();
-    }
+    });
 
     private void Fail(string message)
     {
@@ -289,12 +308,16 @@ public sealed class AppState
         _mock = null;
         if (_source is not null) await _source.DisconnectAsync();
         _source = null;
-        Members.Clear();
-        History.Clear();
-        Transport = "未连接";
-        Status = "已断开";
-        RequestOverlay(false);
-        Changed?.Invoke();
+        // await 之后可能已经不在 UI 线程：集合清理同样要 Post 回去
+        UiDispatch.Post(() =>
+        {
+            Members.Clear();
+            History.Clear();
+            Transport = "未连接";
+            Status = "已断开";
+            RequestOverlay(false);
+            Changed?.Invoke();
+        });
     }
 
     public void RequestOverlay(bool show) => OverlayRequested?.Invoke(show);

@@ -16,7 +16,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AppState.Current.Changed += Refresh;
+        AppState.Current.Changed += () => UiDispatch.Post(Refresh);
         AppState.Current.OverlayRequested += ToggleOverlay;
         _render = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _render.Tick += (_, _) => Refresh();

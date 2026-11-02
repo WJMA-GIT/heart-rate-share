@@ -13,7 +13,12 @@ public sealed class BleSource : IHeartRateSource
     private static readonly Guid HeartRateServiceUuid = new("0000180d-0000-1000-8000-00805f9b34fb");
     private static readonly Guid HeartRateMeasurementUuid = new("00002a37-0000-1000-8000-00805f9b34fb");
 
+    // 30 秒没再听到广播才移除：以前每次广播都整体重建/或在扫描结束时清表，
+    // 用户就感觉"扫到一秒后消失"。
     private readonly Dictionary<ulong, BleDevice> _devices = [];
+    private readonly Dictionary<ulong, DateTime> _lastSeen = [];
+    private Timer? _expiry;
+    private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(30);
     private BluetoothLEAdvertisementWatcher? _watcher;
     private BluetoothLEDevice? _device;
     private GattCharacteristic? _characteristic;
@@ -22,6 +27,7 @@ public sealed class BleSource : IHeartRateSource
     public string Transport => "蓝牙";
     public bool Connected => _characteristic is not null;
     public IReadOnlyList<BleDevice> Devices => _devices.Values.OrderByDescending(d => d.Rssi).ToList();
+    public event Action<string>? Diagnostic;
     public event Action<IReadOnlyList<MemberRow>>? MembersChanged;
     public event Action<string>? Status;
     public event Action<string>? Failed;
@@ -41,8 +47,14 @@ public sealed class BleSource : IHeartRateSource
             {
                 var isHeartRate = args.Advertisement.ServiceUuids.Contains(HeartRateServiceUuid);
                 var name = args.Advertisement.LocalName ?? string.Empty;
+                var fresh = !_devices.ContainsKey(args.BluetoothAddress);
                 _devices[args.BluetoothAddress] = new BleDevice(
                     args.BluetoothAddress, name, args.RawSignalStrengthInDBm, isHeartRate);
+                _lastSeen[args.BluetoothAddress] = DateTime.UtcNow;
+                if (fresh)
+                {
+                    Diagnostic?.Invoke($"ble: seen 0x{args.BluetoothAddress:X} {name} rssi={args.RawSignalStrengthInDBm}");
+                }
                 DevicesChanged?.Invoke();
             };
             watcher.Stopped += (_, args) =>
@@ -55,6 +67,7 @@ public sealed class BleSource : IHeartRateSource
             };
             watcher.Start();
             _watcher = watcher;
+            _expiry ??= new Timer(_ => Expire(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
             Status?.Invoke("扫描中…");
             AppState.Current.NoteBleAdapter("扫描中");
         }
@@ -104,6 +117,22 @@ public sealed class BleSource : IHeartRateSource
         {
             Failed?.Invoke($"蓝牙连接异常：{error.Message}");
         }
+    }
+
+    // 过期的设备才移除，广播中间抖动不会闪没。
+    private void Expire()
+    {
+        var now = DateTime.UtcNow;
+        var stale = _lastSeen.Where(pair => now - pair.Value > KeepAlive)
+            .Select(pair => pair.Key).ToList();
+        if (stale.Count == 0) return;
+        foreach (var address in stale)
+        {
+            _devices.Remove(address);
+            _lastSeen.Remove(address);
+            Diagnostic?.Invoke($"ble: expired 0x{address:X}");
+        }
+        DevicesChanged?.Invoke();
     }
 
     private void OnMeasurement(GattCharacteristic sender, GattValueChangedEventArgs args)
