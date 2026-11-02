@@ -23,6 +23,32 @@ double _yRange(List<int> bpms) {
 }
 
 void main() {
+  group('采样时间戳相同也不折叠成直线（第三次反馈的真因候选）', () {
+    test('同一时间戳的 60→65→72→85：x 仍递增、点数递增、量程扩张', () {
+      final series = HeartRateSeries();
+      final sameTime = DateTime.utc(2026, 11, 4, 9);
+      final xs = <double>[];
+      for (final bpm in [60, 65, 72, 85]) {
+        // 故意用**完全相同**的时间戳（真机上 receivedAt 可能被复用/取整）
+        series.add(HeartRatePoint(at: sameTime, bpm: bpm));
+        final polyline = normalizedPolyline(series);
+        xs.add(polyline.segments.last.last.dx);
+      }
+      expect(series.points.length, 4, reason: '点数必须递增');
+      for (var i = 1; i < xs.length; i++) {
+        expect(
+          xs[i],
+          greaterThanOrEqualTo(xs[i - 1]),
+          reason: 'x 必须单调不降（相同时间戳被 +1ms 修正后应推进）',
+        );
+      }
+      // 右端锚定最新采样 → 末点 x 恰好 1.0；关键是不同点不能全压在同一 x 上。
+      expect(xs.last, closeTo(1.0, 1e-9));
+      expect(xs.toSet().length, greaterThan(1), reason: '不能所有点折叠到同一 x');
+      expect(series.range.high, greaterThanOrEqualTo(85));
+    });
+  });
+
   group('曲线随采样更新（用户报「还是直线、刻度不动」）', () {
     test('60 → 65 → 72 → 85：点数增加、x 严格递增、量程与刻度跟着变', () {
       final series = HeartRateSeries();

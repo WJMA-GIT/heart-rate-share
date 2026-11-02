@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/logging/app_logger.dart';
+
 import '../../ble/heart_rate_sample.dart';
 import '../../core/l10n/strings_zh.dart';
 
@@ -79,11 +81,15 @@ final class HeartRateSeries {
       at = now;
     }
     final last = latest;
-    if (last != null && at.isBefore(last.at)) {
-      // 小幅倒挂：夹到 last+1ms 保留（否则乱序点会被吞掉，曲线看起来不更新）；
-      // 大幅回退（> tolerance）才丢弃。
-      if (last.at.difference(at) > clockTolerance) return;
-      at = last.at.add(const Duration(milliseconds: 1));
+    if (last != null) {
+      // 大回退（>5s）说明是历史数据，丢弃；其余（含"时间戳完全相同"）一律夹到 last+1ms。
+      // 关键：采样时间戳相同会把所有点折叠到同一 x，视觉上就是"一条压在某个值上的直线"。
+      if (at.isBefore(last.at) && last.at.difference(at) > clockTolerance) {
+        return;
+      }
+      if (!at.isAfter(last.at)) {
+        at = last.at.add(const Duration(milliseconds: 1));
+      }
     }
     _points.add(HeartRatePoint(at: at, bpm: point.bpm));
     _trim(at);
@@ -280,6 +286,13 @@ HeartRatePolyline normalizedPolyline(HeartRateSeries series) {
       ? series.rangeState!
       : dynamicRangeFor(visible, previous: series.rangeState);
   if (!throttled || outside) series.rangeAt = now;
+  if (series.rangeState != null &&
+      (series.rangeState!.low != range.low ||
+          series.rangeState!.high != range.high) &&
+      (throttled != true || outside)) {
+    // 量程是否真的在变：每 10 秒最多一条（由调用侧限流）
+    AppLogger.instance.info('chart', 'range ${series.rangeState} -> $range');
+  }
   series.rangeState = range;
   final spanBpm = range.span;
   final segments = <List<Offset>>[];
@@ -453,6 +466,19 @@ final class _ChartPainter extends CustomPainter {
 
     final polyline = normalizedPolyline(series);
     if (polyline.isEmpty) return;
+    // 只有 1 个采样点时，画圆点而不是一条线（单点连成线会误导成"曲线不动"）。
+    if (series.points.length <= 1) {
+      final only = polyline.segments.last.last;
+      canvas.drawCircle(
+        Offset(
+          plot.left + only.dx * plot.width,
+          plot.top + only.dy * plot.height,
+        ),
+        2.5,
+        Paint()..color = line,
+      );
+      return;
+    }
 
     Offset map(Offset normalized) => Offset(
       plot.left + normalized.dx * plot.width,
