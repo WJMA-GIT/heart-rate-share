@@ -3,11 +3,15 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ShutdownMode="OnMainWindowClose">
   <Application.Resources>
+    <!-- 只有深色一套，与手机端一致 -->
     <SolidColorBrush x:Key="Accent" Color="#FF5252"/>
-    <SolidColorBrush x:Key="AccentSoft" Color="#1FFF5252"/>
-    <SolidColorBrush x:Key="PageBg" Color="#FAF7F7"/>
-    <SolidColorBrush x:Key="CardBg" Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="TextMain" Color="#1A1A1A"/>
+    <SolidColorBrush x:Key="AccentSoft" Color="#33FF5252"/>
+    <SolidColorBrush x:Key="PageBg" Color="#121212"/>
+    <SolidColorBrush x:Key="CardBg" Color="#1C1C1E"/>
+    <SolidColorBrush x:Key="FieldBg" Color="#26262B"/>
+    <SolidColorBrush x:Key="Line" Color="#2C2C33"/>
+    <SolidColorBrush x:Key="TextMain" Color="#E0E0E0"/>
     <SolidColorBrush x:Key="TextDim" Color="#9A9A9A"/>
+    <SolidColorBrush x:Key="Ok" Color="#34C759"/>
   </Application.Resources>
 </Application>

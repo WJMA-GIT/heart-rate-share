@@ -99,6 +99,8 @@ public sealed class LanSource : IHeartRateSource
             RoomConnection.BuildUri(host, port, false, ""), displayName);
     }
 
+    public Task ResendHelloAsync(string displayName) => _connection.SendHelloAsync(displayName);
+
     public async Task DisconnectAsync()
     {
         await _connection.CloseAsync();
@@ -175,6 +177,8 @@ public sealed class CloudSource : IHeartRateSource
         secure = true;
         return true;
     }
+
+    public Task ResendHelloAsync(string displayName) => _connection.SendHelloAsync(displayName);
 
     public Task DisconnectAsync() => _connection.CloseAsync();
     public ValueTask DisposeAsync() => new(DisconnectAsync());

@@ -10,13 +10,13 @@ public sealed class AppState
     public static AppState Current { get; } = new();
 
     public ObservableCollection<MemberRow> Members { get; } = [];
-    public ObservableCollection<BleDevice> BleDevices { get; } = [];
+    public ObservableCollection<BleEntry> BleDevices { get; } = [];
     public ObservableCollection<Beacon> Peers { get; } = [];
     public Dictionary<string, List<int>> History { get; } = [];
 
     public string Transport { get; private set; } = "未连接";
     public string Status { get; private set; } = "";
-    public string DisplayName { get; set; } = "Windows";
+    public string DisplayName { get; set; } = Environment.MachineName;
     public string RoomCode { get; private set; } = "";
     public string Server { get; set; } = Protocol.OfficialServer;
     public bool ShowAllBle { get; set; }
@@ -109,26 +109,19 @@ public sealed class AppState
     private BleSource CreateBle()
     {
         var ble = new BleSource();
-        ble.DevicesChanged += () =>
-        {
-            BleDevices.Clear();
-            foreach (var device in ble.Devices)
-            {
-                if (ShowAllBle || device.IsHeartRate) BleDevices.Add(device);
-            }
-            Changed?.Invoke();
-        };
-        ble.MembersChanged += rows => Adopt(ble, "蓝牙", rows);
-        ble.Status += text => { Status = text; Changed?.Invoke(); };
-        ble.Failed += Fail;
+        ble.Diagnostic += text => UiDispatch.Post(() => Log(text));
+        ble.DevicesChanged += () => UiDispatch.Post(() => SyncDevices(ble.Devices));
+        ble.MembersChanged += rows => UiDispatch.Post(() => Adopt(ble, "蓝牙", rows));
+        ble.Status += text => UiDispatch.Post(() => { Status = text; Changed?.Invoke(); });
+        ble.Failed += text => UiDispatch.Post(() => Fail(text));
         return ble;
     }
 
-    public async Task ConnectBleAsync(BleDevice device)
+    public async Task ConnectBleAsync(BleEntry entry)
     {
         _ble ??= CreateBle();
         await SwitchTo(_ble);
-        await _ble.ConnectAsync(device.Address, DisplayName);
+        await _ble.ConnectAsync(entry.Address, DisplayName);
     }
 
     // ---------------------------------------------------------------- 局域网
@@ -144,15 +137,10 @@ public sealed class AppState
     private LanSource CreateLan()
     {
         var lan = new LanSource();
-        lan.PeersChanged += () =>
-        {
-            Peers.Clear();
-            foreach (var peer in lan.Peers) Peers.Add(peer);
-            Changed?.Invoke();
-        };
-        lan.MembersChanged += rows => Adopt(lan, "局域网", rows);
-        lan.Status += text => { Status = text; Changed?.Invoke(); };
-        lan.Failed += Fail;
+        lan.PeersChanged += () => UiDispatch.Post(() => SyncPeers(lan.Peers));
+        lan.MembersChanged += rows => UiDispatch.Post(() => Adopt(lan, "局域网", rows));
+        lan.Status += text => UiDispatch.Post(() => { Status = text; Changed?.Invoke(); });
+        lan.Failed += text => UiDispatch.Post(() => Fail(text));
         return lan;
     }
 
@@ -160,8 +148,8 @@ public sealed class AppState
     {
         _lan ??= CreateLan();
         await SwitchTo(_lan);
-        RoomCode = peer.Room;
-        Log($"lan connect {peer.Host}:{peer.Port} room={peer.Room}");
+        // 手机侧的局域网服务不校验房间号：不带 ?room=，只连 ws://ip:8770/ws
+        Log($"lan connect {peer.Host}:{peer.Port} (no room param)");
         await _lan.ConnectAsync(peer, DisplayName);
     }
 
@@ -194,9 +182,9 @@ public sealed class AppState
     private CloudSource CreateCloud()
     {
         var cloud = new CloudSource();
-        cloud.MembersChanged += rows => Adopt(cloud, "云端", rows);
-        cloud.Status += text => { Status = text; Changed?.Invoke(); };
-        cloud.Failed += Fail;
+        cloud.MembersChanged += rows => UiDispatch.Post(() => Adopt(cloud, "云端", rows));
+        cloud.Status += text => UiDispatch.Post(() => { Status = text; Changed?.Invoke(); });
+        cloud.Failed += text => UiDispatch.Post(() => Fail(text));
         return cloud;
     }
 
@@ -251,12 +239,71 @@ public sealed class AppState
         if (index >= 0) Members[index] = row; else Members.Add(row);
     }
 
+    /// 蓝牙列表增量更新：只加/删/改，不 Clear（避免 UI 闪一下并且保住选中态）。
+    /// 只增删，不替换（BleEntry 自己是 INotifyPropertyChanged，属性更新会通知 UI）。
+    private void SyncDevices(IReadOnlyList<BleEntry> devices)
+    {
+        var wanted = devices.Where(entry => ShowAllBle || entry.IsHeartRate).ToList();
+        for (var i = BleDevices.Count - 1; i >= 0; i--)
+        {
+            if (wanted.All(entry => entry.Address != BleDevices[i].Address)) BleDevices.RemoveAt(i);
+        }
+        foreach (var entry in wanted)
+        {
+            if (BleDevices.All(existing => existing.Address != entry.Address)) BleDevices.Add(entry);
+        }
+        Changed?.Invoke();
+    }
+
+    private void SyncPeers(IReadOnlyList<Beacon> peers)
+    {
+        for (var i = Peers.Count - 1; i >= 0; i--)
+        {
+            if (peers.All(peer => peer.Host != Peers[i].Host || peer.Port != Peers[i].Port))
+                Peers.RemoveAt(i);
+        }
+        foreach (var peer in peers)
+        {
+            var index = Peers.ToList().FindIndex(existing => existing.Host == peer.Host && existing.Port == peer.Port);
+            if (index >= 0) Peers[index] = peer; else Peers.Add(peer);
+        }
+        Changed?.Invoke();
+    }
+
+    /// 改名：立刻改自身成员行，并（已连云端/局域网时）重新发 hello 广播新名字。
+    public async Task RenameSelfAsync(string name)
+    {
+        var trimmed = (name ?? string.Empty).Trim();
+        if (trimmed.Length == 0) trimmed = Environment.MachineName;
+        DisplayName = trimmed;
+        UiDispatch.Post(() =>
+        {
+            for (var i = 0; i < Members.Count; i++)
+            {
+                if (Members[i].Id == "ble-own" || Members[i].Id.StartsWith("win-", StringComparison.Ordinal))
+                {
+                    Members[i] = Members[i] with { Name = trimmed };
+                }
+            }
+            Changed?.Invoke();
+        });
+        switch (_source)
+        {
+            case LanSource lan: await lan.ResendHelloAsync(trimmed); break;
+            case CloudSource cloud: await cloud.ResendHelloAsync(trimmed); break;
+        }
+        Log($"name -> {trimmed}");
+    }
+
+    /// 蓝牙自己那一路也用用户设置的名字（别再硬编码"蓝牙设备"）。
+    public string SelfName => DisplayName;
+
     /// 蓝牙适配器状态文案（诊断区块显示用）。
-    public void NoteBleAdapter(string text)
+    public void NoteBleAdapter(string text) => UiDispatch.Post(() =>
     {
         BleAdapterText = text;
         Changed?.Invoke();
-    }
+    });
 
     private void Fail(string message)
     {
@@ -289,12 +336,16 @@ public sealed class AppState
         _mock = null;
         if (_source is not null) await _source.DisconnectAsync();
         _source = null;
-        Members.Clear();
-        History.Clear();
-        Transport = "未连接";
-        Status = "已断开";
-        RequestOverlay(false);
-        Changed?.Invoke();
+        // await 之后可能已经不在 UI 线程：集合清理同样要 Post 回去
+        UiDispatch.Post(() =>
+        {
+            Members.Clear();
+            History.Clear();
+            Transport = "未连接";
+            Status = "已断开";
+            RequestOverlay(false);
+            Changed?.Invoke();
+        });
     }
 
     public void RequestOverlay(bool show) => OverlayRequested?.Invoke(show);

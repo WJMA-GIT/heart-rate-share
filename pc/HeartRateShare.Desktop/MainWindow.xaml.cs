@@ -16,7 +16,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AppState.Current.Changed += Refresh;
+        AppState.Current.Changed += () => UiDispatch.Post(Refresh);
         AppState.Current.OverlayRequested += ToggleOverlay;
         _render = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _render.Tick += (_, _) => Refresh();
@@ -110,7 +110,7 @@ public partial class MainWindow : Window
 
     private void Font_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_overlay is not null) _overlay.FontSize = e.NewValue;
+        if (_overlay is not null) _overlay.BpmFontSize = e.NewValue;
     }
 
     // ---------------------------------------------------------------- 悬浮窗
@@ -120,7 +120,7 @@ public partial class MainWindow : Window
         if (!(OverlayBox.IsChecked ?? true)) return;
         if (show)
         {
-            _overlay ??= new OverlayWindow { FontSize = FontSlider.Value };
+            _overlay ??= new OverlayWindow { BpmFontSize = FontSlider.Value };
             _overlay.SetClickThrough(ClickThroughBox.IsChecked ?? false);
             _overlay.Refresh();
             if (!_overlay.IsVisible) _overlay.Show();
@@ -146,7 +146,11 @@ public partial class MainWindow : Window
             : "";
         RoomCodeText.Text = string.IsNullOrEmpty(state.RoomCode) ? "—" : state.RoomCode;
         RoomStatusText.Text = state.Status;
-        AppState.Current.DisplayName = NameBox.Text.Trim();
+        var typedName = NameBox.Text.Trim();
+        if (typedName.Length > 0 && typedName != AppState.Current.DisplayName)
+        {
+            _ = AppState.Current.RenameSelfAsync(typedName);
+        }
         AppState.Current.ShowAllBle = ShowAllBleBox.IsChecked ?? false;
         var clickThrough = ClickThroughBox.IsChecked ?? false;
         if (clickThrough != AppState.Current.OverlayClickThrough)
@@ -206,7 +210,7 @@ public partial class MainWindow : Window
     private void BuildBle(AppState state)
     {
         BleList.Children.Clear();
-        foreach (var device in state.BleDevices)
+        foreach (var entry in state.BleDevices)
         {
             var grid = new Grid { Height = 40 };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -215,7 +219,7 @@ public partial class MainWindow : Window
 
             var name = new TextBlock
             {
-                Text = string.IsNullOrEmpty(device.Name) ? "(未命名)" : device.Name,
+                Text = string.IsNullOrEmpty(entry.Name) ? "(未命名)" : entry.Name,
                 FontSize = 14,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = (Brush)FindResource("TextMain"),
@@ -225,7 +229,7 @@ public partial class MainWindow : Window
 
             var info = new TextBlock
             {
-                Text = $"0x{device.Address:X} · {device.Rssi} dBm",
+                Text = $"0x{entry.Address:X} · {entry.Rssi} dBm",
                 FontSize = 12,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = (Brush)FindResource("TextDim"),
@@ -234,7 +238,7 @@ public partial class MainWindow : Window
             grid.Children.Add(info);
 
             var connect = new Button { Content = "连接", Padding = new Thickness(12, 2, 12, 2) };
-            connect.Click += (_, _) => _ = AppState.Current.ConnectBleAsync(device);
+            connect.Click += (_, _) => _ = AppState.Current.ConnectBleAsync(entry);
             Grid.SetColumn(connect, 2);
             grid.Children.Add(connect);
 
