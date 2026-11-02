@@ -16,7 +16,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AppState.Current.Changed += () => UiDispatch.Post(Refresh);
+        AppState.Current.Changed += Refresh;
         AppState.Current.OverlayRequested += ToggleOverlay;
         _render = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _render.Tick += (_, _) => Refresh();
@@ -146,11 +146,7 @@ public partial class MainWindow : Window
             : "";
         RoomCodeText.Text = string.IsNullOrEmpty(state.RoomCode) ? "—" : state.RoomCode;
         RoomStatusText.Text = state.Status;
-        var typedName = NameBox.Text.Trim();
-        if (typedName.Length > 0 && typedName != AppState.Current.DisplayName)
-        {
-            _ = AppState.Current.RenameSelfAsync(typedName);
-        }
+        AppState.Current.DisplayName = NameBox.Text.Trim();
         AppState.Current.ShowAllBle = ShowAllBleBox.IsChecked ?? false;
         var clickThrough = ClickThroughBox.IsChecked ?? false;
         if (clickThrough != AppState.Current.OverlayClickThrough)

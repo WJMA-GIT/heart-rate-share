@@ -25,13 +25,8 @@ public partial class OverlayWindow : Window
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy,
         uint flags);
-    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X; public int Y; }
-    [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
 
     private double _fontSize = 48;
-    private bool _dragging;
-    private POINT _dragStartCursor;
-    private (double Left, double Top) _dragStartWindow;
 
     public OverlayWindow()
     {
@@ -77,27 +72,28 @@ public partial class OverlayWindow : Window
                 Height = Math.Max(28, _fontSize * 1.4),
                 Margin = new Thickness(0, 2, 0, 2),
             };
-            for (var i = 0; i < 3; i++) row.ColumnDefinitions.Add(new ColumnDefinition());
-            row.ColumnDefinitions[0].Width = new GridLength(_fontSize * 4.6);
-            row.ColumnDefinitions[1].Width = new GridLength(_fontSize * 2.2);
-            row.ColumnDefinitions[2].Width = new GridLength(90);
+            for (var i = 0; i < 5; i++) row.ColumnDefinitions.Add(new ColumnDefinition());
+            row.ColumnDefinitions[0].Width = new GridLength(16);
+            row.ColumnDefinitions[1].Width = new GridLength(120);
+            row.ColumnDefinitions[2].Width = new GridLength(_fontSize * 2.2);
+            row.ColumnDefinitions[3].Width = new GridLength(90);
+            row.ColumnDefinitions[4].Width = new GridLength(28);
 
-            // 整行内容（名称/心率/折线）都能按下拖动；行 Grid 不设背景（null），
-            // 所以列内空白与行间空隙都是 alpha=0 的透明像素 → 鼠标自动穿透。
-            row.MouseLeftButtonDown += (_, _) => BeginDrag();
-            row.MouseMove += (_, _) => DragMoveStep();
-            row.MouseLeftButtonUp += (_, _) => EndDrag();
+            // 拖动条：几乎全透明但可点（点住拖整窗）
+            var handle = new Border { Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)) };
+            handle.MouseLeftButtonDown += (_, _) => DragMove();
+            Grid.SetColumn(handle, 0);
+            row.Children.Add(handle);
 
             var name = new TextBlock
             {
                 Text = member.Name,
-                // 名称与心率同字号（用户要求），行高按 1.4 倍留白
-                FontSize = _fontSize,
+                FontSize = Math.Max(12, _fontSize * 0.3),
                 Foreground = Brushes.White,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
-            Grid.SetColumn(name, 0);
+            Grid.SetColumn(name, 1);
             row.Children.Add(name);
 
             var bpm = new TextBlock
@@ -109,51 +105,37 @@ public partial class OverlayWindow : Window
                 TextAlignment = TextAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            Grid.SetColumn(bpm, 1);
+            Grid.SetColumn(bpm, 2);
             row.Children.Add(bpm);
 
             var spark = new Canvas { Margin = new Thickness(4, 0, 4, 0) };
             DrawSpark(spark, state.History.TryGetValue(member.Id, out var values) ? values : []);
-            Grid.SetColumn(spark, 2);
+            Grid.SetColumn(spark, 3);
             row.Children.Add(spark);
+
+            var close = new Border
+            {
+                Width = 24,
+                Height = 24,
+                CornerRadius = new CornerRadius(12),
+                BorderBrush = Brushes.White,
+                BorderThickness = new Thickness(1),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = "⏻",
+                    FontSize = 11,
+                    Foreground = Brushes.White,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                },
+            };
+            close.MouseLeftButtonDown += (_, _) => AppState.Current.Disconnect();
+            Grid.SetColumn(close, 4);
+            row.Children.Add(close);
 
             Rows.Children.Add(row);
         }
-    }
-
-    /// 手动拖动：不依赖 WPF 的 DragMove，也不依赖 WM_NCLBUTTONDOWN
-    /// （ShowActivated=false 时那两个都不灵）。位移换算在 OverlayDrag 里（可单测）。
-    private void BeginDrag()
-    {
-        if (!GetCursorPos(out _dragStartCursor)) return;
-        _dragStartWindow = (Left, Top);
-        _dragging = true;
-        ((UIElement)Rows.Parent).CaptureMouse();
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle != IntPtr.Zero)
-        {
-            SetWindowPos(handle, new IntPtr(-1) /*HWND_TOPMOST*/, 0, 0, 0, 0,
-                SwpNoMove | SwpNoSize | SwpNoActivate);
-        }
-        AppState.Log($"overlay: drag start ({_dragStartCursor.X},{_dragStartCursor.Y})");
-    }
-
-    private void DragMoveStep()
-    {
-        if (!_dragging || !GetCursorPos(out var current)) return;
-        var scale = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
-        var (left, top) = OverlayDrag.Compute(_dragStartWindow,
-            (_dragStartCursor.X, _dragStartCursor.Y), (current.X, current.Y), scale);
-        Left = left;
-        Top = top;
-        AppState.Log($"overlay: drag move left={left:F0} top={top:F0}");
-    }
-
-    private void EndDrag()
-    {
-        if (!_dragging) return;
-        _dragging = false;
-        ((UIElement)Rows.Parent).ReleaseMouseCapture();
     }
 
     private void DrawSpark(Canvas canvas, List<int> values)
