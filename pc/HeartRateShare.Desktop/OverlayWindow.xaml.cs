@@ -77,24 +77,16 @@ public partial class OverlayWindow : Window
                 Height = Math.Max(28, _fontSize * 1.4),
                 Margin = new Thickness(0, 2, 0, 2),
             };
-            for (var i = 0; i < 4; i++) row.ColumnDefinitions.Add(new ColumnDefinition());
-            row.ColumnDefinitions[0].Width = new GridLength(18);          // 拖动条 18 DIP
-            row.ColumnDefinitions[1].Width = new GridLength(_fontSize * 4.6);
-            row.ColumnDefinitions[2].Width = new GridLength(_fontSize * 2.2);
-            row.ColumnDefinitions[3].Width = new GridLength(90);
+            for (var i = 0; i < 3; i++) row.ColumnDefinitions.Add(new ColumnDefinition());
+            row.ColumnDefinitions[0].Width = new GridLength(_fontSize * 4.6);
+            row.ColumnDefinitions[1].Width = new GridLength(_fontSize * 2.2);
+            row.ColumnDefinitions[2].Width = new GridLength(90);
 
-            // 拖动条：Brushes.Transparent（不是 null）才收得到命中；拖动走 Win32，
-            // 因为 ShowActivated=false 时 WPF 的 DragMove() 不生效。
-            var handle = new Border
-            {
-                Background = Brushes.Transparent,
-                IsHitTestVisible = true,
-            };
-            handle.MouseLeftButtonDown += (_, _) => BeginDrag();
-            handle.MouseMove += (_, _) => DragMoveStep();
-            handle.MouseLeftButtonUp += (_, _) => EndDrag();
-            Grid.SetColumn(handle, 0);
-            row.Children.Add(handle);
+            // 整行内容（名称/心率/折线）都能按下拖动；行 Grid 不设背景（null），
+            // 所以列内空白与行间空隙都是 alpha=0 的透明像素 → 鼠标自动穿透。
+            row.MouseLeftButtonDown += (_, _) => BeginDrag();
+            row.MouseMove += (_, _) => DragMoveStep();
+            row.MouseLeftButtonUp += (_, _) => EndDrag();
 
             var name = new TextBlock
             {
@@ -105,7 +97,7 @@ public partial class OverlayWindow : Window
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
-            Grid.SetColumn(name, 1);
+            Grid.SetColumn(name, 0);
             row.Children.Add(name);
 
             var bpm = new TextBlock
@@ -117,12 +109,12 @@ public partial class OverlayWindow : Window
                 TextAlignment = TextAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            Grid.SetColumn(bpm, 2);
+            Grid.SetColumn(bpm, 1);
             row.Children.Add(bpm);
 
             var spark = new Canvas { Margin = new Thickness(4, 0, 4, 0) };
             DrawSpark(spark, state.History.TryGetValue(member.Id, out var values) ? values : []);
-            Grid.SetColumn(spark, 3);
+            Grid.SetColumn(spark, 2);
             row.Children.Add(spark);
 
             Rows.Children.Add(row);
@@ -137,6 +129,12 @@ public partial class OverlayWindow : Window
         _dragStartWindow = (Left, Top);
         _dragging = true;
         ((UIElement)Rows.Parent).CaptureMouse();
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle != IntPtr.Zero)
+        {
+            SetWindowPos(handle, new IntPtr(-1) /*HWND_TOPMOST*/, 0, 0, 0, 0,
+                SwpNoMove | SwpNoSize | SwpNoActivate);
+        }
         AppState.Log($"overlay: drag start ({_dragStartCursor.X},{_dragStartCursor.Y})");
     }
 

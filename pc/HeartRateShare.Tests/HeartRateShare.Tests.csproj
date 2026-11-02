@@ -18,5 +18,6 @@
     <Compile Include="../HeartRateShare.Desktop/UiDispatch.cs" Link="UiDispatch.cs" />
     <Compile Include="../HeartRateShare.Desktop/BleTable.cs" Link="BleTable.cs" />
     <Compile Include="../HeartRateShare.Desktop/OverlayDrag.cs" Link="OverlayDrag.cs" />
+    <Compile Include="../HeartRateShare.Desktop/OverlayHitTest.cs" Link="OverlayHitTest.cs" />
   </ItemGroup>
 </Project>
