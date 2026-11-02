@@ -254,3 +254,32 @@ jobs:
           path: pc-*.png
           if-no-files-found: warn
           retention-days: 14
+
+      # 产物直接在 runner 上上传到 Release（不经沙箱下载，避免 artifact 传输被截断）。
+      # 只在 tag 构建时触发；文件名带短 SHA，方便区分同一版本名的多次修复（r2/r3…）。
+      - name: Upload to Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = $env:GITHUB_REF_NAME -replace '^v', ''
+          $short = $env:GITHUB_SHA.Substring(0, 7)
+          $tag = $env:GITHUB_REF_NAME
+          $repo = $env:GITHUB_REPOSITORY
+          $self = Get-ChildItem out -Filter '*selfcontained*.exe' | Select-Object -First 1
+          $fd = Get-ChildItem out -Filter '*framework-dependent*.exe' | Select-Object -First 1
+          if (-not $self -or -not $fd) { throw 'missing published exes' }
+          $names = @(
+            @{ src = $self.FullName; dst = "heartrate-pc-$ver-win-x64-selfcontained-$short.exe" },
+            @{ src = $fd.FullName; dst = "heartrate-pc-$ver-win-x64-framework-dependent-$short.exe" }
+          )
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --repo $repo --title "共享心率 $tag" --generate-notes }
+          foreach ($n in $names) {
+            Copy-Item $n.src $n.dst -Force
+            Write-Host "uploading $($n.dst) ($((Get-Item $n.dst).Length) bytes)"
+            gh release upload $tag $n.dst --repo $repo --clobber
+          }
+          gh release view $tag --repo $repo --json assets --jq '.assets[] | .name + "  " + (.size|tostring)'
