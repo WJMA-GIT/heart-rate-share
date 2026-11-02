@@ -188,7 +188,7 @@ public sealed class BleSource : IHeartRateSource
         {
             try
             {
-                using var session = GattSession.FromDevice(_device);
+                using var session = await GattSession.FromDeviceAsync(_device);
                 if (session is not null) session.MaintainConnection = false;
             }
             catch (Exception error)
