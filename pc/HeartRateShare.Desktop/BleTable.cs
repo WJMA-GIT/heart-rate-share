@@ -17,7 +17,7 @@ public sealed class BleEntry : System.ComponentModel.INotifyPropertyChanged
     }
 
     public ulong Address { get; }
-    public bool IsHeartRate { get; private set; }
+    public bool IsHeartRate { get; internal set; }
     public DateTime LastSeen { get; set; }
     public DateTime LastRssiPush { get; set; }
 
