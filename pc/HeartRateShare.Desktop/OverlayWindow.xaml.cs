@@ -25,11 +25,13 @@ public partial class OverlayWindow : Window
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy,
         uint flags);
-    [DllImport("user32.dll")] private static extern bool ReleaseCapture();
-    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hwnd, int message,
-        IntPtr wparam, IntPtr lparam);
+    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X; public int Y; }
+    [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
 
     private double _fontSize = 48;
+    private bool _dragging;
+    private POINT _dragStartCursor;
+    private (double Left, double Top) _dragStartWindow;
 
     public OverlayWindow()
     {
@@ -89,6 +91,8 @@ public partial class OverlayWindow : Window
                 IsHitTestVisible = true,
             };
             handle.MouseLeftButtonDown += (_, _) => BeginDrag();
+            handle.MouseMove += (_, _) => DragMoveStep();
+            handle.MouseLeftButtonUp += (_, _) => EndDrag();
             Grid.SetColumn(handle, 0);
             row.Children.Add(handle);
 
@@ -125,14 +129,33 @@ public partial class OverlayWindow : Window
         }
     }
 
-    /// 无边框 + 不抢焦点时 DragMove() 无效，改用系统拖动：ReleaseCapture + WM_NCLBUTTONDOWN。
+    /// 手动拖动：不依赖 WPF 的 DragMove，也不依赖 WM_NCLBUTTONDOWN
+    /// （ShowActivated=false 时那两个都不灵）。位移换算在 OverlayDrag 里（可单测）。
     private void BeginDrag()
     {
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle == IntPtr.Zero) return;
-        AppState.Log("overlay: drag begin");
-        ReleaseCapture();
-        SendMessage(handle, 0x00A1 /*WM_NCLBUTTONDOWN*/, (IntPtr)0x2 /*HTCAPTION*/, IntPtr.Zero);
+        if (!GetCursorPos(out _dragStartCursor)) return;
+        _dragStartWindow = (Left, Top);
+        _dragging = true;
+        ((UIElement)Rows.Parent).CaptureMouse();
+        AppState.Log($"overlay: drag start ({_dragStartCursor.X},{_dragStartCursor.Y})");
+    }
+
+    private void DragMoveStep()
+    {
+        if (!_dragging || !GetCursorPos(out var current)) return;
+        var scale = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+        var (left, top) = OverlayDrag.Compute(_dragStartWindow,
+            (_dragStartCursor.X, _dragStartCursor.Y), (current.X, current.Y), scale);
+        Left = left;
+        Top = top;
+        AppState.Log($"overlay: drag move left={left:F0} top={top:F0}");
+    }
+
+    private void EndDrag()
+    {
+        if (!_dragging) return;
+        _dragging = false;
+        ((UIElement)Rows.Parent).ReleaseMouseCapture();
     }
 
     private void DrawSpark(Canvas canvas, List<int> values)

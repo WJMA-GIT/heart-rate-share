@@ -24,14 +24,14 @@ public sealed class BleSource : IHeartRateSource
 
     public string Transport => "蓝牙";
     public bool Connected => _characteristic is not null;
-    public IReadOnlyList<BleDevice> Devices =>
-        _table.Snapshot().Select(entry => new BleDevice(entry.Address, entry.Name, entry.Rssi, entry.IsHeartRate))
-            .ToList();
+    // 直接暴露表里的对象（INotifyPropertyChanged）：UI 只更新属性，不替换项。
+    public IReadOnlyList<BleEntry> Devices => _table.Snapshot();
     public event Action<string>? Diagnostic;
     public event Action<IReadOnlyList<MemberRow>>? MembersChanged;
     public event Action<string>? Status;
     public event Action<string>? Failed;
     public event Action? DevicesChanged;
+    public event Action<BleEntry>? EntryUpdated;
 
     /// 只展示广播带 0x180D 的（"显示全部"由 UI 决定怎么过滤）。
     public void StartScan()
@@ -48,16 +48,14 @@ public sealed class BleSource : IHeartRateSource
                 var isHeartRate = args.Advertisement.ServiceUuids.Contains(HeartRateServiceUuid);
                 var name = args.Advertisement.LocalName ?? string.Empty;
                 var before = _table.Count;
-                var changed = _table.Observe(args.BluetoothAddress, name,
-                    args.RawSignalStrengthInDBm, isHeartRate, DateTime.UtcNow);
+                _table.Observe(args.BluetoothAddress, name, args.RawSignalStrengthInDBm,
+                    isHeartRate, DateTime.UtcNow);
                 if (_table.Count != before)
                 {
                     Diagnostic?.Invoke(
                         $"ble: seen 0x{args.BluetoothAddress:X} {name} rssi={args.RawSignalStrengthInDBm}");
-                    changed = true;
+                    DevicesChanged?.Invoke();   // 只有"新设备"才需要插一行
                 }
-                // 只有"值得刷新"时才通知 UI（同一条广播 10 次不会重绘列表）
-                if (changed) DevicesChanged?.Invoke();
             };
             watcher.Stopped += (_, args) =>
             {
@@ -167,21 +165,53 @@ public sealed class BleSource : IHeartRateSource
             Diagnostic?.Invoke($"ble: first sample bpm={bpm}");
         }
         _lastSampleAt = DateTime.UtcNow;
-        MembersChanged?.Invoke([new MemberRow("ble-own", "蓝牙设备", bpm, true)]);
+        MembersChanged?.Invoke([new MemberRow("ble-own", AppState.Current.SelfName, bpm, true)]);
     }
 
+    /// 真正释放链路：取消通知 → 关 GattSession.MaintainConnection → 逐层 Dispose → 冷却再扫描。
+    /// 不做这些，"断开"只是界面上的事，设备在系统里仍被占用，之后就再也扫不到。
     public async Task DisconnectAsync()
     {
-        StopScan();
+        Diagnostic?.Invoke("ble: disconnect begin");
         if (_characteristic is not null)
         {
             _characteristic.ValueChanged -= OnMeasurement;
+            try
+            {
+                await _characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(
+                    GattClientCharacteristicConfigurationDescriptorValue.None);
+            }
+            catch (Exception error)
+            {
+                Diagnostic?.Invoke($"ble: unsubscribe failed {error.Message}");
+            }
             _characteristic = null;
         }
-        _device?.Dispose();
-        _device = null;
+        if (_device is not null)
+        {
+            try
+            {
+                var session = await _device.GetGattSessionAsync(BluetoothCacheMode.Uncached);
+                if (session is not null)
+                {
+                    session.MaintainConnection = false;
+                    session.Dispose();
+                }
+            }
+            catch (Exception error)
+            {
+                Diagnostic?.Invoke($"ble: gatt session release failed {error.Message}");
+            }
+            _device.Dispose();
+            _device = null;
+            Diagnostic?.Invoke("ble: device disposed");
+        }
+        _table.Expire(DateTime.MaxValue);   // 清空设备表，允许下次重新发现
+        _firstSampleLogged = false;
         MembersChanged?.Invoke([]);
-        await Task.CompletedTask;
+        // 让系统把链路真正放掉，否则马上扫描会扫不到同一台设备
+        await Task.Delay(400);
+        Diagnostic?.Invoke("ble: disconnect finished");
     }
 
     public ValueTask DisposeAsync() => new(DisconnectAsync());

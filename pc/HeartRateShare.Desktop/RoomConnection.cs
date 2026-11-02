@@ -66,6 +66,9 @@ public sealed class RoomConnection : IAsyncDisposable
         _ = Task.Run(() => PingLoopAsync(_cts.Token));
     }
 
+    public Task SendHelloAsync(string displayName) =>
+        SendAsync(Protocol.Envelope("hello", ("memberId", _memberId), ("displayName", displayName)));
+
     private async Task SendAsync(string payload)
     {
         var socket = _socket;

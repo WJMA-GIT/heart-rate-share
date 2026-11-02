@@ -146,7 +146,11 @@ public partial class MainWindow : Window
             : "";
         RoomCodeText.Text = string.IsNullOrEmpty(state.RoomCode) ? "—" : state.RoomCode;
         RoomStatusText.Text = state.Status;
-        AppState.Current.DisplayName = NameBox.Text.Trim();
+        var typedName = NameBox.Text.Trim();
+        if (typedName.Length > 0 && typedName != AppState.Current.DisplayName)
+        {
+            _ = AppState.Current.RenameSelfAsync(typedName);
+        }
         AppState.Current.ShowAllBle = ShowAllBleBox.IsChecked ?? false;
         var clickThrough = ClickThroughBox.IsChecked ?? false;
         if (clickThrough != AppState.Current.OverlayClickThrough)

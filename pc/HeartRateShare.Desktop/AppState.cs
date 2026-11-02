@@ -10,13 +10,13 @@ public sealed class AppState
     public static AppState Current { get; } = new();
 
     public ObservableCollection<MemberRow> Members { get; } = [];
-    public ObservableCollection<BleDevice> BleDevices { get; } = [];
+    public ObservableCollection<BleEntry> BleDevices { get; } = [];
     public ObservableCollection<Beacon> Peers { get; } = [];
     public Dictionary<string, List<int>> History { get; } = [];
 
     public string Transport { get; private set; } = "未连接";
     public string Status { get; private set; } = "";
-    public string DisplayName { get; set; } = "Windows";
+    public string DisplayName { get; set; } = Environment.MachineName;
     public string RoomCode { get; private set; } = "";
     public string Server { get; set; } = Protocol.OfficialServer;
     public bool ShowAllBle { get; set; }
@@ -240,17 +240,17 @@ public sealed class AppState
     }
 
     /// 蓝牙列表增量更新：只加/删/改，不 Clear（避免 UI 闪一下并且保住选中态）。
-    private void SyncDevices(IReadOnlyList<BleDevice> devices)
+    /// 只增删，不替换（BleEntry 自己是 INotifyPropertyChanged，属性更新会通知 UI）。
+    private void SyncDevices(IReadOnlyList<BleEntry> devices)
     {
-        var wanted = devices.Where(device => ShowAllBle || device.IsHeartRate).ToList();
+        var wanted = devices.Where(entry => ShowAllBle || entry.IsHeartRate).ToList();
         for (var i = BleDevices.Count - 1; i >= 0; i--)
         {
-            if (wanted.All(device => device.Address != BleDevices[i].Address)) BleDevices.RemoveAt(i);
+            if (wanted.All(entry => entry.Address != BleDevices[i].Address)) BleDevices.RemoveAt(i);
         }
-        foreach (var device in wanted)
+        foreach (var entry in wanted)
         {
-            var index = BleDevices.ToList().FindIndex(existing => existing.Address == device.Address);
-            if (index >= 0) BleDevices[index] = device; else BleDevices.Add(device);
+            if (BleDevices.All(existing => existing.Address != entry.Address)) BleDevices.Add(entry);
         }
         Changed?.Invoke();
     }
@@ -269,6 +269,34 @@ public sealed class AppState
         }
         Changed?.Invoke();
     }
+
+    /// 改名：立刻改自身成员行，并（已连云端/局域网时）重新发 hello 广播新名字。
+    public async Task RenameSelfAsync(string name)
+    {
+        var trimmed = (name ?? string.Empty).Trim();
+        if (trimmed.Length == 0) trimmed = Environment.MachineName;
+        DisplayName = trimmed;
+        UiDispatch.Post(() =>
+        {
+            for (var i = 0; i < Members.Count; i++)
+            {
+                if (Members[i].Id == "ble-own" || Members[i].Id.StartsWith("win-", StringComparison.Ordinal))
+                {
+                    Members[i] = Members[i] with { Name = trimmed };
+                }
+            }
+            Changed?.Invoke();
+        });
+        switch (_source)
+        {
+            case LanSource lan: await lan.ResendHelloAsync(trimmed); break;
+            case CloudSource cloud: await cloud.ResendHelloAsync(trimmed); break;
+        }
+        Log($"name -> {trimmed}");
+    }
+
+    /// 蓝牙自己那一路也用用户设置的名字（别再硬编码"蓝牙设备"）。
+    public string SelfName => DisplayName;
 
     /// 蓝牙适配器状态文案（诊断区块显示用）。
     public void NoteBleAdapter(string text) => UiDispatch.Post(() =>
