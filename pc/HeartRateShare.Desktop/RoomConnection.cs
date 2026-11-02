@@ -19,8 +19,30 @@ public sealed class RoomConnection : IAsyncDisposable
     public string MemberId => _memberId;
     public bool Connected => _socket?.State == WebSocketState.Open;
 
-    public static Uri BuildUri(string host, int port, bool secure, string room) =>
-        new($"{(secure ? "wss" : "ws")}://{host}:{port}{Protocol.WsPath}?room={Uri.EscapeDataString(room)}");
+    /// 房间号为空时不带 `?room=`：手机侧局域网服务已不校验房间号。
+    public static Uri BuildUri(string host, int port, bool secure, string room)
+    {
+        var query = string.IsNullOrEmpty(room)
+            ? string.Empty
+            : $"?room={Uri.EscapeDataString(room)}";
+        return new Uri($"{(secure ? "wss" : "ws")}://{host}:{port}{Protocol.WsPath}{query}");
+    }
+
+    /// 把网络异常翻成人话：DNS / 超时 / 拒绝 / 证书 / 被服务端关掉。
+    public static string Describe(Exception error) => error switch
+    {
+        System.Net.Sockets.SocketException socket => socket.SocketErrorCode switch
+        {
+            System.Net.Sockets.SocketError.HostNotFound => "域名解析失败（DNS 或网络不通）",
+            System.Net.Sockets.SocketError.ConnectionRefused => "对方端口没开（手机端投射服务没启动？）",
+            System.Net.Sockets.SocketError.TimedOut => "连接超时（不在同一网段或被防火墙拦了）",
+            System.Net.Sockets.SocketError.NetworkUnreachable => "网络不可达（检查 Wi-Fi / VPN）",
+            _ => $"网络错误：{socket.SocketErrorCode}",
+        },
+        System.Security.Authentication.AuthenticationException => "证书校验失败（域名与证书不匹配）",
+        WebSocketException webSocket => $"WebSocket 握手失败：{webSocket.Message}",
+        _ => error.Message,
+    };
 
     public async Task ConnectAsync(Uri uri, string displayName)
     {
@@ -34,7 +56,7 @@ public sealed class RoomConnection : IAsyncDisposable
         }
         catch (Exception error)
         {
-            Failed?.Invoke($"连不上 {uri.Host}:{uri.Port}（{error.Message}）");
+            Failed?.Invoke($"连不上 {uri.Host}:{uri.Port}：{Describe(error)}");
             return;
         }
         _socket = socket;
@@ -82,7 +104,7 @@ public sealed class RoomConnection : IAsyncDisposable
         }
         catch (Exception error)
         {
-            Failed?.Invoke($"连接中断：{error.Message}");
+            Failed?.Invoke($"连接中断：{Describe(error)}");
         }
         Status?.Invoke("已断开");
         MembersChanged?.Invoke([]);
