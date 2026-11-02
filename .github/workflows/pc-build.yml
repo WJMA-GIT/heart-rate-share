@@ -1,0 +1,26 @@
+name: pc-build
+
+# 只编译、不发布：PC 端编译错误用 1–2 分钟迭代，别等 15 分钟的完整双形态构建。
+on:
+  push:
+    branches: [main, windows]
+    paths:
+      - 'pc/**'
+      - '.github/workflows/pc-build.yml'
+  pull_request:
+    paths:
+      - 'pc/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: dotnet build (Desktop)
+        run: dotnet build pc/HeartRateShare.Desktop/HeartRateShare.Desktop.csproj -c Release -warnaserror
+      - name: dotnet test (unit)
+        run: dotnet test pc/HeartRateShare.Tests/HeartRateShare.Tests.csproj -c Release --nologo
